@@ -71,7 +71,7 @@ const topPosts = [
   { id: "2", content: "Quick tip: How to boost your engagement rate", platform: "tiktok", likes: 1800, comments: 95, shares: 320, date: "Jun 23" },
   { id: "3", content: "We hit 10K followers! Thank you all 🙏", platform: "x", likes: 1200, comments: 67, shares: 210, date: "Jun 22" },
   { id: "4", content: "New feature announcement: Analytics Dashboard", platform: "linkedin", likes: 890, comments: 45, shares: 134, date: "Jun 20" },
-  { id: "5", content: "Tutorial: Getting started with Symphony", platform: "youtube", likes: 760, comments: 82, shares: 98, date: "Jun 18" },
+  { id: "5", content: "Tutorial: Getting started with SEO Platform", platform: "youtube", likes: 760, comments: 82, shares: 98, date: "Jun 18" },
 ];
 
 // Heatmap data - hours x days

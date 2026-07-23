@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Symphony - Social Media Management Platform",
+  title: "SEO Platform - Social Media Management Platform",
   description:
     "Manage all your social media in one place. Schedule posts, manage inbox, generate AI content, and analyze performance across TikTok, YouTube, Instagram, Facebook, X, and LinkedIn.",
 };

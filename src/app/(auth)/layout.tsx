@@ -20,13 +20,13 @@ export default async function AuthLayout({
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent" />
       <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-primary/5 to-transparent" />
 
-      {/* Symphony branding */}
+      {/* SEO Platform branding */}
       <div className="relative z-10 mb-8 flex flex-col items-center gap-2">
         <div className="flex items-center gap-2">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary shadow-md">
             <Music2 className="h-5 w-5 text-primary-foreground" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Symphony</h1>
+          <h1 className="text-2xl font-bold tracking-tight">SEO Platform</h1>
         </div>
         <p className="text-sm text-muted-foreground">
           Orchestrate your social presence
@@ -38,7 +38,7 @@ export default async function AuthLayout({
 
       {/* Footer */}
       <p className="relative z-10 mt-8 text-xs text-muted-foreground">
-        &copy; {new Date().getFullYear()} Symphony. All rights reserved.
+        &copy; {new Date().getFullYear()} SEO Platform. All rights reserved.
       </p>
     </div>
   );

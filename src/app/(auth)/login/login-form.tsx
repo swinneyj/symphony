@@ -23,7 +23,7 @@ export function LoginForm({ authenticate, googleAction, githubAction }: LoginFor
     <Card className="border-primary/10 shadow-lg">
       <CardHeader className="space-y-1 text-center">
         <CardTitle className="text-xl">Welcome back</CardTitle>
-        <CardDescription>Sign in to your Symphony account</CardDescription>
+        <CardDescription>Sign in to your SEO Platform account</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* OAuth buttons */}
