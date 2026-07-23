@@ -23,7 +23,7 @@ export function RegisterForm({ register }: RegisterFormProps) {
     <Card className="border-primary/10 shadow-lg">
       <CardHeader className="space-y-1 text-center">
         <CardTitle className="text-xl">Create an account</CardTitle>
-        <CardDescription>Enter your details to get started with SEO Platform</CardDescription>
+        <CardDescription>Enter your details to get started with Symphony</CardDescription>
       </CardHeader>
       <CardContent>
         <form action={formAction} className="space-y-4">

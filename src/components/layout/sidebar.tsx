@@ -23,7 +23,7 @@ import {
   Users,
   ChevronDown,
   LogOut,
-  Search,
+  Music2,
   Sparkles,
 } from "lucide-react";
 
@@ -63,9 +63,9 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
       {/* Logo & Brand */}
       <div className="flex items-center gap-2 px-6 py-5 border-b">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-          <Search className="h-4 w-4 text-primary-foreground" />
+          <Music2 className="h-4 w-4 text-primary-foreground" />
         </div>
-        <span className="text-lg font-semibold">SEO Platform</span>
+        <span className="text-lg font-semibold">Symphony</span>
       </div>
 
       {/* Workspace Switcher */}

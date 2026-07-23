@@ -88,12 +88,12 @@ const platformBadgeColors: Record<Platform, string> = {
 };
 
 const sources: AccountSource[] = [
-  { id: "s1", name: "SEO Platform Official", handle: "@symphony", platform: "instagram", unread: 5, connected: true },
-  { id: "s2", name: "SEO Platform", handle: "@symphonyapp", platform: "x", unread: 3, connected: true },
-  { id: "s3", name: "SEO Platform", handle: "SEO Platform", platform: "youtube", unread: 1, connected: true },
-  { id: "s4", name: "SEO Platform", handle: "@symphony", platform: "tiktok", unread: 2, connected: true },
-  { id: "s5", name: "SEO Platform Inc.", handle: "SEO Platform Inc.", platform: "linkedin", unread: 0, connected: true },
-  { id: "s6", name: "SEO Platform", handle: "SEO Platform", platform: "facebook", unread: 1, connected: true },
+  { id: "s1", name: "Symphony Official", handle: "@symphony", platform: "instagram", unread: 5, connected: true },
+  { id: "s2", name: "Symphony", handle: "@symphonyapp", platform: "x", unread: 3, connected: true },
+  { id: "s3", name: "Symphony", handle: "Symphony", platform: "youtube", unread: 1, connected: true },
+  { id: "s4", name: "Symphony", handle: "@symphony", platform: "tiktok", unread: 2, connected: true },
+  { id: "s5", name: "Symphony Inc.", handle: "Symphony Inc.", platform: "linkedin", unread: 0, connected: true },
+  { id: "s6", name: "Symphony", handle: "Symphony", platform: "facebook", unread: 1, connected: true },
 ];
 
 const messages: Message[] = [
@@ -132,7 +132,7 @@ const messages: Message[] = [
     senderName: "Mike Chen",
     senderAvatar: "",
     platform: "linkedin",
-    platformAccount: "SEO Platform Inc.",
+    platformAccount: "Symphony Inc.",
     content: "Great article on social media trends! I'd love to connect and learn more about your platform.",
     preview: "Great article on social media trends!",
     time: "1h ago",
@@ -165,7 +165,7 @@ const messages: Message[] = [
     senderName: "Alex Kim",
     senderAvatar: "",
     platform: "youtube",
-    platformAccount: "SEO Platform",
+    platformAccount: "Symphony",
     content: "Could you make a tutorial on the analytics dashboard? Having trouble understanding the engagement metrics.",
     preview: "Could you make a tutorial on the analytics dashboard?",
     time: "5h ago",
@@ -180,7 +180,7 @@ const messages: Message[] = [
     senderName: "Jessica Williams",
     senderAvatar: "",
     platform: "facebook",
-    platformAccount: "SEO Platform",
+    platformAccount: "Symphony",
     content: "Is there a mobile app coming? Would love to manage on the go.",
     preview: "Is there a mobile app coming?",
     time: "1d ago",

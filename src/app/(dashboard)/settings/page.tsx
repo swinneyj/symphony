@@ -85,12 +85,12 @@ const platformColors: Record<Platform, string> = {
 };
 
 const initialAccounts: ConnectedAccount[] = [
-  { id: "a1", platform: "instagram", name: "SEO Platform Official", handle: "@symphony", connected: true },
-  { id: "a2", platform: "x", name: "SEO Platform", handle: "@symphonyapp", connected: true },
-  { id: "a3", platform: "youtube", name: "SEO Platform", handle: "SEO Platform", connected: true },
-  { id: "a4", platform: "tiktok", name: "SEO Platform", handle: "@symphony", connected: true },
-  { id: "a5", platform: "linkedin", name: "SEO Platform Inc.", handle: "SEO Platform Inc.", connected: true },
-  { id: "a6", platform: "facebook", name: "SEO Platform", handle: "SEO Platform", connected: true },
+  { id: "a1", platform: "instagram", name: "Symphony Official", handle: "@symphony", connected: true },
+  { id: "a2", platform: "x", name: "Symphony", handle: "@symphonyapp", connected: true },
+  { id: "a3", platform: "youtube", name: "Symphony", handle: "Symphony", connected: true },
+  { id: "a4", platform: "tiktok", name: "Symphony", handle: "@symphony", connected: true },
+  { id: "a5", platform: "linkedin", name: "Symphony Inc.", handle: "Symphony Inc.", connected: true },
+  { id: "a6", platform: "facebook", name: "Symphony", handle: "Symphony", connected: true },
 ];
 
 const teamMembers: TeamMember[] = [

@@ -60,7 +60,7 @@ function CaptionGenerator() {
   const handleGenerate = () => {
     setGenerated([
       `Ready to transform your social media presence? 🚀 Our latest update brings you powerful new tools to create, schedule, and analyze your content like never before.`,
-      `Stop scrolling! This is the post you've been waiting for. Discover how SEO Platform can 10x your social media game in minutes. ✨`,
+      `Stop scrolling! This is the post you've been waiting for. Discover how Symphony can 10x your social media game in minutes. ✨`,
       `Big things are happening! We've been working around the clock to bring you features that will change how you manage social media. Here's what's new 👀`,
       `Your social media strategy is about to get a major upgrade. Introducing the new way to manage, create, and grow — all from one place.`,
     ]);

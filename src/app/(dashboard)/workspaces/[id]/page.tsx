@@ -94,12 +94,12 @@ const workspaceData = {
 };
 
 const connectedAccounts: ConnectedAccount[] = [
-  { id: "a1", platform: "instagram", name: "SEO Platform Official", handle: "@symphony", status: "connected" },
-  { id: "a2", platform: "x", name: "SEO Platform", handle: "@symphonyapp", status: "connected" },
-  { id: "a3", platform: "youtube", name: "SEO Platform", handle: "SEO Platform", status: "connected" },
-  { id: "a4", platform: "tiktok", name: "SEO Platform", handle: "@symphony", status: "connected" },
-  { id: "a5", platform: "linkedin", name: "SEO Platform Inc.", handle: "SEO Platform Inc.", status: "connected" },
-  { id: "a6", platform: "facebook", name: "SEO Platform", handle: "SEO Platform", status: "error" },
+  { id: "a1", platform: "instagram", name: "Symphony Official", handle: "@symphony", status: "connected" },
+  { id: "a2", platform: "x", name: "Symphony", handle: "@symphonyapp", status: "connected" },
+  { id: "a3", platform: "youtube", name: "Symphony", handle: "Symphony", status: "connected" },
+  { id: "a4", platform: "tiktok", name: "Symphony", handle: "@symphony", status: "connected" },
+  { id: "a5", platform: "linkedin", name: "Symphony Inc.", handle: "Symphony Inc.", status: "connected" },
+  { id: "a6", platform: "facebook", name: "Symphony", handle: "Symphony", status: "error" },
 ];
 
 const teamMembers: TeamMember[] = [

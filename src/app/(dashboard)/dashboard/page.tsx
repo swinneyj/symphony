@@ -76,12 +76,12 @@ const recentActivity = [
 ];
 
 const connectedAccounts = [
-  { id: "1", name: "SEO Platform Official", platform: "instagram", handle: "@symphony", followers: 15200, status: "connected" },
-  { id: "2", name: "SEO Platform", platform: "x", handle: "@symphonyapp", followers: 8900, status: "connected" },
-  { id: "3", name: "SEO Platform", platform: "youtube", handle: "SEO Platform", followers: 12300, status: "connected" },
-  { id: "4", name: "SEO Platform", platform: "tiktok", handle: "@symphony", followers: 5400, status: "connected" },
-  { id: "5", name: "SEO Platform", platform: "linkedin", handle: "SEO Platform Inc.", followers: 3200, status: "connected" },
-  { id: "6", name: "SEO Platform", platform: "facebook", handle: "SEO Platform", followers: 4231, status: "error" },
+  { id: "1", name: "Symphony Official", platform: "instagram", handle: "@symphony", followers: 15200, status: "connected" },
+  { id: "2", name: "Symphony", platform: "x", handle: "@symphonyapp", followers: 8900, status: "connected" },
+  { id: "3", name: "Symphony", platform: "youtube", handle: "Symphony", followers: 12300, status: "connected" },
+  { id: "4", name: "Symphony", platform: "tiktok", handle: "@symphony", followers: 5400, status: "connected" },
+  { id: "5", name: "Symphony", platform: "linkedin", handle: "Symphony Inc.", followers: 3200, status: "connected" },
+  { id: "6", name: "Symphony", platform: "facebook", handle: "Symphony", followers: 4231, status: "error" },
 ];
 
 const platformColors: Record<string, string> = {
