@@ -3,6 +3,7 @@ import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { db } from "@/db";
 import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
+import TikTok from "next-auth/providers/tiktok";
 import Credentials from "next-auth/providers/credentials";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -55,6 +56,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     GitHub({
       clientId: process.env.AUTH_GITHUB_ID,
       clientSecret: process.env.AUTH_GITHUB_SECRET,
+    }),
+    TikTok({
+      clientId: process.env.AUTH_TIKTOK_CLIENT_KEY!,
+      clientSecret: process.env.AUTH_TIKTOK_CLIENT_SECRET!,
     }),
   ],
   callbacks: {
