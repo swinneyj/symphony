@@ -61,9 +61,13 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
     <div className="flex h-full w-64 flex-col border-r bg-sidebar-background">
       {/* Logo & Brand */}
       <div className="flex items-center gap-2 px-6 py-5 border-b">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-          <img src="/icon.png" alt="Symphony" className="h-4 w-4 rounded" />
-        </div>
+        <img
+          src="/symphony-logo.jpg"
+          alt="Symphony"
+          width={32}
+          height={32}
+          className="h-8 w-8"
+        />
         <span className="text-lg font-semibold">Symphony</span>
       </div>
 

@@ -21,9 +21,13 @@ export default async function AuthLayout({
       {/* Symphony branding */}
       <div className="relative z-10 mb-8 flex flex-col items-center gap-2">
         <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary shadow-md">
-            <img src="/icon.png" alt="Symphony" className="h-5 w-5 rounded" />
-          </div>
+          <img
+            src="/symphony-logo.jpg"
+            alt="Symphony"
+            width={40}
+            height={40}
+            className="h-10 w-10"
+          />
           <h1 className="text-2xl font-bold tracking-tight">Symphony</h1>
         </div>
         <p className="text-sm text-muted-foreground">
