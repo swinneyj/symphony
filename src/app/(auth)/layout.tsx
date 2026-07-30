@@ -1,7 +1,5 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { Music2 } from "lucide-react";
-
 export default async function AuthLayout({
   children,
 }: {
@@ -24,7 +22,7 @@ export default async function AuthLayout({
       <div className="relative z-10 mb-8 flex flex-col items-center gap-2">
         <div className="flex items-center gap-2">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary shadow-md">
-            <Music2 className="h-5 w-5 text-primary-foreground" />
+            <img src="/icon.png" alt="Symphony" className="h-5 w-5 rounded" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight">Symphony</h1>
         </div>
