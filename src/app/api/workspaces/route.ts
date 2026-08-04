@@ -77,27 +77,25 @@ export async function POST(request: Request) {
       );
     }
 
-    // Create workspace and add creator as owner in a transaction
-    const result = await db.transaction(async (tx) => {
-      const [workspace] = await tx
-        .insert(workspaces)
-        .values({
-          name: name.trim(),
-          slug: slug.trim(),
-          description: description?.trim() || null,
-        })
-        .returning();
+    // Create workspace and add creator as owner.
+    // Note: sequential inserts (the Neon HTTP driver does not support
+    // interactive transactions via drizzle's neon-http adapter).
+    const [workspace] = await db
+      .insert(workspaces)
+      .values({
+        name: name.trim(),
+        slug: slug.trim(),
+        description: description?.trim() || null,
+      })
+      .returning();
 
-      await tx.insert(workspaceMembers).values({
-        workspaceId: workspace.id,
-        userId: userId,
-        role: "owner",
-      });
-
-      return workspace;
+    await db.insert(workspaceMembers).values({
+      workspaceId: workspace.id,
+      userId: userId,
+      role: "owner",
     });
 
-    return NextResponse.json(result, { status: 201 });
+    return NextResponse.json(workspace, { status: 201 });
   } catch (error) {
     console.error("Error creating workspace:", error);
     return NextResponse.json(
