@@ -226,7 +226,7 @@ export default function CalendarPage() {
           </p>
         </div>
         <Button asChild>
-          <Link href="/dashboard/composer">
+          <Link href="/composer">
             <Plus className="h-4 w-4 mr-1" />
             Create Post
           </Link>
@@ -403,7 +403,7 @@ export default function CalendarPage() {
               })}
               {selectedDate && (
                 <Button variant="outline" size="sm" className="w-full" asChild>
-                  <Link href="/dashboard/composer">
+                  <Link href="/composer">
                     <Plus className="h-4 w-4 mr-1" />
                     Schedule Post
                   </Link>

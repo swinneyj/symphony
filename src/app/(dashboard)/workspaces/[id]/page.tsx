@@ -120,7 +120,7 @@ export default function WorkspaceDetailPage() {
     <div className="flex-1 space-y-6 p-6 md:p-8">
       {/* Back Navigation */}
       <Link
-        href="/dashboard/workspaces"
+        href="/workspaces"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />

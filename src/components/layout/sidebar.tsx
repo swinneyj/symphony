@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOut } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,14 +29,14 @@ import {
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { name: "Composer", href: "/dashboard/composer", icon: PenSquare },
-  { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
-  { name: "Inbox", href: "/dashboard/inbox", icon: MessageSquare },
-  { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
-  { name: "Media Library", href: "/dashboard/media", icon: Image },
-  { name: "AI Studio", href: "/dashboard/ai-studio", icon: Sparkles },
-  { name: "Workspaces", href: "/dashboard/workspaces", icon: Users },
-  { name: "Settings", href: "/dashboard/settings", icon: Settings },
+  { name: "Composer", href: "/composer", icon: PenSquare },
+  { name: "Calendar", href: "/calendar", icon: Calendar },
+  { name: "Inbox", href: "/inbox", icon: MessageSquare },
+  { name: "Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "Media Library", href: "/media", icon: Image },
+  { name: "AI Studio", href: "/ai-studio", icon: Sparkles },
+  { name: "Workspaces", href: "/workspaces", icon: Users },
+  { name: "Settings", href: "/settings", icon: Settings },
 ];
 
 interface SidebarProps {
@@ -89,14 +90,14 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
             <DropdownMenuContent align="start" className="w-56">
               {workspaces.map((ws) => (
                 <DropdownMenuItem key={ws.id} asChild>
-                  <Link href={`/dashboard/workspaces/${ws.id}`}>
+                  <Link href={`/workspaces/${ws.id}`}>
                     {ws.name}
                   </Link>
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link href="/dashboard/workspaces">Manage Workspaces</Link>
+                <Link href="/workspaces">Manage Workspaces</Link>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -146,10 +147,10 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
             <DropdownMenuItem asChild>
-              <Link href="/dashboard/settings">Settings</Link>
+              <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => signOut({ callbackUrl: "/login" })}>
               <LogOut className="mr-2 h-4 w-4" />
               Sign out
             </DropdownMenuItem>
