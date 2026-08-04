@@ -70,7 +70,7 @@ async function register(_prevState: { error?: string; success?: boolean } | unde
     await signIn("credentials", {
       email: email.toLowerCase(),
       password,
-      redirectTo: "/onboarding",
+      redirectTo: "/dashboard",
     });
   } catch (error) {
     // signIn throws on redirect, which is expected for success
