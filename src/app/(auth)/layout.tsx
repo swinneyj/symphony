@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 export default async function AuthLayout({
   children,
 }: {
@@ -39,9 +40,17 @@ export default async function AuthLayout({
       <div className="relative z-10 w-full max-w-md">{children}</div>
 
       {/* Footer */}
-      <p className="relative z-10 mt-8 text-xs text-muted-foreground">
-        &copy; {new Date().getFullYear()} Symphony. All rights reserved.
-      </p>
+      <div className="relative z-10 mt-8 flex items-center gap-4 text-xs text-muted-foreground">
+        <span>&copy; {new Date().getFullYear()} Symphony. All rights reserved.</span>
+        <span className="text-border">|</span>
+        <Link href="/terms" className="hover:text-foreground">
+          Terms of Service
+        </Link>
+        <span className="text-border">|</span>
+        <Link href="/privacy" className="hover:text-foreground">
+          Privacy Policy
+        </Link>
+      </div>
     </div>
   );
 }
