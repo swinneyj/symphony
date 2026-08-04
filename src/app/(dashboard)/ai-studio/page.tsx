@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   Sparkles,
   AlignLeft,
@@ -53,17 +54,31 @@ function CaptionGenerator() {
   const [length, setLength] = useState("medium");
   const [generated, setGenerated] = useState<string[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const tones = ["professional", "casual", "humorous", "inspirational", "urgent"];
   const lengths = ["short", "medium", "long"];
 
-  const handleGenerate = () => {
-    setGenerated([
-      `Ready to transform your social media presence? 🚀 Our latest update brings you powerful new tools to create, schedule, and analyze your content like never before.`,
-      `Stop scrolling! This is the post you've been waiting for. Discover how Symphony can 10x your social media game in minutes. ✨`,
-      `Big things are happening! We've been working around the clock to bring you features that will change how you manage social media. Here's what's new 👀`,
-      `Your social media strategy is about to get a major upgrade. Introducing the new way to manage, create, and grow — all from one place.`,
-    ]);
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    try {
+      const res = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "caption",
+          prompt: `${topic} (tone: ${tone}, length: ${length})`,
+          platform: "default",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+      setGenerated(data.result.options);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Generation failed");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const copyToClipboard = (text: string, index: number) => {
@@ -119,9 +134,9 @@ function CaptionGenerator() {
           </div>
         </div>
       </div>
-      <Button onClick={handleGenerate} disabled={!topic}>
+      <Button onClick={handleGenerate} disabled={!topic || isGenerating}>
         <Sparkles className="h-4 w-4 mr-1" />
-        Generate Captions
+        {isGenerating ? "Generating..." : "Generate Captions"}
       </Button>
       {generated.length > 0 && (
         <div className="space-y-3">
@@ -156,22 +171,35 @@ function CaptionGenerator() {
 function HashtagGenerator() {
   const [keywords, setKeywords] = useState("");
   const [generated, setGenerated] = useState<{ tag: string; popularity: "high" | "medium" | "low" }[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  const handleGenerate = () => {
-    setGenerated([
-      { tag: "#socialmediamanagement", popularity: "high" },
-      { tag: "#contentcreator", popularity: "high" },
-      { tag: "#digitalmarketing", popularity: "high" },
-      { tag: "#socialmediatips", popularity: "medium" },
-      { tag: "#growyouraccount", popularity: "medium" },
-      { tag: "#marketingstrategy", popularity: "medium" },
-      { tag: "#socialmediamarketing", popularity: "high" },
-      { tag: "#contentstrategy", popularity: "medium" },
-      { tag: "#smm", popularity: "low" },
-      { tag: "#socialmedia", popularity: "high" },
-      { tag: "#onlinemarketing", popularity: "medium" },
-      { tag: "#brandingtips", popularity: "low" },
-    ]);
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    try {
+      const res = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "hashtag",
+          prompt: keywords,
+          platform: "default",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+      const tags: string[] = data.result.options[0].split(" ").filter((t: string) => t.startsWith("#"));
+      const popularities: Array<"high" | "medium" | "low"> = ["high", "medium", "low"];
+      setGenerated(
+        tags.map((tag, i) => ({
+          tag,
+          popularity: popularities[i % popularities.length],
+        }))
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Generation failed");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const popularityColor = (p: string) => {
@@ -193,9 +221,9 @@ function HashtagGenerator() {
           onChange={(e) => setKeywords(e.target.value)}
         />
       </div>
-      <Button onClick={handleGenerate} disabled={!keywords}>
+      <Button onClick={handleGenerate} disabled={!keywords || isGenerating}>
         <Hash className="h-4 w-4 mr-1" />
-        Generate Hashtags
+        {isGenerating ? "Generating..." : "Generate Hashtags"}
       </Button>
       {generated.length > 0 && (
         <div className="space-y-3">

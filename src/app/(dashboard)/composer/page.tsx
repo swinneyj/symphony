@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   Image,
   Hash,
@@ -64,6 +65,11 @@ export default function ComposerPage() {
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(["instagram"]);
   const [content, setContent] = useState("");
   const [publishNow, setPublishNow] = useState(true);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [scheduleDate, setScheduleDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [showCaptionDialog, setShowCaptionDialog] = useState(false);
   const [showHashtagDialog, setShowHashtagDialog] = useState(false);
   const [captionPrompt, setCaptionPrompt] = useState("");
@@ -71,6 +77,16 @@ export default function ComposerPage() {
   const [generatedCaptions, setGeneratedCaptions] = useState<string[]>([]);
   const [generatedHashtags, setGeneratedHashtags] = useState<string[]>([]);
   const [previewPlatform, setPreviewPlatform] = useState<Platform>("instagram");
+
+  useEffect(() => {
+    // Load the user's first workspace so posts can be saved against it
+    fetch("/api/workspaces")
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((workspaces: Array<{ id: string }>) => {
+        if (workspaces.length > 0) setWorkspaceId(workspaces[0].id);
+      })
+      .catch(() => toast.error("Could not load workspace"));
+  }, []);
 
   const togglePlatform = (platform: Platform) => {
     setSelectedPlatforms((prev) =>
@@ -80,26 +96,72 @@ export default function ComposerPage() {
     );
   };
 
-  const handleGenerateCaptions = () => {
-    // Mock AI generation
-    setGeneratedCaptions([
-      "Ready to level up your social media game? 🚀 Our new feature is here and it's going to change everything!",
-      "Big news! We've been working on something special for you. Swipe to see what's coming next! 👀",
-      "Stop scrolling! This is the post you've been waiting for. Check out our latest update! ✨",
-    ]);
+  const generate = async (type: "caption" | "hashtag", prompt: string) => {
+    setIsGenerating(true);
+    try {
+      const res = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          prompt,
+          platform: selectedPlatforms[0] || "default",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+      return data.result.options as string[];
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const handleGenerateHashtags = () => {
-    setGeneratedHashtags([
-      "#socialmediamanagement",
-      "#contentcreator",
-      "#digitalmarketing",
-      "#socialmediatips",
-      "#growyouraccount",
-      "#marketingstrategy",
-      "#socialmediamarketing",
-      "#contentstrategy",
-    ]);
+  const handleGenerateCaptions = async () => {
+    const options = await generate("caption", captionPrompt);
+    if (options) setGeneratedCaptions(options);
+  };
+
+  const handleGenerateHashtags = async () => {
+    const options = await generate("hashtag", hashtagPrompt);
+    if (options) setGeneratedHashtags(options);
+  };
+
+  const savePost = async (status: "draft" | "scheduled" | "published") => {
+    if (!workspaceId) {
+      toast.error("No workspace available");
+      return;
+    }
+    if (!content.trim()) {
+      toast.error("Write some content first");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          content,
+          platformConfigs: { platforms: selectedPlatforms },
+          status,
+          scheduledFor:
+            status === "scheduled"
+              ? new Date(`${scheduleDate}T${scheduleTime}`).toISOString()
+              : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save post");
+      if (status === "draft") toast.success("Draft saved");
+      else if (status === "scheduled") toast.success("Post scheduled");
+      else toast.success("Post published");
+      setContent("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save post");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -229,8 +291,18 @@ export default function ComposerPage() {
                 </div>
                 {!publishNow && (
                   <div className="flex items-center gap-2">
-                    <Input type="date" className="w-40" defaultValue="2025-07-24" />
-                    <Input type="time" className="w-28" defaultValue="09:00" />
+                    <Input
+                      type="date"
+                      className="w-40"
+                      value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                    />
+                    <Input
+                      type="time"
+                      className="w-28"
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                    />
                   </div>
                 )}
               </div>
@@ -240,14 +312,22 @@ export default function ComposerPage() {
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Button variant="outline">
+              <Button
+                variant="outline"
+                onClick={() => savePost("draft")}
+                disabled={isSaving || !content.trim()}
+              >
                 <Save className="h-4 w-4 mr-1" />
-                Save as Draft
+                {isSaving ? "Saving..." : "Save as Draft"}
               </Button>
               {!publishNow && (
-                <Button variant="secondary">
+                <Button
+                  variant="secondary"
+                  onClick={() => savePost("scheduled")}
+                  disabled={isSaving || !content.trim()}
+                >
                   <Calendar className="h-4 w-4 mr-1" />
-                  Schedule
+                  {isSaving ? "Saving..." : "Schedule"}
                 </Button>
               )}
             </div>
@@ -256,16 +336,19 @@ export default function ComposerPage() {
                 <Zap className="h-3 w-3 text-amber-500" />
                 Approval required
               </Badge>
-              <Button>
+              <Button
+                onClick={() => savePost(publishNow ? "published" : "scheduled")}
+                disabled={isSaving || !content.trim()}
+              >
                 {publishNow ? (
                   <>
                     <Send className="h-4 w-4 mr-1" />
-                    Publish Now
+                    {isSaving ? "Publishing..." : "Publish Now"}
                   </>
                 ) : (
                   <>
                     <Calendar className="h-4 w-4 mr-1" />
-                    Schedule
+                    {isSaving ? "Saving..." : "Schedule"}
                   </>
                 )}
               </Button>
@@ -390,9 +473,12 @@ export default function ComposerPage() {
               />
             </div>
             <div className="flex gap-2">
-              <Button onClick={handleGenerateCaptions} disabled={!captionPrompt}>
+              <Button
+                onClick={handleGenerateCaptions}
+                disabled={!captionPrompt || isGenerating}
+              >
                 <Sparkles className="h-4 w-4 mr-1" />
-                Generate
+                {isGenerating ? "Generating..." : "Generate"}
               </Button>
             </div>
             {generatedCaptions.length > 0 && (
@@ -434,9 +520,12 @@ export default function ComposerPage() {
                 onChange={(e) => setHashtagPrompt(e.target.value)}
               />
             </div>
-            <Button onClick={handleGenerateHashtags} disabled={!hashtagPrompt}>
+            <Button
+              onClick={handleGenerateHashtags}
+              disabled={!hashtagPrompt || isGenerating}
+            >
               <Hash className="h-4 w-4 mr-1" />
-              Generate
+              {isGenerating ? "Generating..." : "Generate"}
             </Button>
             {generatedHashtags.length > 0 && (
               <div className="space-y-2">
