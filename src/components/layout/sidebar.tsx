@@ -25,6 +25,7 @@ import {
   ChevronDown,
   LogOut,
   Sparkles,
+  Clapperboard,
 } from "lucide-react";
 
 const navigation = [
@@ -35,6 +36,7 @@ const navigation = [
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Media Library", href: "/media", icon: Image },
   { name: "AI Studio", href: "/ai-studio", icon: Sparkles },
+  { name: "Video Studio", href: "/video-studio", icon: Clapperboard },
   { name: "Workspaces", href: "/workspaces", icon: Users },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
