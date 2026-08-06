@@ -21,6 +21,13 @@ export const inboxMessageTypeEnum = pgEnum("inbox_message_type", ["comment", "di
 export const inboxMessageStatusEnum = pgEnum("inbox_message_status", ["unread", "read", "replied", "archived", "spam"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "audio", "document"]);
 export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approved", "changes_requested", "rejected"]);
+// Video Studio (AI product content)
+export const productSourceEnum = pgEnum("product_source", ["manual", "link", "tiktok_showcase"]);
+export const productStatusEnum = pgEnum("product_status", ["raw", "processing", "ready", "failed"]);
+export const videoProviderEnum = pgEnum("video_provider", ["sora", "seedance", "kling", "openai_tts", "elevenlabs", "kokoro"]);
+export const videoJobTypeEnum = pgEnum("video_job_type", ["product_process", "footage", "overlay", "slideshow", "batch_video"]);
+export const videoJobStatusEnum = pgEnum("video_job_status", ["queued", "running", "done", "failed", "cancelled"]);
+export const videoBatchStatusEnum = pgEnum("video_batch_status", ["queued", "running", "done", "partial", "failed"]);
 
 // ─── USERS & AUTH ────────────────────────────────────────────────────────────
 
@@ -316,6 +323,105 @@ export const aiGenerations = pgTable("ai_generations", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+// ─── VIDEO STUDIO: PRODUCTS & AI CONTENT PIPELINE ─────────────────────────────
+
+export const products = pgTable("products", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Keep price as text so "49.99" and "$49.99" both survive a link import.
+  price: text("price"),
+  currency: text("currency").default("USD"),
+  originalImageUrl: text("original_image_url"),
+  processedImageUrl: text("processed_image_url"),
+  sourceType: productSourceEnum("source_type").notNull().default("manual"),
+  sourceUrl: text("source_url"),
+  tiktokProductId: text("tiktok_product_id"),
+  status: productStatusEnum("status").notNull().default("raw"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const voices = pgTable("voices", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  // null = system voice available to every workspace
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  provider: videoProviderEnum("provider").notNull().default("openai_tts"),
+  providerVoiceId: text("provider_voice_id"),
+  isCloned: boolean("is_cloned").default(false),
+  sampleUrl: text("sample_url"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const videoFormulas = pgTable("video_formulas", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  // null = system formula available to every workspace
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  category: text("category"),
+  scriptTemplate: text("script_template").notNull(),
+  scenePromptTemplate: text("scene_prompt_template"),
+  motionPreset: text("motion_preset").default("none"),
+  voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  durationSec: integer("duration_sec").default(6),
+  quality: text("quality").default("standard"),
+  isSystem: boolean("is_system").default(false),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const videoBatches = pgTable("video_batches", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  name: text("name").notNull(),
+  formulaId: uuid("formula_id").references(() => videoFormulas.id, { onDelete: "set null" }),
+  voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  quality: text("quality").notNull().default("standard"),
+  provider: videoProviderEnum("provider").default("sora"),
+  status: videoBatchStatusEnum("status").notNull().default("queued"),
+  totalCount: integer("total_count").default(0),
+  completedCount: integer("completed_count").default(0),
+  failedCount: integer("failed_count").default(0),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const videoBatchJobs = pgTable("video_batch_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  batchId: uuid("batch_id").references(() => videoBatches.id, { onDelete: "set null" }),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+  formulaId: uuid("formula_id").references(() => videoFormulas.id, { onDelete: "set null" }),
+  jobType: videoJobTypeEnum("job_type").notNull().default("batch_video"),
+  status: videoJobStatusEnum("status").notNull().default("queued"),
+  script: text("script"),
+  footageUrl: text("footage_url"),
+  voiceoverUrl: text("voiceover_url"),
+  finalUrl: text("final_url"),
+  thumbnailUrl: text("thumbnail_url"),
+  error: text("error"),
+  retries: integer("retries").default(0),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
 export type PlatformPostConfig = {
@@ -335,6 +441,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   workspaceMembers: many(workspaceMembers),
   posts: many(posts),
   inboxReplies: many(inboxReplies),
+  products: many(products),
+  videoBatches: many(videoBatches),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
@@ -346,6 +454,11 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
   campaigns: many(campaigns),
   schedules: many(schedules),
   analyticsSnapshots: many(analyticsSnapshots),
+  products: many(products),
+  voices: many(voices),
+  videoFormulas: many(videoFormulas),
+  videoBatches: many(videoBatches),
+  videoBatchJobs: many(videoBatchJobs),
 }));
 
 export const socialAccountsRelations = relations(socialAccounts, ({ one, many }) => ({
@@ -406,5 +519,75 @@ export const mediaAssetsRelations = relations(mediaAssets, ({ one }) => ({
   uploadedBy: one(users, {
     fields: [mediaAssets.uploadedById],
     references: [users.id],
+  }),
+}));
+
+export const productsRelations = relations(products, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [products.workspaceId],
+    references: [workspaces.id],
+  }),
+  createdBy: one(users, {
+    fields: [products.createdById],
+    references: [users.id],
+  }),
+  jobs: many(videoBatchJobs),
+}));
+
+export const voicesRelations = relations(voices, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [voices.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
+
+export const videoFormulasRelations = relations(videoFormulas, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [videoFormulas.workspaceId],
+    references: [workspaces.id],
+  }),
+  voice: one(voices, {
+    fields: [videoFormulas.voiceId],
+    references: [voices.id],
+  }),
+  batches: many(videoBatches),
+}));
+
+export const videoBatchesRelations = relations(videoBatches, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [videoBatches.workspaceId],
+    references: [workspaces.id],
+  }),
+  createdBy: one(users, {
+    fields: [videoBatches.createdById],
+    references: [users.id],
+  }),
+  formula: one(videoFormulas, {
+    fields: [videoBatches.formulaId],
+    references: [videoFormulas.id],
+  }),
+  voice: one(voices, {
+    fields: [videoBatches.voiceId],
+    references: [voices.id],
+  }),
+  jobs: many(videoBatchJobs),
+}));
+
+export const videoBatchJobsRelations = relations(videoBatchJobs, ({ one }) => ({
+  batch: one(videoBatches, {
+    fields: [videoBatchJobs.batchId],
+    references: [videoBatches.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [videoBatchJobs.workspaceId],
+    references: [workspaces.id],
+  }),
+  product: one(products, {
+    fields: [videoBatchJobs.productId],
+    references: [products.id],
+  }),
+  formula: one(videoFormulas, {
+    fields: [videoBatchJobs.formulaId],
+    references: [videoFormulas.id],
   }),
 }));
