@@ -1277,6 +1277,7 @@ interface MarketRow {
   videoCount: number | null;
   creatorCount: number | null;
   isHot: boolean;
+  momentumScore: number | null;
   productId: string | null;
 }
 
@@ -1289,6 +1290,7 @@ function MarketTab({
 }) {
   const [source, setSource] = useState("echotik");
   const [period, setPeriod] = useState("week");
+  const [sort, setSort] = useState("rank");
   const [rows, setRows] = useState<MarketRow[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1299,7 +1301,7 @@ function MarketTab({
     setNotice(null);
     try {
       const res = await fetch(
-        `/api/market/products?workspaceId=${workspaceId}&source=${source}&period=${period}&refresh=1&limit=50`
+        `/api/market/products?workspaceId=${workspaceId}&source=${source}&period=${period}&sort=${sort}&refresh=1&limit=50`
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load market data");
@@ -1310,7 +1312,7 @@ function MarketTab({
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, source, period]);
+  }, [workspaceId, source, period, sort]);
 
   useEffect(() => {
     refresh();
@@ -1363,6 +1365,15 @@ function MarketTab({
           <option value="week">Weekly</option>
           <option value="month">Monthly</option>
         </select>
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="rank">Sort: Rank</option>
+          <option value="momentum">Sort: Momentum</option>
+          <option value="gmv">Sort: GMV 30d</option>
+        </select>
         <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
           {loading ? "Fetching…" : "Refresh"}
@@ -1390,6 +1401,7 @@ function MarketTab({
                   <th className="px-3 py-2">Sales 7d</th>
                   <th className="px-3 py-2">GMV 30d</th>
                   <th className="px-3 py-2">Growth</th>
+                  <th className="px-3 py-2">Momentum</th>
                   <th className="px-3 py-2">Commission</th>
                   <th className="px-3 py-2">Videos</th>
                   <th className="px-3 py-2">Creators</th>
@@ -1439,6 +1451,21 @@ function MarketTab({
                         </Badge>
                       )}
                     </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {row.momentumScore !== null && (
+                        <Badge
+                          className={
+                            row.momentumScore >= 10
+                              ? "bg-green-100 text-green-700"
+                              : row.momentumScore <= -10
+                                ? "bg-red-100 text-red-700"
+                                : "bg-slate-100 text-slate-600"
+                          }
+                        >
+                          {row.momentumScore >= 0 ? "↑" : "↓"} {Math.abs(Math.round(row.momentumScore))}
+                        </Badge>
+                      )}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap">{pct(row.commissionRate)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{fmt(row.videoCount)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{fmt(row.creatorCount)}</td>
@@ -1456,7 +1483,7 @@ function MarketTab({
                 ))}
                 {rows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={11} className="px-3 py-8 text-center text-sm text-muted-foreground">
                       No market data yet — hit Refresh (dry-run shows sample data).
                     </td>
                   </tr>

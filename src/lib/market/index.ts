@@ -11,6 +11,9 @@ import type { MarketProduct, MarketQuery, MarketSource } from "./types";
 import { dryRunEnabled } from "./types";
 import * as echotik from "./echotik";
 import * as fastmoss from "./fastmoss";
+import { db } from "@/db";
+import { marketProducts } from "@/db/schema";
+import { eq, and, inArray, lt, desc } from "drizzle-orm";
 
 const ADAPTERS: Record<MarketSource, (q: MarketQuery) => Promise<MarketProduct[]>> = {
   echotik: echotik.fetchWinningProducts,
@@ -28,6 +31,102 @@ export async function fetchWinningProducts(
   if (!adapter) throw new Error(`[market] unknown source: ${source}`);
   const rows = await adapter(query);
   return { rows, dryRun: false };
+}
+
+/**
+ * Persists fetched rows as today's snapshot (upsert by source+product+date)
+ * and computes momentum_score = rank improvement vs the most recent prior
+ * snapshot, blended with growth rate: (prev_rank - cur_rank) + growth*100.
+ * Positive = climbing. Returns rows persisted.
+ */
+export async function ingestMarketRows(
+  workspaceId: string,
+  source: MarketSource,
+  rows: MarketProduct[]
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const ids = rows.map((r) => r.sourceProductId);
+
+  const prior = await db
+    .select({
+      sourceProductId: marketProducts.sourceProductId,
+      rank: marketProducts.rank,
+      snapshotDate: marketProducts.snapshotDate,
+    })
+    .from(marketProducts)
+    .where(
+      and(
+        eq(marketProducts.source, source),
+        eq(marketProducts.workspaceId, workspaceId),
+        inArray(marketProducts.sourceProductId, ids),
+        lt(marketProducts.snapshotDate, today)
+      )
+    )
+    .orderBy(desc(marketProducts.snapshotDate));
+
+  const best = new Map<string, number>();
+  for (const p of prior) {
+    if (!best.has(p.sourceProductId)) best.set(p.sourceProductId, p.rank ?? 0);
+  }
+
+  for (const row of rows) {
+    const curRank = row.rank ?? 0;
+    const prevRank = best.get(row.sourceProductId);
+    const momentum = Number(
+      (((prevRank ?? curRank) - curRank) + (row.growthRate ?? 0) * 100).toFixed(2)
+    );
+    await db
+      .insert(marketProducts)
+      .values({
+        workspaceId,
+        source,
+        sourceProductId: row.sourceProductId,
+        name: row.name,
+        imageUrl: row.imageUrl,
+        priceMin: row.priceMin != null ? String(row.priceMin) : null,
+        priceMax: row.priceMax != null ? String(row.priceMax) : null,
+        currency: row.currency,
+        categoryL1: row.categoryL1,
+        categoryL2: row.categoryL2,
+        categoryL3: row.categoryL3,
+        region: row.region,
+        rank: row.rank,
+        rankPeriod: row.rankPeriod,
+        sales7d: row.sales7d,
+        sales30d: row.sales30d,
+        gmv30d: row.gmv30d != null ? String(row.gmv30d) : null,
+        growthRate: row.growthRate != null ? String(row.growthRate) : null,
+        commissionRate: row.commissionRate != null ? String(row.commissionRate) : null,
+        videoCount: row.videoCount,
+        creatorCount: row.creatorCount,
+        isHot: row.isHot ?? false,
+        momentumScore: String(momentum),
+        snapshotDate: today,
+      })
+      .onConflictDoUpdate({
+        target: [marketProducts.source, marketProducts.sourceProductId, marketProducts.snapshotDate],
+        set: {
+          name: row.name,
+          imageUrl: row.imageUrl,
+          priceMin: row.priceMin != null ? String(row.priceMin) : null,
+          priceMax: row.priceMax != null ? String(row.priceMax) : null,
+          rank: row.rank,
+          rankPeriod: row.rankPeriod,
+          sales7d: row.sales7d,
+          sales30d: row.sales30d,
+          gmv30d: row.gmv30d != null ? String(row.gmv30d) : null,
+          growthRate: row.growthRate != null ? String(row.growthRate) : null,
+          commissionRate: row.commissionRate != null ? String(row.commissionRate) : null,
+          videoCount: row.videoCount,
+          creatorCount: row.creatorCount,
+          isHot: row.isHot ?? false,
+          momentumScore: String(momentum),
+        },
+      });
+  }
+  return rows.length;
 }
 
 /** Realistic US TikTok Shop winners (clearly synthetic — dry-run only). */
@@ -66,6 +165,7 @@ export function sampleProducts(period: MarketQuery["period"]): MarketProduct[] {
     videoCount: s.videoCount,
     creatorCount: s.creatorCount,
     isHot: s.growthRate >= 0.3,
+    momentumScore: [64, 42, -18, 31, 55, 12, -27, 8, 39, -5][i] ?? 0,
     metadata: { dryRun: true, sample: true },
   }));
 }

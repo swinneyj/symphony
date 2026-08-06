@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { marketProducts } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import { fetchWinningProducts } from "@/lib/market";
+import { fetchWinningProducts, ingestMarketRows } from "@/lib/market";
 
 /**
  * GET /api/cron/market-refresh?secret=...&workspaceId=...
@@ -34,42 +31,7 @@ export async function GET(request: Request) {
         results[source] = { skipped: "dry-run mode — no creds provisioned" };
         continue;
       }
-      let stored = 0;
-      for (const row of rows) {
-        await db
-          .insert(marketProducts)
-          .values({
-            workspaceId,
-            source: row.source,
-            sourceProductId: row.sourceProductId,
-            name: row.name,
-            imageUrl: row.imageUrl,
-            priceMin: row.priceMin ? String(row.priceMin) : null,
-            priceMax: row.priceMax ? String(row.priceMax) : null,
-            currency: row.currency,
-            categoryL1: row.categoryL1,
-            categoryL2: row.categoryL2,
-            categoryL3: row.categoryL3,
-            region: row.region,
-            rank: row.rank,
-            rankPeriod: row.rankPeriod,
-            sales7d: row.sales7d,
-            sales30d: row.sales30d,
-            gmv30d: row.gmv30d ? String(row.gmv30d) : null,
-            growthRate: row.growthRate ? String(row.growthRate) : null,
-            commissionRate: row.commissionRate ? String(row.commissionRate) : null,
-            videoCount: row.videoCount,
-            creatorCount: row.creatorCount,
-            isHot: row.isHot,
-            snapshotDate: new Date(today),
-            metadata: row.metadata ?? {},
-          })
-          .onConflictDoUpdate({
-            target: [marketProducts.source, marketProducts.sourceProductId, marketProducts.snapshotDate],
-            set: { name: row.name, sales7d: row.sales7d, gmv30d: row.gmv30d ? String(row.gmv30d) : null, rank: row.rank },
-          });
-        stored++;
-      }
+      const stored = await ingestMarketRows(workspaceId, source, rows);
       results[source] = { stored };
     } catch (error) {
       results[source] = { error: error instanceof Error ? error.message : "failed" };

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { marketProducts } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
-import { fetchWinningProducts } from "@/lib/market";
+import { fetchWinningProducts, ingestMarketRows } from "@/lib/market";
 import { dryRunEnabled, type MarketQuery, type MarketSource } from "@/lib/market/types";
 
 /**
@@ -28,6 +28,7 @@ export async function GET(request: Request) {
     const category = searchParams.get("category") ?? undefined;
     const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 100);
     const refresh = searchParams.get("refresh") === "1";
+    const sort = searchParams.get("sort") ?? "rank";
 
     if (!workspaceId) return NextResponse.json({ error: "workspaceId required" }, { status: 400 });
     if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
@@ -45,58 +46,13 @@ export async function GET(request: Request) {
       });
 
       if (!dryRun) {
-        // Upsert snapshots (unique: source + source_product_id + snapshot_date).
-        for (const row of fetched) {
-          await db
-            .insert(marketProducts)
-            .values({
-              workspaceId,
-              source: row.source,
-              sourceProductId: row.sourceProductId,
-              name: row.name,
-              imageUrl: row.imageUrl,
-              priceMin: row.priceMin ? String(row.priceMin) : null,
-              priceMax: row.priceMax ? String(row.priceMax) : null,
-              currency: row.currency,
-              categoryL1: row.categoryL1,
-              categoryL2: row.categoryL2,
-              categoryL3: row.categoryL3,
-              region: row.region,
-              rank: row.rank,
-              rankPeriod: row.rankPeriod,
-              sales7d: row.sales7d,
-              sales30d: row.sales30d,
-              gmv30d: row.gmv30d ? String(row.gmv30d) : null,
-              growthRate: row.growthRate ? String(row.growthRate) : null,
-              commissionRate: row.commissionRate ? String(row.commissionRate) : null,
-              videoCount: row.videoCount,
-              creatorCount: row.creatorCount,
-              isHot: row.isHot,
-              snapshotDate: new Date(today),
-              metadata: row.metadata ?? {},
-            })
-            .onConflictDoUpdate({
-              target: [marketProducts.source, marketProducts.sourceProductId, marketProducts.snapshotDate],
-              set: {
-                name: row.name,
-                imageUrl: row.imageUrl,
-                priceMin: row.priceMin ? String(row.priceMin) : null,
-                priceMax: row.priceMax ? String(row.priceMax) : null,
-                sales7d: row.sales7d,
-                sales30d: row.sales30d,
-                gmv30d: row.gmv30d ? String(row.gmv30d) : null,
-                growthRate: row.growthRate ? String(row.growthRate) : null,
-                commissionRate: row.commissionRate ? String(row.commissionRate) : null,
-                videoCount: row.videoCount,
-                creatorCount: row.creatorCount,
-                isHot: row.isHot,
-                rank: row.rank,
-              },
-            });
-        }
+        // Upsert with momentum computation (rank trajectory vs prior snapshots).
+        await ingestMarketRows(workspaceId, source, fetched);
       }
 
       // Return the fresh snapshot rows (sample rows in dry-run, stored rows otherwise).
+      const orderByCol =
+        sort === "momentum" ? marketProducts.momentumScore : sort === "gmv" ? marketProducts.gmv30d : marketProducts.rank;
       const stored = await db
         .select()
         .from(marketProducts)
@@ -107,7 +63,7 @@ export async function GET(request: Request) {
             eq(marketProducts.snapshotDate, new Date(today))
           )
         )
-        .orderBy(desc(marketProducts.rank));
+        .orderBy(desc(orderByCol));
 
       const outRows = dryRun ? fetched : stored;
       return NextResponse.json({
@@ -120,13 +76,15 @@ export async function GET(request: Request) {
     }
 
     // No refresh: latest stored snapshots for this source.
+    const orderByCol =
+      sort === "momentum" ? marketProducts.momentumScore : sort === "gmv" ? marketProducts.gmv30d : marketProducts.rank;
     const rows = await db
       .select()
       .from(marketProducts)
       .where(
         and(eq(marketProducts.workspaceId, workspaceId), eq(marketProducts.source, source))
       )
-      .orderBy(desc(marketProducts.snapshotDate), desc(marketProducts.rank))
+      .orderBy(desc(marketProducts.snapshotDate), desc(orderByCol))
       .limit(limit);
     return NextResponse.json({ rows, source, dryRun: false });
   } catch (error) {

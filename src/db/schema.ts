@@ -449,6 +449,7 @@ export const marketProducts = pgTable("market_products", {
   videoCount: integer("video_count"),
   creatorCount: integer("creator_count"),
   isHot: boolean("is_hot").default(false),
+  momentumScore: numeric("momentum_score", { precision: 8, scale: 2 }),
   productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
   snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
