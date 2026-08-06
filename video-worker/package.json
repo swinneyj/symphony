@@ -16,6 +16,9 @@
     "@neondatabase/serverless": "^1.1.0",
     "@vercel/blob": "^2.6.1"
   },
+  "optionalDependencies": {
+    "kokoro-js": "^1.2.1"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",

@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import { neon } from "@neondatabase/serverless";
 
 export const sql = neon(process.env.DATABASE_URL!);
@@ -24,16 +25,18 @@ export type JobRow = {
 };
 
 /**
- * Atomically claims up to `limit` queued jobs (single UPDATE ... RETURNING,
- * so concurrent workers never double-claim).
+ * Atomically claims up to `limit` queued jobs of the given types (single
+ * UPDATE ... RETURNING, so concurrent workers never double-claim).
+ * The img-worker owns product_process via its own SQL; this worker owns
+ * everything else.
  */
-export async function claimJobs(limit: number): Promise<JobRow[]> {
+export async function claimJobs(limit: number, types: string[]): Promise<JobRow[]> {
   const rows = await sql`
     UPDATE video_batch_jobs
     SET status = 'running', updated_at = now()
     WHERE id IN (
       SELECT id FROM video_batch_jobs
-      WHERE status = 'queued'
+      WHERE status = 'queued' AND job_type = ANY(${types})
       ORDER BY created_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
@@ -85,4 +88,44 @@ export async function failWithRetry(job: JobRow, error: string, maxRetries: numb
   } else {
     await markFailed(job.id, error);
   }
+  if (job.batch_id) await updateBatchProgress(job.batch_id);
+}
+
+/**
+ * Recomputes a batch's counts + status from its jobs. Called after any job
+ * in the batch reaches a terminal state.
+ */
+export async function updateBatchProgress(batchId: string) {
+  const rows = await sql`
+    SELECT status, count(*)::int AS n
+    FROM video_batch_jobs
+    WHERE batch_id = ${batchId}
+    GROUP BY status
+  `;
+  const counts = new Map((rows as unknown as { status: string; n: number }[]).map((r) => [r.status, r.n]));
+  const total = [...counts.values()].reduce((a, b) => a + b, 0);
+  const done = counts.get("done") ?? 0;
+  const failed = counts.get("failed") ?? 0;
+  const running = counts.get("running") ?? 0;
+  const queued = counts.get("queued") ?? 0;
+
+  let status: string;
+  if (total === 0 || (queued === 0 && running === 0 && done === 0 && failed === 0)) {
+    status = "queued";
+  } else if (failed === total) {
+    status = "failed";
+  } else if (done === total) {
+    status = "done";
+  } else if (done + failed === total) {
+    status = "partial";
+  } else {
+    status = "running";
+  }
+
+  await sql`
+    UPDATE video_batches
+    SET completed_count = ${done}, failed_count = ${failed}, total_count = ${total},
+        status = ${status}, updated_at = now()
+    WHERE id = ${batchId}
+  `;
 }

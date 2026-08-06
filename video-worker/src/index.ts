@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 import { sql, claimJobs, requeueStaleRunning, type JobRow } from "./db.js";
 import { handleProductProcess } from "./processors/product-process.js";
+import { handleFootage } from "./processors/footage.js";
+import { handleAssemble } from "./processors/assemble.js";
 
 // ─── Config (env) ────────────────────────────────────────────────────────────
 
@@ -12,12 +14,14 @@ const MAX_RETRIES = Number(process.env.WORKER_MAX_RETRIES ?? 3);
 const STALE_MINUTES = Number(process.env.WORKER_STALE_MINUTES ?? 15);
 const PORT = Number(process.env.PORT ?? 8080);
 
+const DRY_RUN = ["1", "true"].includes((process.env.VIDEO_DRY_RUN ?? "").toLowerCase());
+
 if (!DATABASE_URL) {
   console.error("FATAL: DATABASE_URL is required");
   process.exit(1);
 }
-if (!BLOB_READ_WRITE_TOKEN) {
-  console.error("FATAL: BLOB_READ_WRITE_TOKEN is required");
+if (!BLOB_READ_WRITE_TOKEN && !DRY_RUN) {
+  console.error("FATAL: BLOB_READ_WRITE_TOKEN is required (or set VIDEO_DRY_RUN=1)");
   process.exit(1);
 }
 
@@ -37,8 +41,14 @@ async function processJob(job: JobRow) {
     case "product_process":
       await handleProductProcess(job, MAX_RETRIES);
       break;
+    case "footage":
+      await handleFootage(job, MAX_RETRIES);
+      break;
+    case "batch_video":
+      await handleAssemble(job, MAX_RETRIES);
+      break;
     default:
-      // footage / overlay / slideshow / batch_video arrive in later phases.
+      // overlay / slideshow arrive in later phases.
       await sql`
         UPDATE video_batch_jobs
         SET status = 'failed', error = ${`job_type ${job.job_type} not implemented yet`}, updated_at = now()
@@ -57,7 +67,7 @@ async function tick() {
       console.log(`[video-worker] requeued ${reclaimed} stale running job(s)`);
     }
 
-    const jobs = await claimJobs(CONCURRENCY);
+    const jobs = await claimJobs(CONCURRENCY, ["footage", "batch_video", "overlay", "slideshow"]);
     if (jobs.length === 0) return;
 
     console.log(`[video-worker] claiming ${jobs.length} job(s)`);

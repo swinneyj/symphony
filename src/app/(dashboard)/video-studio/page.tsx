@@ -71,6 +71,7 @@ export default function VideoStudioPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [formulas, setFormulas] = useState<Formula[]>([]);
   const [voices, setVoices] = useState<Voice[]>([]);
+  const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadWorkspace = useCallback(async () => {
@@ -95,6 +96,11 @@ export default function VideoStudioPage() {
     if (res.ok) setVoices(await res.json());
   }, []);
 
+  const loadBatches = useCallback(async (wsId: string) => {
+    const res = await fetch(`/api/batches?workspaceId=${wsId}`);
+    if (res.ok) setBatches(await res.json());
+  }, []);
+
   useEffect(() => {
     (async () => {
       await loadWorkspace();
@@ -107,7 +113,8 @@ export default function VideoStudioPage() {
     loadProducts(workspaceId);
     loadFormulas(workspaceId);
     loadVoices(workspaceId);
-  }, [workspaceId, loadProducts, loadFormulas, loadVoices]);
+    loadBatches(workspaceId);
+  }, [workspaceId, loadProducts, loadFormulas, loadVoices, loadBatches]);
 
   if (loading) {
     return (
@@ -138,6 +145,9 @@ export default function VideoStudioPage() {
           <TabsTrigger value="voices" className="gap-1.5">
             <Clapperboard className="h-4 w-4" /> Voices
           </TabsTrigger>
+          <TabsTrigger value="batches" className="gap-1.5">
+            <Play className="h-4 w-4" /> Batch Studio
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="products" className="mt-4">
@@ -162,6 +172,18 @@ export default function VideoStudioPage() {
             workspaceId={workspaceId!}
             voices={voices}
             onChanged={() => loadVoices(workspaceId!)}
+          />
+        </TabsContent>
+
+        <TabsContent value="batches" className="mt-4">
+          <BatchStudioTab
+            workspaceId={workspaceId!}
+            products={products}
+            formulas={formulas}
+            voices={voices}
+            batches={batches}
+            onBatchesChanged={() => loadBatches(workspaceId!)}
+            onProductsChanged={() => loadProducts(workspaceId!)}
           />
         </TabsContent>
       </Tabs>
@@ -854,6 +876,365 @@ function VoicesTab({
                 <a href={voice.sampleUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="h-4 w-4 text-muted-foreground" />
                 </a>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Batch Studio tab ────────────────────────────────────────────────────────
+
+type BatchJobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+interface BatchSummary {
+  id: string;
+  name: string;
+  status: "queued" | "running" | "done" | "partial" | "failed";
+  quality: string;
+  provider: string | null;
+  createdAt: string;
+  jobsTotal: number;
+  jobsDone: number;
+  jobsFailed: number;
+}
+
+interface BatchDetailJob {
+  id: string;
+  jobType: string;
+  status: BatchJobStatus;
+  script: string | null;
+  footageUrl: string | null;
+  finalUrl: string | null;
+  error: string | null;
+  metadata: Record<string, unknown> | null;
+  productName: string;
+  productImage: string | null;
+  productOriginalImage: string | null;
+}
+
+const ENGINES = ["sora", "seedance", "veo", "kling"];
+const BATCH_STATUS_STYLE: Record<string, string> = {
+  queued: "bg-yellow-100 text-yellow-700",
+  running: "bg-blue-100 text-blue-700",
+  done: "bg-green-100 text-green-700",
+  partial: "bg-orange-100 text-orange-700",
+  failed: "bg-red-100 text-red-700",
+};
+
+function BatchStudioTab({
+  workspaceId,
+  products,
+  formulas,
+  voices,
+  batches,
+  onBatchesChanged,
+}: {
+  workspaceId: string;
+  products: Product[];
+  formulas: Formula[];
+  voices: Voice[];
+  batches: BatchSummary[];
+  onBatchesChanged: () => void;
+  onProductsChanged: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [formulaId, setFormulaId] = useState("");
+  const [voiceId, setVoiceId] = useState("");
+  const [quality, setQuality] = useState("standard");
+  const [engine, setEngine] = useState("sora");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [detail, setDetail] = useState<BatchDetailJob[] | null>(null);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [postingJobId, setPostingJobId] = useState<string | null>(null);
+
+  const toggleProduct = (id: string) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
+
+  const postToTikTok = async (batchId: string, job: BatchDetailJob) => {
+    setPostingJobId(job.id);
+    try {
+      const res = await fetch(`/api/batches/${batchId}/jobs/${job.id}/post`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ privacyLevel: "SELF_ONLY" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to post");
+      toast.success(
+        data.dryRun
+          ? `Dry-run posted (publish_id ${data.publishId})`
+          : `Posted to TikTok — ${data.status}`
+      );
+      onBatchesChanged();
+      await loadDetail(batchId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to post");
+    } finally {
+      setPostingJobId(null);
+    }
+  };
+
+  const createBatch = async () => {
+    if (!name.trim() || !formulaId || selected.length === 0) {
+      toast.error("Name, formula and at least one product are required");
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch("/api/batches", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          name,
+          formulaId,
+          voiceId: voiceId || null,
+          quality,
+          provider: engine,
+          productIds: selected,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to create batch");
+      toast.success(`Batch "${name}" created — ${selected.length} video(s) queued`);
+      setName("");
+      setSelected([]);
+      onBatchesChanged();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create batch");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const loadDetail = async (batchId: string) => {
+    setDetailsError(null);
+    try {
+      const res = await fetch(`/api/batches/${batchId}`);
+      if (!res.ok) throw new Error("Failed to load batch detail");
+      const data = await res.json();
+      setDetail(data.jobs);
+      // Poll while anything is still queued/running.
+      const active = data.jobs.some((j: BatchDetailJob) => j.status === "queued" || j.status === "running");
+      if (active) {
+        setTimeout(() => {
+          onBatchesChanged();
+          loadDetail(batchId);
+        }, 4000);
+      }
+    } catch (error) {
+      setDetailsError(error instanceof Error ? error.message : "Failed to load batch detail");
+    }
+  };
+
+  const toggleDetail = async (batchId: string) => {
+    if (expanded === batchId) {
+      setExpanded(null);
+      setDetail(null);
+      return;
+    }
+    setExpanded(batchId);
+    setDetail(null);
+    await loadDetail(batchId);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Create batch */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">New batch</CardTitle>
+          <CardDescription>
+            Pick a formula, select products, and queue AI videos for all of them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-name">Batch name</Label>
+              <Input
+                id="batch-name"
+                placeholder="Summer drop batch"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-formula">Formula</Label>
+              <select
+                id="batch-formula"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                value={formulaId}
+                onChange={(e) => setFormulaId(e.target.value)}
+              >
+                <option value="">Select…</option>
+                {formulas.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                    {f.isSystem ? " (system)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-quality">Quality</Label>
+              <select
+                id="batch-quality"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                value={quality}
+                onChange={(e) => setQuality(e.target.value)}
+              >
+                <option value="fast">Fast · 480p · 4s</option>
+                <option value="standard">Standard · 720p · 6-8s</option>
+                <option value="pro">Pro · 1080p · 8-12s</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-engine">Engine</Label>
+              <select
+                id="batch-engine"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                value={engine}
+                onChange={(e) => setEngine(e.target.value)}
+              >
+                {ENGINES.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Products ({selected.length} selected)</Label>
+            <div className="grid max-h-56 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-3">
+              {products.length === 0 && (
+                <p className="col-span-full text-sm text-muted-foreground">
+                  No products yet — add or import one in the Products tab first.
+                </p>
+              )}
+              {products.map((p) => (
+                <label
+                  key={p.id}
+                  className={`flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm transition-colors ${
+                    selected.includes(p.id)
+                      ? "border-primary bg-primary/5"
+                      : "hover:bg-muted"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(p.id)}
+                    onChange={() => toggleProduct(p.id)}
+                    className="h-4 w-4"
+                  />
+                  <span className="truncate">{p.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <Button onClick={createBatch} disabled={creating}>
+            {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+            Queue batch
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Batch list */}
+      <div className="space-y-3">
+        {batches.length === 0 && (
+          <p className="text-sm text-muted-foreground">No batches yet.</p>
+        )}
+        {batches.map((batch) => (
+          <Card key={batch.id}>
+            <CardContent className="p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">{batch.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {batch.quality} · {batch.provider} ·{" "}
+                    {batch.jobsDone}/{batch.jobsTotal} done
+                    {batch.jobsFailed > 0 && ` · ${batch.jobsFailed} failed`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className={BATCH_STATUS_STYLE[batch.status]}>{batch.status}</Badge>
+                  <Button variant="ghost" size="sm" onClick={() => toggleDetail(batch.id)}>
+                    {expanded === batch.id ? "Hide" : "Details"}
+                  </Button>
+                </div>
+              </div>
+
+              {expanded === batch.id && (
+                <div className="mt-3 space-y-2 border-t pt-3">
+                  {detailsError && (
+                    <p className="text-sm text-red-600">{detailsError}</p>
+                  )}
+                  {detail === null && !detailsError && (
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                    </p>
+                  )}
+                  {detail?.map((job) => (
+                    <div key={job.id} className="flex flex-wrap items-center gap-3 text-sm">
+                      <img
+                        src={job.productImage ?? job.productOriginalImage ?? ""}
+                        alt=""
+                        className="h-10 w-10 rounded-md border object-cover"
+                        onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{job.productName}</span>
+                      <Badge className={BATCH_STATUS_STYLE[job.status]}>{job.status}</Badge>
+                      {(job.footageUrl || job.finalUrl) && (
+                        <a
+                          href={job.finalUrl ?? job.footageUrl!}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-primary hover:underline"
+                        >
+                          Watch video
+                        </a>
+                      )}
+                      {job.finalUrl &&
+                        job.status === "done" &&
+                        !Boolean(job.metadata?.tiktokPublishId) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={postingJobId === job.id}
+                            onClick={() => postToTikTok(batch.id, job)}
+                          >
+                            {postingJobId === job.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Play className="h-3.5 w-3.5" />
+                            )}
+                            Post to TikTok
+                          </Button>
+                        )}
+                      {Boolean(job.metadata?.tiktokPublishId) && job.metadata && (
+                        <Badge className="bg-violet-100 text-violet-700">
+                          posted{job.metadata.tiktokStatus
+                            ? ` · ${String(job.metadata.tiktokStatus)}`
+                            : ""}
+                          {job.metadata.dryRun ? " (dry-run)" : ""}
+                        </Badge>
+                      )}
+                      {job.error && (
+                        <span className="truncate text-xs text-red-600" title={job.error}>
+                          {job.error}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>

@@ -1,0 +1,42 @@
+/**
+ * Scene prompt builder: fills the formula's scene prompt template with product
+ * data and appends the motion-preset camera sentence (Higgsfield ports).
+ */
+
+export const MOTION_PRESETS: Record<string, string> = {
+  none: "",
+  orbit360: "Slow 360-degree orbit around the product, smooth continuous rotation, product stays centered.",
+  floatSpin: "Product floats and spins gently in place, soft studio lighting, subtle shadow below.",
+  earthZoom: "Dramatic zoom from a distant view into a tight product close-up, then a slow push-in.",
+  cardboardCutout: "Flat cardboard-cutout style animation, slight parallax layers, playful tilt.",
+  iceStatue: "Product frozen in a crystalline ice block, camera slowly orbits, frost particles drift.",
+  elevate: "Product rises elegantly from below into frame, slow upward drift, premium feel.",
+  blueDepth: "Deep blue gradient backdrop, product glides forward through depth of field, cinematic.",
+};
+
+export interface PromptProduct {
+  name: string;
+  description: string | null;
+  price: string | null;
+  category?: string | null;
+}
+
+export function fillPlaceholders(template: string, product: PromptProduct): string {
+  return template
+    .replaceAll("{product}", product.name)
+    .replaceAll("{price}", product.price ?? "")
+    .replaceAll("{store}", "TikTok Shop")
+    .replaceAll("{category}", product.category ?? "product");
+}
+
+export function buildScenePrompt(opts: {
+  scenePromptTemplate: string | null;
+  motionPreset: string | null;
+  product: PromptProduct;
+}): string {
+  const base = opts.scenePromptTemplate
+    ? fillPlaceholders(opts.scenePromptTemplate, opts.product)
+    : `${opts.product.name}, professional product showcase video`;
+  const motion = MOTION_PRESETS[opts.motionPreset ?? "none"] ?? "";
+  return [base, motion].filter(Boolean).join(" ");
+}
