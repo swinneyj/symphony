@@ -7,12 +7,14 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-# Runtime stage
-FROM node:22-alpine
+# Runtime stage — Debian slim (glibc) so the host's bws binary (gnu build)
+# can be bind-mounted read-only for `bws run --` secret injection.
+FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
 # ffmpeg for placeholder rendering + Phase 4 assembly (concat, 9:16, VO mix)
-RUN apk add --no-cache ffmpeg
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
