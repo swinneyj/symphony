@@ -10,14 +10,15 @@
 
 | Priority | Engine | Why | Access |
 |---|---|---|---|
-| **Primary** | **Sora 2 (OpenAI API)** | Exact engine BatchBot uses (their site: "✨ AI · Sora 2"). Proven for Shop product footage. First-frame = real product photo → compliance-safe (video matches listing). `openai` SDK **already in package.json** (^6.48.0). Resolution tiers map 1:1 to BatchBot's quality tiers. | `OPENAI_API_KEY` (existing pattern) |
+| **Primary** | **Veo (Gemini API)** | Google's video model; top-tier product footage, often rated ahead of Sora 2/Seedance for product shots. Slippaz has Gemini Pro subscription + wants this evaluated first (Aug 2026). Caveat: consumer subscription ≠ API quota — validate key access with a 2s test clip at Phase 3 kickoff. | `GEMINI_API_KEY` |
 | **Secondary** | **Seedance (ByteDance, via fal.ai)** | This is **Higgsfield's underlying engine** — "Higgsfield quality" without Higgsfield's subscription. Often cheaper per video at high res, excellent product motion. | `FAL_KEY` |
-| **Tertiary** | **Kling 2.x (via fal.ai)** | Best realism-per-dollar for some product categories; fallback when others queue-saturated. | `FAL_KEY` |
+| **Tertiary** | **Sora 2 (OpenAI API)** | Exact engine BatchBot uses (their site: "✨ AI · Sora 2"). Proven for Shop product footage. First-frame = real product photo → compliance-safe. Resolution tiers map 1:1 to BatchBot's quality tiers. | `OPENAI_API_KEY` |
+| **Fallback** | **Kling 2.x (via fal.ai)** | Best realism-per-dollar for some product categories; fallback when others queue-saturated. | `FAL_KEY` |
 | **Do NOT** | Higgsfield subscription | Their moat = consumer UI + preset R&D + community, not raw capability. Paying per-video through them adds a middleman margin. | — |
 
 **What we take from Higgsfield:** the **Viral Presets concept** (ORBIT 360, FLOAT SPIN, EARTH ZOOM, CARD BOARD CUTOUT, SELFIE TWIN, ICE STATUE…). These are camera-move/motion prompt templates — fully replicable as prompt presets in our Formula engine. Their "Supercomputer" LLM layer = prompt/script enhancement, replaceable with our existing cheap LLM provider.
 
-**Provider abstraction** (`src/lib/video/providers/`): one interface (`generateFootage({ imageUrl, prompt, duration, resolution })`), three adapters. Per-workspace default engine + per-batch override. Fallback chain on 429/queue-full.
+**Provider abstraction** (`src/lib/video/providers/`): one interface (`generateFootage({ imageUrl, prompt, duration, resolution })`), four adapters (veo, seedance, sora, kling). Per-workspace default engine + per-batch override. Fallback chain on 429/queue-full.
 
 ---
 
