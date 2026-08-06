@@ -1,5 +1,6 @@
 import { createReadStream, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { blobToken } from "../env.js";
 import { sql, markDone, failWithRetry, type JobRow } from "../db.js";
 import { generateVoiceover } from "../tts.js";
 import { renderPlaceholder } from "../providers.js";
@@ -76,7 +77,7 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     // 4. Upload + store (dry-run without Blob token → marker URL)
     const { put } = await import("@vercel/blob");
     let url: string;
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
+    if (blobToken()) {
       ({ url } = await put(
         `videos/${job.workspace_id}/${job.product_id}/${job.id}.mp4`,
         createReadStream(finalPath),

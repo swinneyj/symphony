@@ -21,7 +21,7 @@ from rembg import remove
 from PIL import Image
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
-BLOB_TOKEN = os.environ.get("BLOB_READ_WRITE_TOKEN")
+BLOB_TOKEN = os.environ.get("BLOB_READ_WRITE_TOKEN") or os.environ.get("BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN")
 POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "5000"))
 CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "2"))
 MAX_RETRIES = int(os.environ.get("WORKER_MAX_RETRIES", "3"))

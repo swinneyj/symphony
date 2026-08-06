@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { blobToken } from "./env.js";
 import { sql, claimJobs, requeueStaleRunning, type JobRow } from "./db.js";
 import { handleProductProcess } from "./processors/product-process.js";
 import { handleFootage } from "./processors/footage.js";

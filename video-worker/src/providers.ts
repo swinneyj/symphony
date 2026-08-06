@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { blobToken } from "./env.js";
 
 /**
  * Video generation providers. One interface, four engines.
@@ -202,7 +203,7 @@ export async function generateFootage(req: FootageRequest): Promise<FootageResul
     const out = `/tmp/dryrun-${req.engine}-${Date.now()}.mp4`;
     await renderPlaceholder(req.durationSec, req.resolution, out);
     const { put } = await import("@vercel/blob");
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
+    if (blobToken()) {
       const { url } = await put(`dryrun/footage/${req.engine}-${Date.now()}.mp4`, createReadStream(out), {
         access: "public",
         contentType: "video/mp4",
