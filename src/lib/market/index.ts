@@ -7,12 +7,12 @@
  * Dry-run (MARKET_DRY_RUN=1): returns realistic sample rows WITHOUT storing
  * them — the DB only ever sees real source data.
  */
-import type { MarketProduct, MarketQuery, MarketSource } from "./types";
+import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./types";
 import { dryRunEnabled } from "./types";
 import * as echotik from "./echotik";
 import * as fastmoss from "./fastmoss";
 import { db } from "@/db";
-import { marketProducts } from "@/db/schema";
+import { marketProducts, marketCreators, marketProductCreators } from "@/db/schema";
 import { eq, and, inArray, lt, desc } from "drizzle-orm";
 
 const ADAPTERS: Record<MarketSource, (q: MarketQuery) => Promise<MarketProduct[]>> = {
@@ -168,4 +168,117 @@ export function sampleProducts(period: MarketQuery["period"]): MarketProduct[] {
     momentumScore: [64, 42, -18, 31, 55, 12, -27, 8, 39, -5][i] ?? 0,
     metadata: { dryRun: true, sample: true },
   }));
+}
+
+// ─── Creators / affiliate layer ──────────────────────────────────────────────
+
+/** Realistic TikTok Shop creators (clearly synthetic — dry-run only). */
+export function sampleCreators(): MarketCreator[] {
+  const samples = [
+    { name: "@vegas.lifestyle", followers: 1840000, engagementRate: 0.061, rating: 4.9, videoCount: 38, salesForProduct: 12400 },
+    { name: "@nightout.justin", followers: 892000, engagementRate: 0.048, rating: 4.7, videoCount: 27, salesForProduct: 8600 },
+    { name: "@clubguide.vegas", followers: 645000, engagementRate: 0.055, rating: 4.8, videoCount: 19, salesForProduct: 5900 },
+    { name: "@bottle.boss", followers: 412000, engagementRate: 0.039, rating: 4.5, videoCount: 14, salesForProduct: 3100 },
+    { name: "@table.reservations", followers: 298000, engagementRate: 0.044, rating: 4.6, videoCount: 11, salesForProduct: 2400 },
+    { name: "@poolparty.diaries", followers: 756000, engagementRate: 0.052, rating: 4.8, videoCount: 23, salesForProduct: 6700 },
+  ];
+  return samples.map((s, i) => ({
+    source: "echotik" as MarketSource,
+    sourceCreatorId: `dryrun-creator-${i + 1}`,
+    name: s.name,
+    avatarUrl: null,
+    followers: s.followers,
+    engagementRate: s.engagementRate,
+    region: "US",
+    rating: s.rating,
+    videoCount: s.videoCount,
+    salesForProduct: s.salesForProduct,
+    metadata: { dryRun: true, sample: true },
+  }));
+}
+
+/** Creators driving a product. Dry-run returns samples (not stored). */
+export async function fetchCreators(
+  source: MarketSource,
+  sourceProductId: string
+): Promise<{ rows: MarketCreator[]; dryRun: boolean }> {
+  if (dryRunEnabled()) {
+    return { rows: sampleCreators(), dryRun: true };
+  }
+  if (source === "echotik") {
+    return { rows: await echotik.fetchProductCreators(sourceProductId), dryRun: false };
+  }
+  throw new Error(`[market] creator feed not implemented for source: ${source}`);
+}
+
+/**
+ * Persists creator profiles + product↔creator junction for a market product
+ * (upsert by source+id+date / creator+product+date). Returns rows persisted.
+ */
+export async function ingestCreators(
+  workspaceId: string,
+  marketProductId: string,
+  source: MarketSource,
+  rows: MarketCreator[]
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  for (const row of rows) {
+    // Upsert creator profile.
+    const [creator] = await db
+      .insert(marketCreators)
+      .values({
+        workspaceId,
+        source,
+        sourceCreatorId: row.sourceCreatorId,
+        name: row.name,
+        avatarUrl: row.avatarUrl,
+        followers: row.followers,
+        engagementRate: row.engagementRate != null ? String(row.engagementRate) : null,
+        region: row.region,
+        rating: row.rating != null ? String(row.rating) : null,
+        snapshotDate: today,
+        metadata: row.metadata ?? {},
+      })
+      .onConflictDoUpdate({
+        target: [marketCreators.source, marketCreators.sourceCreatorId, marketCreators.snapshotDate],
+        set: {
+          name: row.name,
+          avatarUrl: row.avatarUrl,
+          followers: row.followers,
+          engagementRate: row.engagementRate != null ? String(row.engagementRate) : null,
+          region: row.region,
+          rating: row.rating != null ? String(row.rating) : null,
+        },
+      })
+      .returning({ id: marketCreators.id });
+
+    if (!creator) continue;
+
+    // Upsert product↔creator junction.
+    await db
+      .insert(marketProductCreators)
+      .values({
+        workspaceId,
+        creatorId: creator.id,
+        productId: marketProductId,
+        videoCount: row.videoCount,
+        salesForProduct: row.salesForProduct,
+        snapshotDate: today,
+      })
+      .onConflictDoUpdate({
+        target: [
+          marketProductCreators.creatorId,
+          marketProductCreators.productId,
+          marketProductCreators.snapshotDate,
+        ],
+        set: {
+          videoCount: row.videoCount,
+          salesForProduct: row.salesForProduct,
+        },
+      });
+  }
+  return rows.length;
 }

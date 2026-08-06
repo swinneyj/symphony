@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Package,
@@ -13,6 +13,7 @@ import {
   Loader2,
   ExternalLink,
   TrendingUp,
+  Users,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1281,6 +1282,19 @@ interface MarketRow {
   productId: string | null;
 }
 
+interface MarketCreatorRow {
+  id?: string;
+  source: string;
+  name: string;
+  avatarUrl: string | null;
+  followers: number | null;
+  engagementRate: number | null;
+  region: string | null;
+  rating: number | null;
+  videoCount: number | null;
+  salesForProduct: number | null;
+}
+
 function MarketTab({
   workspaceId,
   onAdopted,
@@ -1295,6 +1309,10 @@ function MarketTab({
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [adopting, setAdopting] = useState<string | null>(null);
+  const [creatorsFor, setCreatorsFor] = useState<string | null>(null);
+  const [creators, setCreators] = useState<Record<string, MarketCreatorRow[]>>({});
+  const [creatorsLoading, setCreatorsLoading] = useState<string | null>(null);
+  const [creatorsNotice, setCreatorsNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1336,6 +1354,31 @@ function MarketTab({
       toast.error(error instanceof Error ? error.message : "Failed to adopt");
     } finally {
       setAdopting(null);
+    }
+  };
+
+  const toggleCreators = async (row: MarketRow) => {
+    if (!row.id) return;
+    if (creatorsFor === row.id) {
+      setCreatorsFor(null);
+      return;
+    }
+    setCreatorsFor(row.id);
+    setCreatorsLoading(row.id);
+    setCreatorsNotice(null);
+    try {
+      const res = await fetch(
+        `/api/market/products/${row.id}/creators?refresh=1&workspaceId=${workspaceId}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load creators");
+      setCreators((prev) => ({ ...prev, [row.id!]: data.rows ?? [] }));
+      if (data.notice) setCreatorsNotice(data.notice);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load creators");
+      setCreatorsFor(null);
+    } finally {
+      setCreatorsLoading(null);
     }
   };
 
@@ -1410,7 +1453,8 @@ function MarketTab({
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.sourceProductId} className="border-b last:border-0">
+                  <Fragment key={row.sourceProductId}>
+                  <tr className="border-b last:border-0">
                     <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
                       {row.rank ?? "—"}
                       {row.isHot && <span className="ml-1 text-orange-500">🔥</span>}
@@ -1470,16 +1514,84 @@ function MarketTab({
                     <td className="px-3 py-2 whitespace-nowrap">{fmt(row.videoCount)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{fmt(row.creatorCount)}</td>
                     <td className="px-3 py-2">
-                      {row.productId ? (
-                        <Badge className="bg-green-100 text-green-700">in Products</Badge>
-                      ) : row.id ? (
-                        <Button size="sm" variant="outline" disabled={adopting === row.id} onClick={() => adopt(row)}>
-                          {adopting === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                          Add to Products
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="gap-1"
+                          onClick={() => toggleCreators(row)}
+                          disabled={creatorsLoading === row.id}
+                        >
+                          {creatorsLoading === row.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Users className="h-3.5 w-3.5" />
+                          )}
+                          Creators
                         </Button>
-                      ) : null}
+                        {row.productId ? (
+                          <Badge className="bg-green-100 text-green-700">in Products</Badge>
+                        ) : row.id ? (
+                          <Button size="sm" variant="outline" disabled={adopting === row.id} onClick={() => adopt(row)}>
+                            {adopting === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                            Add
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
+                  {creatorsFor === row.id && (
+                    <tr className="border-b bg-muted/30">
+                      <td colSpan={11} className="px-4 py-3">
+                        {creatorsNotice && (
+                          <p className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
+                            {creatorsNotice}
+                          </p>
+                        )}
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {(creators[row.id] ?? []).map((c) => (
+                            <div
+                              key={c.id ?? c.name}
+                              className="flex items-center gap-3 rounded-md border bg-background p-2.5"
+                            >
+                              {c.avatarUrl ? (
+                                <img
+                                  src={c.avatarUrl}
+                                  alt=""
+                                  className="h-9 w-9 rounded-full object-cover"
+                                  onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                                />
+                              ) : (
+                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-700">
+                                  <Users className="h-4 w-4" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium">{c.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {c.followers != null ? `${(c.followers / 1000).toFixed(0)}k followers` : "—"}
+                                  {c.engagementRate != null && ` · ${(c.engagementRate * 100).toFixed(1)}% eng`}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {c.videoCount != null ? `${c.videoCount} videos` : "—"}
+                                  {c.salesForProduct != null && ` · ${c.salesForProduct.toLocaleString()} sales`}
+                                </p>
+                              </div>
+                              {c.rating != null && (
+                                <Badge className="bg-slate-100 text-slate-700">★ {c.rating}</Badge>
+                              )}
+                            </div>
+                          ))}
+                          {(creators[row.id] ?? []).length === 0 && !creatorsLoading && (
+                            <p className="col-span-full py-4 text-center text-xs text-muted-foreground">
+                              No creator data yet — hit refresh once source credentials are set.
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
                 {rows.length === 0 && !loading && (
                   <tr>

@@ -456,6 +456,41 @@ export const marketProducts = pgTable("market_products", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const marketCreators = pgTable("market_creators", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  sourceCreatorId: text("source_creator_id").notNull(),
+  name: text("name").notNull(),
+  avatarUrl: text("avatar_url"),
+  followers: integer("followers"),
+  engagementRate: numeric("engagement_rate", { precision: 6, scale: 3 }),
+  region: text("region"),
+  rating: numeric("rating", { precision: 4, scale: 2 }),
+  snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const marketProductCreators = pgTable("market_product_creators", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  creatorId: uuid("creator_id")
+    .notNull()
+    .references(() => marketCreators.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => marketProducts.id, { onDelete: "cascade" }),
+  videoCount: integer("video_count"),
+  salesForProduct: integer("sales_for_product"),
+  snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
 export type PlatformPostConfig = {

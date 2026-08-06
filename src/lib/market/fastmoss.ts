@@ -67,6 +67,7 @@ export async function fetchWinningProducts(query: MarketQuery): Promise<MarketPr
     videoCount: intOrNull(r.video_count ?? r.related_video_count),
     creatorCount: intOrNull(r.creator_count ?? r.affiliate_count),
     isHot: Boolean(r.is_hot ?? r.hot_flag),
+    momentumScore: null,
     metadata: { raw: r },
   }));
 }

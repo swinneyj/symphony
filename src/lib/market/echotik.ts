@@ -4,13 +4,14 @@
  * Auth: Basic (dedicated username/password from the EchoTik API dashboard).
  *
  * Endpoints used:
- *   GET /api/v3/echotik/product/ranklist   — period rankings w/ sales+GMV deltas
- *   GET /api/v3/echotik/product/list       — deep product search (T+1)
+ *   GET /api/v3/echotik/product/ranklist            — period rankings w/ sales+GMV deltas
+ *   GET /api/v3/echotik/product/list                — deep product search (T+1)
+ *   GET /api/v3/echotik/product/influencer/list     — creators driving a product (affiliate layer)
  *
  * NOTE: response field names are mapped defensively; exact key names get
  * locked during the first live test (TODO_VERIFY).
  */
-import type { MarketProduct, MarketQuery, MarketSource } from "./types";
+import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 
 const BASE = "https://api.echotik.live";
@@ -98,6 +99,7 @@ function normalize(r: Record<string, any>, fallbackRank: number): MarketProduct 
     videoCount: intOrNull(pick("video_count", "video_num", "sales_video_count")),
     creatorCount: intOrNull(pick("creator_count", "creator_num", "affiliate_count")),
     isHot: Boolean(pick("is_hot", "hot_flag", "is_boom")),
+    momentumScore: null,
     metadata: { raw: r },
   };
 }
@@ -111,4 +113,36 @@ function numOrNull(v: unknown): number | null {
   if (v === null || v === undefined) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Creators driving a specific product (affiliate layer).
+ * GET /api/v3/echotik/product/influencer/list?product_id=...
+ * Returns the creator pool for a product: identity, followers, engagement,
+ * and per-product sales/video contribution.
+ */
+export async function fetchProductCreators(
+  sourceProductId: string,
+  limit = 20
+): Promise<MarketCreator[]> {
+  // TODO_VERIFY: response/param field names for influencer list.
+  const data = await get("/api/v3/echotik/product/influencer/list", {
+    product_id: sourceProductId,
+    page_size: String(limit),
+  });
+
+  const rows: any[] = data?.list ?? data?.influencers ?? data?.items ?? [];
+  return rows.map((r) => ({
+    source: "echotik" as MarketSource,
+    sourceCreatorId: String(r?.user_id ?? r?.unique_id ?? r?.id ?? ""),
+    name: String(r?.nickname ?? r?.unique_id ?? r?.name ?? "Unknown"),
+    avatarUrl: r?.avatar ?? r?.avatar_url ?? null,
+    followers: numOrNull(r?.follower_count ?? r?.followers),
+    engagementRate: numOrNull(r?.engagement_rate ?? r?.interaction_rate),
+    region: r?.region ?? null,
+    rating: numOrNull(r?.rating ?? r?.score),
+    videoCount: numOrNull(r?.video_count ?? r?.product_video_count),
+    salesForProduct: numOrNull(r?.sales ?? r?.product_sales),
+    metadata: { raw: r },
+  }));
 }

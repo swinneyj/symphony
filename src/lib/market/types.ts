@@ -25,20 +25,37 @@ export interface MarketProduct {
   categoryL1: string | null;
   categoryL2: string | null;
   categoryL3: string | null;
-  region: string;
+  region: string | null;
   rank: number | null;
-  rankPeriod: RankPeriod;
+  rankPeriod: RankPeriod | string | null;
   sales7d: number | null;
   sales30d: number | null;
   gmv30d: number | null;
-  growthRate: number | null;       // period-over-period sales growth
+  growthRate: number | null;
   commissionRate: number | null;
   videoCount: number | null;
   creatorCount: number | null;
   isHot: boolean;
+  momentumScore: number | null;
   metadata?: Record<string, unknown>;
 }
 
+/** A creator (influencer) driving sales for a specific market product. */
+export interface MarketCreator {
+  source: MarketSource;
+  sourceCreatorId: string;
+  name: string;
+  avatarUrl: string | null;
+  followers: number | null;
+  engagementRate: number | null;
+  region: string | null;
+  rating: number | null;
+  /** Videos this creator posted promoting the product. */
+  videoCount: number | null;
+  /** Creator's own sales attributed to the product (if source provides). */
+  salesForProduct: number | null;
+  metadata?: Record<string, unknown>;
+}
 export class MissingSourceCredentialsError extends Error {
   constructor(source: MarketSource, keys: string[]) {
     super(
