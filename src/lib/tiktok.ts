@@ -239,6 +239,7 @@ export async function initializeTikTokUpload({
         post_info: {
           title: caption,
           privacy_level: privacyLevel,
+          is_reviewed: false,
           disable_comment: !allowComment,
           disable_duet: !allowDuet,
           disable_stitch: !allowStitch,
