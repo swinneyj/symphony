@@ -12,6 +12,7 @@ import {
   Clapperboard,
   Loader2,
   ExternalLink,
+  TrendingUp,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -148,6 +149,9 @@ export default function VideoStudioPage() {
           <TabsTrigger value="batches" className="gap-1.5">
             <Play className="h-4 w-4" /> Batch Studio
           </TabsTrigger>
+          <TabsTrigger value="market" className="gap-1.5">
+            <TrendingUp className="h-4 w-4" /> Market Research
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="products" className="mt-4">
@@ -184,6 +188,13 @@ export default function VideoStudioPage() {
             batches={batches}
             onBatchesChanged={() => loadBatches(workspaceId!)}
             onProductsChanged={() => loadProducts(workspaceId!)}
+          />
+        </TabsContent>
+
+        <TabsContent value="market" className="mt-4">
+          <MarketTab
+            workspaceId={workspaceId!}
+            onAdopted={() => loadProducts(workspaceId!)}
           />
         </TabsContent>
       </Tabs>
@@ -1240,6 +1251,221 @@ function BatchStudioTab({
           </Card>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ─── Market Research tab ────────────────────────────────────────────────────
+
+interface MarketRow {
+  id?: string;
+  source: string;
+  sourceProductId: string;
+  name: string;
+  imageUrl: string | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  currency: string;
+  categoryL1: string | null;
+  rank: number | null;
+  rankPeriod: string;
+  sales7d: number | null;
+  sales30d: number | null;
+  gmv30d: number | null;
+  growthRate: number | null;
+  commissionRate: number | null;
+  videoCount: number | null;
+  creatorCount: number | null;
+  isHot: boolean;
+  productId: string | null;
+}
+
+function MarketTab({
+  workspaceId,
+  onAdopted,
+}: {
+  workspaceId: string;
+  onAdopted: () => void;
+}) {
+  const [source, setSource] = useState("echotik");
+  const [period, setPeriod] = useState("week");
+  const [rows, setRows] = useState<MarketRow[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [adopting, setAdopting] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setNotice(null);
+    try {
+      const res = await fetch(
+        `/api/market/products?workspaceId=${workspaceId}&source=${source}&period=${period}&refresh=1&limit=50`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load market data");
+      setRows(data.rows ?? []);
+      if (data.notice) setNotice(data.notice);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load market data");
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId, source, period]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const adopt = async (row: MarketRow) => {
+    if (!row.id) return;
+    setAdopting(row.id);
+    try {
+      const res = await fetch(`/api/market/products/${row.id}/adopt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to adopt");
+      toast.success(`"${data.product.name}" added to Products`);
+      onAdopted();
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to adopt");
+    } finally {
+      setAdopting(null);
+    }
+  };
+
+  const fmt = (n: number | null, suffix = "") =>
+    n === null ? "—" : `${Math.round(n).toLocaleString()}${suffix}`;
+  const money = (n: number | null) =>
+    n === null ? "—" : `$${Math.round(n).toLocaleString()}`;
+  const pct = (n: number | null) => (n === null ? "—" : `${(n * 100).toFixed(1)}%`);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <select
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="echotik">EchoTik</option>
+          <option value="fastmoss">FastMoss</option>
+        </select>
+        <select
+          value={period}
+          onChange={(e) => setPeriod(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="day">Daily</option>
+          <option value="week">Weekly</option>
+          <option value="month">Monthly</option>
+        </select>
+        <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
+          {loading ? "Fetching…" : "Refresh"}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Winning products — who climbed fastest this {period}.
+        </span>
+      </div>
+
+      {notice && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          {notice}
+        </p>
+      )}
+
+      <Card>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-muted-foreground">
+                  <th className="px-3 py-2">#</th>
+                  <th className="px-3 py-2">Product</th>
+                  <th className="px-3 py-2">Price</th>
+                  <th className="px-3 py-2">Sales 7d</th>
+                  <th className="px-3 py-2">GMV 30d</th>
+                  <th className="px-3 py-2">Growth</th>
+                  <th className="px-3 py-2">Commission</th>
+                  <th className="px-3 py-2">Videos</th>
+                  <th className="px-3 py-2">Creators</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.sourceProductId} className="border-b last:border-0">
+                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                      {row.rank ?? "—"}
+                      {row.isHot && <span className="ml-1 text-orange-500">🔥</span>}
+                    </td>
+                    <td className="max-w-[260px] px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        {row.imageUrl ? (
+                          <img
+                            src={row.imageUrl}
+                            alt=""
+                            className="h-9 w-9 rounded-md border object-cover"
+                            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-muted">
+                            <Package className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{row.name}</p>
+                          {row.categoryL1 && (
+                            <p className="truncate text-xs text-muted-foreground">{row.categoryL1}</p>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {row.priceMin ? `$${row.priceMin}` : "—"}
+                      {row.priceMax && row.priceMax !== row.priceMin ? `–$${row.priceMax}` : ""}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmt(row.sales7d)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{money(row.gmv30d)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {row.growthRate !== null && (
+                        <Badge className={row.growthRate >= 0.2 ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}>
+                          {row.growthRate >= 0 ? "+" : ""}
+                          {pct(row.growthRate)}
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{pct(row.commissionRate)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmt(row.videoCount)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmt(row.creatorCount)}</td>
+                    <td className="px-3 py-2">
+                      {row.productId ? (
+                        <Badge className="bg-green-100 text-green-700">in Products</Badge>
+                      ) : row.id ? (
+                        <Button size="sm" variant="outline" disabled={adopting === row.id} onClick={() => adopt(row)}>
+                          {adopting === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                          Add to Products
+                        </Button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      No market data yet — hit Refresh (dry-run shows sample data).
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

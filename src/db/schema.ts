@@ -7,6 +7,7 @@ import {
   varchar,
   integer,
   boolean,
+  numeric,
   pgEnum,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
@@ -420,6 +421,38 @@ export const videoBatchJobs = pgTable("video_batch_jobs", {
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const marketProducts = pgTable("market_products", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  sourceProductId: text("source_product_id").notNull(),
+  name: text("name").notNull(),
+  imageUrl: text("image_url"),
+  priceMin: numeric("price_min", { precision: 12, scale: 2 }),
+  priceMax: numeric("price_max", { precision: 12, scale: 2 }),
+  currency: text("currency").default("USD"),
+  categoryL1: text("category_l1"),
+  categoryL2: text("category_l2"),
+  categoryL3: text("category_l3"),
+  region: text("region"),
+  rank: integer("rank"),
+  rankPeriod: text("rank_period"),
+  sales7d: integer("sales_7d"),
+  sales30d: integer("sales_30d"),
+  gmv30d: numeric("gmv_30d", { precision: 14, scale: 2 }),
+  growthRate: numeric("growth_rate", { precision: 8, scale: 3 }),
+  commissionRate: numeric("commission_rate", { precision: 6, scale: 3 }),
+  videoCount: integer("video_count"),
+  creatorCount: integer("creator_count"),
+  isHot: boolean("is_hot").default(false),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+  snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
