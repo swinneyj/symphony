@@ -19,7 +19,7 @@ console.log("using workspace", workspaceId, "user", userId);
 // 1. Product (real image URL so img-worker has something to process)
 const [product] = await sql`
   INSERT INTO products (name, price, original_image_url, status, workspace_id, created_by_id)
-  VALUES ('Smoke Test LED Strip', 12.99, 'https://picsum.photos/seed/smoke1/600/800',
+  VALUES ('Smoke Test Watch', 12.99, 'https://images.unsplash.com/photo-1523275335684-37898b6baf30',
           'raw', ${workspaceId}, ${userId})
   RETURNING id, name
 `;

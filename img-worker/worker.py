@@ -91,6 +91,7 @@ def upload_to_blob(token, path, data, content_type):
             "x-api-version": "12",
             "x-content-type": content_type,
             "x-vercel-blob-access": "private",
+            "x-allow-overwrite": "1",
             "Content-Type": "application/octet-stream",
         },
     )
@@ -128,8 +129,17 @@ def process_job(cur, job_id, workspace_id, product_id):
         if pil_img.mode not in ("RGBA", "RGB", "L"):
             pil_img = pil_img.convert("RGB")
         cutout = remove(pil_img)  # RGBA with transparent background
+        # Pad to a 720x1280 (9:16) canvas — Sora requires the input image to
+        # match the requested size exactly.
+        W, H = 720, 1280
+        scale = min(W / cutout.width, H / cutout.height)
+        nw, nh = max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale))
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+        cutout = cutout.resize((nw, nh), resample)
+        canvas = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+        canvas.paste(cutout, ((W - nw) // 2, (H - nh) // 2), cutout)
         buf = io.BytesIO()
-        cutout.save(buf, format="PNG")
+        canvas.save(buf, format="PNG")
         png = buf.getvalue()
     except Exception as e:
         fail(cur, job_id, f"rembg failed: {e}", None)

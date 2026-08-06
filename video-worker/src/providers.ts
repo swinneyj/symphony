@@ -83,29 +83,57 @@ export async function renderPlaceholder(
 
 async function generateSora(req: FootageRequest): Promise<string> {
   const key = requireKey("sora");
-  // TODO_VERIFY: exact Sora 2 API shape + model id (openai.com/v1/videos).
+  // Sora 2 API (verified against OpenAI docs Aug 2026):
+  //   POST /v1/videos { prompt, input_reference: { image_url }, seconds: 4|8|12, size: "WxH" }
+  //   poll GET /v1/videos/{id} until status completed → .url
   const submit = await fetch("https://api.openai.com/v1/videos", {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({
-      model: "sora-2", // TODO_VERIFY
+      model: "sora-2",
       prompt: req.prompt,
-      image: req.imageUrl, // first frame = product photo
-      duration: req.durationSec,
-      resolution: req.resolution,
+      ...(req.imageUrl
+        ? { input_reference: { image_url: req.imageUrl } }
+        : {}),
+      seconds: String(
+        [4, 8, 12].reduce((a, b) =>
+          Math.abs(b - req.durationSec) < Math.abs(a - req.durationSec) ? b : a
+        )
+      ),
+      size: req.resolution === "1080p" ? "1024x1792" : "720x1280",
     }),
   });
   if (!submit.ok) throw new Error(`sora submit failed: ${submit.status} ${await submit.text()}`);
   const { id } = (await submit.json()) as { id: string };
-  // Poll until the clip is ready (Sora jobs are async).
+  // Poll until the clip is ready (Sora jobs are async). The completed video
+  // object has NO url field — content is downloaded via /videos/{id}/content.
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 5000));
     const poll = await fetch(`https://api.openai.com/v1/videos/${id}`, {
       headers: { authorization: `Bearer ${key}` },
     });
+    // 5xx = transient API trouble → keep polling, don't kill the job.
+    if (poll.status >= 500) {
+      console.log(`[video-worker] sora poll transient ${poll.status} attempt ${i + 1}, retrying`);
+      continue;
+    }
     if (!poll.ok) throw new Error(`sora poll failed: ${poll.status}`);
-    const state = (await poll.json()) as { status?: string; url?: string; error?: { message?: string } };
-    if (state.url) return state.url;
+    const state = (await poll.json()) as { status?: string; error?: { message?: string } };
+    if (state.status === "completed") {
+      const dl = await fetch(`https://api.openai.com/v1/videos/${id}/content`, {
+        headers: { authorization: `Bearer ${key}` },
+      });
+      if (!dl.ok) throw new Error(`sora content download failed: ${dl.status}`);
+      const buf = Buffer.from(await dl.arrayBuffer());
+      const { put } = await import("@vercel/blob");
+      if (!blobToken()) throw new Error("BLOB_READ_WRITE_TOKEN required to store Sora clip");
+      const { url } = await put(`footage/sora-${id}.mp4`, buf, {
+        access: "private",
+        contentType: "video/mp4",
+        token: blobToken(),
+      });
+      return url;
+    }
     if (state.status === "failed" || state.error) {
       throw new Error(`sora generation failed: ${state.error?.message ?? state.status}`);
     }

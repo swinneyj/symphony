@@ -1,3 +1,4 @@
+import { blobToken } from "../env.js";
 import { sql, markDone, failWithRetry, updateBatchProgress, type JobRow } from "../db.js";
 import { generateFootage, type Engine, MissingKeyError } from "../providers.js";
 import { buildScenePrompt } from "../prompt.js";
@@ -34,6 +35,20 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
       await failWithRetry(job, `product ${product.name} has no image (run product processing first)`, maxRetries);
       return;
     }
+    // Deliver the first frame as a base64 data URI so the video provider never
+    // has to fetch anything itself (private Blob URLs would 403; some hosts
+    // block bot fetchers). Sora requires the image to match the requested size
+    // exactly — img-worker pads to 720x1280, so this holds for processed images.
+    let firstFrame = imageUrl;
+    if (!imageUrl.startsWith("data:")) {
+      const res = await fetch(imageUrl, {
+        headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`failed to fetch first-frame image: ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/png";
+      firstFrame = `data:${mime};base64,${buf.toString("base64")}`;
+    }
 
     const scenePrompt = buildScenePrompt({
       scenePromptTemplate: formula?.scene_prompt_template ?? null,
@@ -47,7 +62,7 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
 
     const result = await generateFootage({
       engine,
-      imageUrl,
+      imageUrl: firstFrame,
       prompt: scenePrompt,
       durationSec: formula?.duration_sec ?? 6,
       resolution: (formula?.quality ?? "standard") === "pro" ? "1080p" : "720p",
