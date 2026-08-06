@@ -11,5 +11,6 @@ export const config = {
     "/analytics/:path*",
     "/calendar/:path*",
     "/composer/:path*",
+    "/tiktok/:path*",
   ],
 };

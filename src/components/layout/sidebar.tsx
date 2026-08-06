@@ -25,11 +25,13 @@ import {
   ChevronDown,
   LogOut,
   Sparkles,
+  Music2,
 } from "lucide-react";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Composer", href: "/composer", icon: PenSquare },
+  { name: "TikTok", href: "/tiktok", icon: Music2 },
   { name: "Calendar", href: "/calendar", icon: Calendar },
   { name: "Inbox", href: "/inbox", icon: MessageSquare },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
