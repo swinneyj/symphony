@@ -491,6 +491,20 @@ export const marketProductCreators = pgTable("market_product_creators", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const productWatchlist = pgTable("product_watchlist", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  sourceProductId: text("source_product_id").notNull(),
+  name: text("name").notNull(),
+  imageUrl: text("image_url"),
+  alertRankDrop: integer("alert_rank_drop").default(10),
+  lastAlertedAt: timestamp("last_alerted_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
 export type PlatformPostConfig = {

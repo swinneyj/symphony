@@ -14,7 +14,7 @@
 import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 
-const BASE = "https://api.echotik.live";
+const BASE = "https://open.echotik.live";
 
 function authHeader(): string {
   const u = process.env.ECHOTIK_USERNAME;

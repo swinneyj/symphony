@@ -14,6 +14,7 @@ import {
   ExternalLink,
   TrendingUp,
   Users,
+  Star,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1295,6 +1296,19 @@ interface MarketCreatorRow {
   salesForProduct: number | null;
 }
 
+interface WatchedRow {
+  id: string;
+  source: string;
+  sourceProductId: string;
+  name: string;
+  imageUrl: string | null;
+  currentRank: number | null;
+  spotChange: number | null;
+  momentumScore: number | null;
+  sales7d: number | null;
+  lastSnapshot: string | null;
+}
+
 function MarketTab({
   workspaceId,
   onAdopted,
@@ -1313,6 +1327,10 @@ function MarketTab({
   const [creators, setCreators] = useState<Record<string, MarketCreatorRow[]>>({});
   const [creatorsLoading, setCreatorsLoading] = useState<string | null>(null);
   const [creatorsNotice, setCreatorsNotice] = useState<string | null>(null);
+  const [view, setView] = useState<"discover" | "watched">("discover");
+  const [watched, setWatched] = useState<WatchedRow[]>([]);
+  const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
+  const [watching, setWatching] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1335,6 +1353,51 @@ function MarketTab({
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const loadWatched = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/market/watchlist?workspaceId=${workspaceId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setWatched(data.rows ?? []);
+      setWatchedKeys(new Set((data.rows ?? []).map((w: WatchedRow) => `${w.source}:${w.sourceProductId}`)));
+    } catch {
+      /* non-fatal */
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    loadWatched();
+  }, [loadWatched]);
+
+  const toggleWatch = async (row: MarketRow) => {
+    if (!row.id) return;
+    const key = `${row.source}:${row.sourceProductId}`;
+    const isWatched = watchedKeys.has(key);
+    setWatching(key);
+    try {
+      if (isWatched) {
+        const res = await fetch(
+          `/api/market/watchlist?workspaceId=${workspaceId}&source=${row.source}&sourceProductId=${row.sourceProductId}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) throw new Error("Failed to unwatch");
+      } else {
+        const res = await fetch(`/api/market/watchlist`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workspaceId, source: row.source, sourceProductId: row.sourceProductId, name: row.name, imageUrl: row.imageUrl }),
+        });
+        if (!res.ok) throw new Error("Failed to watch");
+      }
+      toast.success(isWatched ? "Removed from watchlist" : `Watching "${row.name}"`);
+      await loadWatched();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Watchlist error");
+    } finally {
+      setWatching(null);
+    }
+  };
 
   const adopt = async (row: MarketRow) => {
     if (!row.id) return;
@@ -1417,6 +1480,9 @@ function MarketTab({
           <option value="momentum">Sort: Momentum</option>
           <option value="gmv">Sort: GMV 30d</option>
         </select>
+        <Button size="sm" variant={view === "watched" ? "default" : "outline"} onClick={() => setView(view === "watched" ? "discover" : "watched")}>
+          <Star className="h-4 w-4" /> Watched ({watched.length})
+        </Button>
         <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
           {loading ? "Fetching…" : "Refresh"}
@@ -1433,6 +1499,79 @@ function MarketTab({
       )}
 
       <Card>
+        {view === "watched" ? (
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2">Product</th>
+                    <th className="px-3 py-2">Rank</th>
+                    <th className="px-3 py-2">Spot change</th>
+                    <th className="px-3 py-2">Momentum</th>
+                    <th className="px-3 py-2">Sales 7d</th>
+                    <th className="px-3 py-2">Last snapshot</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {watched.map((w) => (
+                    <tr key={w.id} className="border-b last:border-0">
+                      <td className="max-w-[280px] px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          {w.imageUrl ? (
+                            <img src={w.imageUrl} alt="" className="h-9 w-9 rounded-md border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                          ) : (
+                            <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-muted">
+                              <Package className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                          )}
+                          <p className="truncate font-medium">{w.name}</p>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">{w.currentRank ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {w.spotChange !== null && w.spotChange !== 0 && (
+                          <Badge className={w.spotChange > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>
+                            {w.spotChange > 0 ? "▲" : "▼"} {Math.abs(w.spotChange)}
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {w.momentumScore !== null && (
+                          <span className={w.momentumScore >= 0 ? "text-green-600" : "text-red-600"}>
+                            {w.momentumScore >= 0 ? "↑" : "↓"} {Math.abs(Math.round(w.momentumScore))}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{w.sales7d != null ? w.sales7d.toLocaleString() : "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                        {w.lastSnapshot ? new Date(w.lastSnapshot).toLocaleDateString() : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={watching === `${w.source}:${w.sourceProductId}`}
+                          onClick={() => toggleWatch({ id: undefined, source: w.source, sourceProductId: w.sourceProductId, name: w.name, imageUrl: w.imageUrl } as MarketRow)}
+                        >
+                          <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" /> Unwatch
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {watched.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                        Nothing watched yet — hit ☆ on products in Discover to start monitoring their trajectory.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        ) : (
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -1515,6 +1654,20 @@ function MarketTab({
                     <td className="px-3 py-2 whitespace-nowrap">{fmt(row.creatorCount)}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="gap-1"
+                          disabled={watching === `${row.source}:${row.sourceProductId}`}
+                          onClick={() => toggleWatch(row)}
+                          title={watchedKeys.has(`${row.source}:${row.sourceProductId}`) ? "Unwatch" : "Watch"}
+                        >
+                          {watching === `${row.source}:${row.sourceProductId}` ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Star className={`h-3.5 w-3.5 ${watchedKeys.has(`${row.source}:${row.sourceProductId}`) ? "fill-amber-400 text-amber-500" : ""}`} />
+                          )}
+                        </Button>
                         <Button
                           size="sm"
                           variant="ghost"
@@ -1604,6 +1757,7 @@ function MarketTab({
             </table>
           </div>
         </CardContent>
+        )}
       </Card>
     </div>
   );
