@@ -4,9 +4,9 @@
  * BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN — accept both.
  */
 export function blobToken(): string | undefined {
-  return (
+  const raw =
     process.env.BLOB_READ_WRITE_TOKEN ||
     process.env.BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN ||
-    undefined
-  );
+    undefined;
+  return raw?.trim() || undefined;
 }

@@ -205,8 +205,9 @@ export async function generateFootage(req: FootageRequest): Promise<FootageResul
     const { put } = await import("@vercel/blob");
     if (blobToken()) {
       const { url } = await put(`dryrun/footage/${req.engine}-${Date.now()}.mp4`, createReadStream(out), {
-        access: "public",
+        access: "private",
         contentType: "video/mp4",
+        token: blobToken(),
       });
       return { url, engine: req.engine, dryRun: true };
     }

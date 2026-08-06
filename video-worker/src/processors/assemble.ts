@@ -51,7 +51,9 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     if (footageUrl.startsWith("dryrun:")) {
       await renderPlaceholder(6, "720p", footagePath);
     } else {
-      const res = await fetch(footageUrl);
+      const res = await fetch(footageUrl, {
+        headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
+      });
       if (!res.ok) throw new Error(`failed to download footage: ${res.status}`);
       const { writeFile } = await import("node:fs/promises");
       await writeFile(footagePath, Buffer.from(await res.arrayBuffer()));
@@ -81,7 +83,7 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
       ({ url } = await put(
         `videos/${job.workspace_id}/${job.product_id}/${job.id}.mp4`,
         createReadStream(finalPath),
-        { access: "public", contentType: "video/mp4" }
+        { access: "private", contentType: "video/mp4", token: blobToken() }
       ));
     } else {
       url = `dryrun:assemble:${job.id}`;

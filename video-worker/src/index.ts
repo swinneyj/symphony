@@ -8,7 +8,7 @@ import { handleAssemble } from "./processors/assemble.js";
 // ─── Config (env) ────────────────────────────────────────────────────────────
 
 const DATABASE_URL = process.env.DATABASE_URL;
-const BLOB_READ_WRITE_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
+const BLOB_TOKEN = blobToken();
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 5_000);
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 3);
 const MAX_RETRIES = Number(process.env.WORKER_MAX_RETRIES ?? 3);
@@ -21,7 +21,7 @@ if (!DATABASE_URL) {
   console.error("FATAL: DATABASE_URL is required");
   process.exit(1);
 }
-if (!BLOB_READ_WRITE_TOKEN && !DRY_RUN) {
+if (!BLOB_TOKEN && !DRY_RUN) {
   console.error("FATAL: BLOB_READ_WRITE_TOKEN is required (or set VIDEO_DRY_RUN=1)");
   process.exit(1);
 }

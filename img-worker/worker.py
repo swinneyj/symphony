@@ -14,6 +14,7 @@ import json
 import http.server
 import threading
 import urllib.request
+import urllib.error
 
 import psycopg2
 import requests
@@ -21,7 +22,7 @@ from rembg import remove
 from PIL import Image
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
-BLOB_TOKEN = os.environ.get("BLOB_READ_WRITE_TOKEN") or os.environ.get("BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN")
+BLOB_TOKEN = (os.environ.get("BLOB_READ_WRITE_TOKEN") or os.environ.get("BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN") or "").strip() or None
 POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "5000"))
 CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "2"))
 MAX_RETRIES = int(os.environ.get("WORKER_MAX_RETRIES", "3"))
@@ -72,21 +73,32 @@ def claim(cur, limit):
 
 
 def upload_to_blob(token, path, data, content_type):
-    # @vercel/blob REST: PUT https://<store-id>.public.blob.vercel-storage.com/<path>
-    # (same host pattern the SDK uses; TODO_VERIFY against live store)
-    store_id = token.split("_")[2]
-    url = f"https://{store_id}.public.blob.vercel-storage.com/{path}"
+    # Mirrors @vercel/blob SDK put():
+    #   PUT https://vercel.com/api/blob/?pathname=<urlencoded path>
+    #   headers: authorization Bearer, x-api-version: 12, x-content-type,
+    #            x-vercel-blob-access: private
+    # Token layout: vercel_blob_rw_<STORE_ID>_<secret> (store id unused here).
+    import urllib.parse
+
+    qs = urllib.parse.urlencode({"pathname": path})
+    url = f"https://vercel.com/api/blob/?{qs}"
     req = urllib.request.Request(
         url,
         data=data,
         method="PUT",
         headers={
             "Authorization": f"Bearer {token}",
-            "Content-Type": content_type,
+            "x-api-version": "12",
+            "x-content-type": content_type,
+            "x-vercel-blob-access": "private",
+            "Content-Type": "application/octet-stream",
         },
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:  # noqa: F841
+        raise RuntimeError(f"blob upload HTTP {e.code}: {e.read().decode()[:300]}")
 
 
 def process_job(cur, job_id, workspace_id, product_id):
@@ -150,7 +162,7 @@ def fail(cur, job_id, message, retries):
     cur.execute(
         """
         UPDATE video_batch_jobs
-        SET status = CASE WHEN retries < %s THEN 'queued' ELSE 'failed' END,
+        SET status = CASE WHEN retries < %s THEN 'queued'::video_job_status ELSE 'failed'::video_job_status END,
             retries = retries + 1,
             error = %s,
             updated_at = now()
