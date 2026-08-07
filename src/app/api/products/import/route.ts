@@ -45,6 +45,7 @@ export async function POST(request: Request) {
     }
 
     let html: string;
+    let finalUrl: string | null = null;
     try {
       const res = await fetch(parsed.toString(), {
         headers: {
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
         );
       }
       html = await res.text();
+      finalUrl = res.url;
     } catch (error) {
       console.error("Import fetch failed:", error);
       return NextResponse.json(
@@ -70,13 +72,50 @@ export async function POST(request: Request) {
     }
 
     const og = parseOpenGraph(html);
+
+    // TikTok share links (/t/...) redirect to /view/product/<id> and serve a
+    // "Security Check" page to bots (no og tags in HTML) — but the redirect
+    // target carries og_info={"title":...,"image":...}. Parse that first.
+    const resolvedFetchUrl = finalUrl || parsed.toString();
+    let ogInfo: { title?: string; image?: string } | null = null;
+    try {
+      const raw = new URL(resolvedFetchUrl).searchParams.get("og_info");
+      if (raw) ogInfo = JSON.parse(raw);
+    } catch {
+      ogInfo = null;
+    }
+
     const name =
+      ogInfo?.title ||
       og.title ||
       parsed.hostname.replace(/^www\./, "") ||
       "Imported product";
     const description = og.description || null;
-    const originalImageUrl = og.image ? absolutize(og.image, parsed) : null;
+    let originalImageUrl = ogInfo?.image
+      ? absolutize(ogInfo.image, parsed)
+      : og.image
+        ? absolutize(og.image, parsed)
+        : null;
+    // TikTok CDN thumbs default to 260:260 — request the 720:720 variant so
+    // the video pipeline gets a usable source (verified serving 200).
+    if (originalImageUrl) {
+      originalImageUrl = originalImageUrl.replace(/:260:260\.webp/, ":720:720.webp");
+    }
     const price = og.priceAmount || extractJsonLdPrice(html);
+
+    // Resolved product page (e.g. https://www.tiktok.com/view/product/<id>)
+    // without the short-link noise, for dedup + TikTok Shop integration.
+    let resolvedUrl: string | null = null;
+    let tiktokProductId: string | null = null;
+    try {
+      const final = new URL(resolvedFetchUrl);
+      if (final.hostname === "www.tiktok.com" && final.pathname.startsWith("/view/product/")) {
+        resolvedUrl = final.origin + final.pathname;
+        tiktokProductId = final.pathname.split("/").pop() || null;
+      }
+    } catch {
+      /* keep null */
+    }
 
     const [product] = await db
       .insert(products)
@@ -89,9 +128,10 @@ export async function POST(request: Request) {
         currency: og.priceCurrency || "USD",
         originalImageUrl,
         sourceType: "link",
-        sourceUrl: parsed.toString(),
+        sourceUrl: resolvedUrl || parsed.toString(),
+        tiktokProductId,
         status: "raw",
-        metadata: { og: { ...og, image: originalImageUrl } },
+        metadata: { og: { ...og, image: originalImageUrl }, ogInfo },
       })
       .returning();
 
