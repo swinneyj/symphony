@@ -63,6 +63,18 @@ videos live in the private Blob store. The pending **`symphony-blob-public`** Ve
 |---|---|---|
 | **P1** | FB Page video + feed posts via existing page token (mirror post-to-facebook.js) | nothing new (token exists) |
 | **P2** | IG Reel + image posts (container/publish) | IG Business linked to Page + System User scopes |
+
+**IMPLEMENTED 2026-08-07 (commit `f4304c1` + follow-ups on feature/video-studio):**
+- `src/lib/meta/facebook.ts` — video (public URL **or** private-Blob multipart upload — FB needs no public store),
+  feed, pages list, delete · `src/lib/meta/instagram.ts` — container → wait(FINISHED) → publish, image + Reels
+  (mirrors `publish-scheduled-blogs.js`, which was found to already auto-post IG — `INSTAGRAM_USER_ID` +
+  `INSTAGRAM_ACCESS_TOKEN`, same env names).
+- Test harness `scripts/fb-p1-test.mjs`: FB = post + self-delete; IG = container-only (create + FINISHED wait,
+  **never publishes** — no IG delete API, so unpublished containers are the residue-free proof).
+- Blocked on live verification only: tokens live in nokturnal-lifestyle's Vercel env; drop into
+  `/opt/data/fb-test.env` (`FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`,
+  `INSTAGRAM_ACCESS_TOKEN`).
+
 | **P3** | Composer multi-select + scheduler cross-post + draft-first UI | P1+P2 |
 | **P4** | MCP tools + IG insights analytics + IG DM/comment webhooks (Blotato gap) | P3 + public Blob store |
 
