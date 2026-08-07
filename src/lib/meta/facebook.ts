@@ -32,10 +32,15 @@ export type FacebookPageSummary = {
 
 /** Lists Pages a token can manage — the account-connect flow. GET /me/accounts */
 export async function fetchFacebookPages(accessToken: string): Promise<FacebookPageSummary[]> {
-  const data = await graph<{ data?: FacebookPageSummary[] }>(
+  const data = await graph<{ data?: Array<{ id: string; name: string; access_token?: string }> }>(
     `/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(accessToken)}`
   );
-  return data.data ?? [];
+  // Map snake_case API fields → typed shape (page ops need the page-scoped token).
+  return (data.data ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    accessToken: p.access_token ?? "",
+  }));
 }
 
 /**
