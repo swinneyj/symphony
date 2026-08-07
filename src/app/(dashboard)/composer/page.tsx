@@ -78,6 +78,9 @@ export default function ComposerPage() {
   const [generatedHashtags, setGeneratedHashtags] = useState<string[]>([]);
   const [previewPlatform, setPreviewPlatform] = useState<Platform>("instagram");
   const [publishResults, setPublishResults] = useState<Record<string, { status: string; error?: string; externalId?: string }> | null>(null);
+  // Connected social accounts for the workspace + per-platform selection
+  const [accounts, setAccounts] = useState<Array<{ id: string; platform: string; accountName: string; accountUsername: string | null }>>([]);
+  const [platformAccount, setPlatformAccount] = useState<Record<string, string>>({});
 
   useEffect(() => {
     // Load the user's first workspace so posts can be saved against it
@@ -89,12 +92,27 @@ export default function ComposerPage() {
       .catch(() => toast.error("Could not load workspace"));
   }, []);
 
+  // Load connected accounts so the composer can pick which page/account to use
+  useEffect(() => {
+    if (!workspaceId) return;
+    fetch(`/api/accounts?workspaceId=${workspaceId}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows: Array<{ id: string; platform: string; accountName: string; accountUsername: string | null; status: string }>) =>
+        setAccounts(rows.filter((r) => r.status === "connected"))
+      )
+      .catch(() => {});
+  }, [workspaceId]);
+
   const togglePlatform = (platform: Platform) => {
-    setSelectedPlatforms((prev) =>
-      prev.includes(platform)
-        ? prev.filter((p) => p !== platform)
-        : [...prev, platform]
-    );
+    setSelectedPlatforms((prev) => {
+      if (prev.includes(platform)) return prev.filter((p) => p !== platform);
+      // Default the account picker to the first connected account for this platform
+      const candidates = accounts.filter((a) => a.platform === (platform === "x" ? "twitter" : platform));
+      if (candidates.length > 0) {
+        setPlatformAccount((cur) => (cur[platform] ? cur : { ...cur, [platform]: candidates[0].id }));
+      }
+      return [...prev, platform];
+    });
   };
 
   const generate = async (type: "caption" | "hashtag", prompt: string) => {
@@ -143,7 +161,13 @@ export default function ComposerPage() {
     setIsSaving(true);
     try {
       // New map convention: platformConfigs = { platform: perPlatformConfig }.
-      const platformConfigs = Object.fromEntries(selectedPlatforms.map((p) => [p, {}]));
+      // The composer-picked account (social_accounts.id) rides along.
+      const platformConfigs = Object.fromEntries(
+        selectedPlatforms.map((p) => [
+          p,
+          platformAccount[p] ? { accountId: platformAccount[p] } : {},
+        ])
+      );
       const res = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -239,10 +263,42 @@ export default function ComposerPage() {
                   );
                 })}
               </div>
+              <div className="mt-3 space-y-2">
+                {selectedPlatforms.map((p) => {
+                  const options = accounts.filter(
+                    (a) => a.platform === (p === "x" ? "twitter" : p)
+                  );
+                  const platformName = platforms.find((x) => x.id === p)?.name ?? p;
+                  if (options.length === 0) {
+                    return (
+                      <p key={p} className="text-xs text-amber-600">
+                        {platformName}: no connected account — add one in Settings → Connected Accounts
+                      </p>
+                    );
+                  }
+                  return (
+                    <div key={p} className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground">{platformName}:</span>
+                      <select
+                        value={platformAccount[p] ?? ""}
+                        onChange={(e) =>
+                          setPlatformAccount((cur) => ({ ...cur, [p]: e.target.value }))
+                        }
+                        className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+                      >
+                        {options.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.accountName}
+                            {a.accountUsername ? ` (@${a.accountUsername})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
-
-          {/* Content Editor */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Post Content</CardTitle>

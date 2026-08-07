@@ -100,7 +100,15 @@ async function publishToPlatform(
   post: typeof posts.$inferSelect,
   accounts: Array<typeof socialAccounts.$inferSelect>
 ): Promise<PlatformPublishState> {
-  const account = accounts.find((a) => a.platform === platform && a.status === "connected");
+  const config = (post.platformConfigs ?? {}) as Record<string, PlatformPostConfig>;
+  // Composer-picked account (platformConfigs[platform].accountId) wins;
+  // fall back to the first connected account for legacy posts.
+  const connected = accounts.filter(
+    (a) => a.platform === platform && a.status === "connected"
+  );
+  const account = config[platform]?.accountId
+    ? connected.find((a) => a.id === config[platform]!.accountId) ?? connected[0]
+    : connected[0];
 
   switch (platform) {
     case "facebook": {

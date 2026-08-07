@@ -542,6 +542,8 @@ export type PlatformPublishState = {
 export type PlatformPostConfig = {
   /** Legacy composer field (the whole config was `{ platforms: [...] }`). */
   platforms?: string[];
+  /** social_accounts.id chosen in the composer — which page/account to publish with. */
+  accountId?: string;
   /** Per-platform publish state, recorded by the publish dispatcher. */
   publish?: PlatformPublishState;
   mediaOrder?: string[];
