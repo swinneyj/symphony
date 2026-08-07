@@ -313,22 +313,30 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
     return { url, dryRun: false };
   } catch (primaryError) {
     console.warn(
-      `[video-worker] gemini scene image failed, falling back to fal flux: ${(primaryError as Error).message}`
+      `[video-worker] gemini scene image failed, falling back to openai gpt-image-1: ${(primaryError as Error).message}`
     );
-    // Fallback: fal flux-pro (cheaper, weaker at product text). Only when a
-    // usable FAL_KEY exists (the stored one has been malformed — see notes).
-    const falKey = process.env.FAL_KEY;
-    if (falKey) {
-      const url = await falImageSubmit("/fal-ai/flux-pro/v1.1", falKey, {
-        prompt: req.prompt,
-        image_url: req.imageUrl,
-        num_images: 1,
-        aspect_ratio: "9:16",
-        output_format: "png",
-      });
+    try {
+      const url = await openaiImageEdit(req.imageUrl, req.prompt);
       return { url, dryRun: false };
+    } catch (openaiError) {
+      console.warn(
+        `[video-worker] openai scene image failed, falling back to fal flux: ${(openaiError as Error).message}`
+      );
+      // Fallback: fal flux-pro (cheaper, weaker at product text). Only when a
+      // usable FAL_KEY exists (the stored one has been malformed — see notes).
+      const falKey = process.env.FAL_KEY;
+      if (falKey) {
+        const url = await falImageSubmit("/fal-ai/flux-pro/v1.1", falKey, {
+          prompt: req.prompt,
+          image_url: req.imageUrl,
+          num_images: 1,
+          aspect_ratio: "9:16",
+          output_format: "png",
+        });
+        return { url, dryRun: false };
+      }
+      throw primaryError;
     }
-    throw primaryError;
   }
 }
 
@@ -399,6 +407,68 @@ async function geminiImageEdit(
     return url;
   }
   throw new Error("gemini scene image: no image in response");
+}
+
+/**
+ * OpenAI gpt-image-1 image-edit fallback:
+ * POST /v1/images/edits (multipart: reference image + prompt).
+ * gpt-image-1 caps output at 2:3 (1024x1536) — the result is padded to the
+ * 9:16 (720x1280) canvas Sora requires, then stored to private Blob.
+ */
+async function openaiImageEdit(imageUrl: string, prompt: string): Promise<string> {
+  const key = requireKey("sora"); // OPENAI_API_KEY
+  const res = await fetch(imageUrl, {
+    headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
+  });
+  if (!res.ok) throw new Error(`failed to fetch reference image for openai edit: ${res.status}`);
+  const imgBuf = Buffer.from(await res.arrayBuffer());
+
+  const form = new FormData();
+  form.append("model", "gpt-image-1");
+  form.append("prompt", prompt);
+  form.append("size", "1024x1536");
+  form.append("quality", "medium");
+  form.append("image", new Blob([imgBuf], { type: "image/png" }), "product.png");
+
+  const gen = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}` }, // boundary set by FormData; no content-type
+    body: form,
+  });
+  if (!gen.ok) throw new Error(`openai image edit failed: ${gen.status} ${(await gen.text()).slice(0, 200)}`);
+  const data = (await gen.json()) as { data?: Array<{ b64_json?: string; url?: string }> };
+  const b64 = data.data?.[0]?.b64_json ?? data.data?.[0]?.url ?? null;
+  if (!b64) throw new Error("openai image edit: empty response");
+
+  const { writeFile } = await import("node:fs/promises");
+  const { execFileSync } = await import("node:child_process");
+  const tmp = `/tmp/openai-edit-${Date.now()}.png`;
+  const padded = `/tmp/openai-pad-${Date.now()}.png`;
+  if (b64.startsWith("data:") || b64.includes("base64,")) {
+    await writeFile(tmp, Buffer.from(b64.split("base64,")[1] ?? b64, "base64"));
+  } else if (b64.startsWith("http")) {
+    const dl = await fetch(b64);
+    if (!dl.ok) throw new Error(`openai edit download failed: ${dl.status}`);
+    await writeFile(tmp, Buffer.from(await dl.arrayBuffer()));
+  } else {
+    await writeFile(tmp, Buffer.from(b64, "base64"));
+  }
+  execFileSync(
+    "ffmpeg",
+    [
+      "-y", "-i", tmp,
+      "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+      "-frames:v", "1", padded,
+    ],
+    { stdio: "ignore", timeout: 60_000 }
+  );
+  const { put } = await import("@vercel/blob");
+  const { url } = await put(`scene/${Date.now()}.png`, createReadStream(padded), {
+    access: "private",
+    contentType: "image/png",
+    token: blobToken(),
+  });
+  return url;
 }
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
