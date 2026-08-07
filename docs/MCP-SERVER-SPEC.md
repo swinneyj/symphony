@@ -1,7 +1,7 @@
 # Symphony MCP Server — Spec
 
 **Date:** 2026-08-07 · **Branch:** `feature/video-studio` (existing temp branch — Slippaz: MCP work lives there, NOT main) · **PR:** rides PR #3's branch (MCP commits update its head)
-**Status:** APPROVED (decisions §11) — build pending
+**Status:** APPROVED (decisions §11) — **IMPLEMENTED 2026-08-07** (Phase 1 on `feature/video-studio`, E2E 15/15 green, `npm run build` clean). See `docs/MCP-CLIENTS.md` for client setup.
 
 ---
 

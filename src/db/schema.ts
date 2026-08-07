@@ -505,6 +505,25 @@ export const productWatchlist = pgTable("product_watchlist", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+// ─── API KEYS (MCP / agent access) ───────────────────────────────────────────
+
+export const apiKeys = pgTable("api_keys", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  name: text("name").notNull(),
+  keyHash: text("key_hash").notNull(),
+  keyPrefix: text("key_prefix").notNull(),
+  scopes: text("scopes").array().notNull().default([]),
+  lastUsedAt: timestamp("last_used_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  revokedAt: timestamp("revoked_at", { mode: "date" }),
+});
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
 export type PlatformPostConfig = {

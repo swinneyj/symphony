@@ -8,6 +8,7 @@ import {
   Users,
   Bell,
   Cable,
+  KeyRound,
   Camera,
   CheckCircle2,
   XCircle,
@@ -33,6 +34,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { ApiKeysPanel } from "./api-keys-panel";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -152,7 +154,16 @@ export default function SettingsPage() {
             <Cable className="h-4 w-4" />
             API Connections
           </TabsTrigger>
+          <TabsTrigger value="api-keys" className="gap-1.5">
+            <KeyRound className="h-4 w-4" />
+            API Keys
+          </TabsTrigger>
         </TabsList>
+
+        {/* API Keys Tab */}
+        <TabsContent value="api-keys" className="space-y-6">
+          <ApiKeysPanel />
+        </TabsContent>
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-6">
