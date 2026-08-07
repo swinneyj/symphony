@@ -77,6 +77,7 @@ export default function ComposerPage() {
   const [generatedCaptions, setGeneratedCaptions] = useState<string[]>([]);
   const [generatedHashtags, setGeneratedHashtags] = useState<string[]>([]);
   const [previewPlatform, setPreviewPlatform] = useState<Platform>("instagram");
+  const [publishResults, setPublishResults] = useState<Record<string, { status: string; error?: string; externalId?: string }> | null>(null);
 
   useEffect(() => {
     // Load the user's first workspace so posts can be saved against it
@@ -135,16 +136,24 @@ export default function ComposerPage() {
       toast.error("Write some content first");
       return;
     }
+    if (selectedPlatforms.length === 0) {
+      toast.error("Pick at least one platform");
+      return;
+    }
     setIsSaving(true);
     try {
+      // New map convention: platformConfigs = { platform: perPlatformConfig }.
+      const platformConfigs = Object.fromEntries(selectedPlatforms.map((p) => [p, {}]));
       const res = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           workspaceId,
           content,
-          platformConfigs: { platforms: selectedPlatforms },
-          status,
+          platformConfigs,
+          // Draft-first: "Publish now" saves a draft, then dispatches the
+          // real cross-post (FB live; IG/TikTok report their media gap).
+          status: status === "published" ? "draft" : status,
           scheduledFor:
             status === "scheduled"
               ? new Date(`${scheduleDate}T${scheduleTime}`).toISOString()
@@ -153,9 +162,27 @@ export default function ComposerPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to save post");
-      if (status === "draft") toast.success("Draft saved");
-      else if (status === "scheduled") toast.success("Post scheduled");
-      else toast.success("Post published");
+
+      if (status === "published") {
+        const pub = await fetch(`/api/posts/${data.id}/publish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const pubData = await pub.json();
+        if (!pub.ok) throw new Error(pubData.error || "Failed to publish");
+        setPublishResults(pubData.results ?? {});
+        const ok = (Object.values(pubData.results ?? {}) as Array<{ status?: string }>).filter(
+          (r) => r.status === "published"
+        ).length;
+        toast.success(
+          ok > 0 ? `Published to ${ok} platform${ok > 1 ? "s" : ""} ✅` : "Publish attempted — check per-platform results"
+        );
+      } else if (status === "draft") {
+        toast.success("Draft saved");
+      } else {
+        toast.success("Post scheduled — cross-post fires on schedule");
+      }
       setContent("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save post");
@@ -354,6 +381,34 @@ export default function ComposerPage() {
               </Button>
             </div>
           </div>
+
+          {/* Per-platform publish results */}
+          {publishResults && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Publish results</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {Object.entries(publishResults).map(([platform, r]) => (
+                  <div key={platform} className="flex items-start justify-between gap-2 text-sm">
+                    <span className="font-medium capitalize">{platform}</span>
+                    <span
+                      className={
+                        r.status === "published"
+                          ? "text-emerald-600"
+                          : r.status === "skipped"
+                            ? "text-muted-foreground"
+                            : "text-red-500"
+                      }
+                    >
+                      {r.status}
+                      {r.error ? ` — ${r.error}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Right Sidebar */}

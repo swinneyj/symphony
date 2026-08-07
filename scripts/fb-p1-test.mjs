@@ -32,14 +32,20 @@ try {
     const pages = await fetchFacebookPages(fbToken);
     check("fb token can list pages", pages.some((p) => p.id === pageId), pages.map((p) => p.name).join(", "));
 
+    // Page operations require the PAGE-scoped token (a user token 403s on
+    // /{page-id}/feed even with all scopes) — resolve it from /me/accounts.
+    const page = pages.find((p) => p.id === pageId);
+    const pageToken = page?.accessToken ?? fbToken;
+    check("resolved page-scoped token", page?.accessToken ? true : false, page?.name ?? "falling back to user token");
+
     const { postId } = await facebookPostFeed({
       pageId,
-      accessToken: fbToken,
+      accessToken: pageToken,
       message: "Symphony integration test — this post will self-delete.",
     });
     check("fb feed post created", !!postId, `postId=${postId}`);
 
-    await deleteFacebookPost({ postId, accessToken: fbToken });
+    await deleteFacebookPost({ postId, accessToken: pageToken });
     check("fb feed post deleted", true, `postId=${postId}`);
   } else {
     check("fb checks skipped (no FACEBOOK_* env)", true);

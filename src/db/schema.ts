@@ -532,8 +532,18 @@ export const apiKeys = pgTable("api_keys", {
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
+export type PlatformPublishState = {
+  status: "pending" | "published" | "failed" | "skipped";
+  externalId?: string;
+  error?: string;
+  publishedAt?: string;
+};
+
 export type PlatformPostConfig = {
-  platforms: string[];
+  /** Legacy composer field (the whole config was `{ platforms: [...] }`). */
+  platforms?: string[];
+  /** Per-platform publish state, recorded by the publish dispatcher. */
+  publish?: PlatformPublishState;
   mediaOrder?: string[];
   firstComment?: string;
   location?: string;
