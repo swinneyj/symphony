@@ -10,12 +10,13 @@ export type JobRow = {
   workspace_id: string;
   product_id: string | null;
   formula_id: string | null;
-  job_type: "product_process" | "footage" | "overlay" | "slideshow" | "batch_video";
+  job_type: "product_process" | "footage" | "overlay" | "slideshow" | "batch_video" | "scene_render";
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   retries: number;
   metadata: Record<string, unknown> | null;
   error: string | null;
   script: string | null;
+  scene_image_url: string | null;
   footage_url: string | null;
   voiceover_url: string | null;
   final_url: string | null;
@@ -57,14 +58,15 @@ export async function requeueStaleRunning(staleMinutes: number): Promise<number>
   return (rows as unknown as { id: string }[]).length;
 }
 
-export async function markDone(jobId: string, fields: Partial<Pick<JobRow, "final_url" | "footage_url" | "voiceover_url" | "thumbnail_url">> = {}) {
+export async function markDone(jobId: string, fields: Partial<Pick<JobRow, "final_url" | "footage_url" | "voiceover_url" | "thumbnail_url" | "scene_image_url">> = {}) {
   await sql`
     UPDATE video_batch_jobs
     SET status = 'done', updated_at = now(),
         final_url = ${fields.final_url ?? null},
         footage_url = ${fields.footage_url ?? null},
         voiceover_url = ${fields.voiceover_url ?? null},
-        thumbnail_url = ${fields.thumbnail_url ?? null}
+        thumbnail_url = ${fields.thumbnail_url ?? null},
+        scene_image_url = ${fields.scene_image_url ?? null}
     WHERE id = ${jobId}
   `;
 }

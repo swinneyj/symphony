@@ -36,19 +36,19 @@ const [batch] = await sql`
   VALUES ('smoke-test-e2e', ${workspaceId}, ${userId}, ${formula.id}, ${voice.id}, 'sora', 'queued', 1, 0, 0)
   RETURNING id
 `;
-// 4. Footage job (chain will enqueue batch_video)
-const [job] = await sql`
-  INSERT INTO video_batch_jobs (batch_id, workspace_id, product_id, formula_id, job_type, status, script, retries, created_at, updated_at)
-  VALUES (${batch.id}, ${workspaceId}, ${product.id}, ${formula.id}, 'footage', 'queued',
-          'Watch this — the Smoke Test LED Strip is the upgrade your room needs.',
-          0, now(), now())
-  RETURNING id
-`;
-// 5. product_process job for img-worker (rembg + Blob upload — free path)
+// 4. Chain jobs: product_process (img-worker) → scene_render (video-worker)
+// → footage (chained by scene_render) → batch_video (chained by footage).
 const [imgJob] = await sql`
   INSERT INTO video_batch_jobs (batch_id, workspace_id, product_id, formula_id, job_type, status, retries, created_at, updated_at)
   VALUES (${batch.id}, ${workspaceId}, ${product.id}, ${formula.id}, 'product_process', 'queued',
           0, now(), now())
   RETURNING id
 `;
-console.log(JSON.stringify({ productId: product.id, batchId: batch.id, jobId: job.id, imgJobId: imgJob.id }));
+const [sceneJob] = await sql`
+  INSERT INTO video_batch_jobs (batch_id, workspace_id, product_id, formula_id, job_type, status, script, retries, created_at, updated_at)
+  VALUES (${batch.id}, ${workspaceId}, ${product.id}, ${formula.id}, 'scene_render', 'queued',
+          'Watch this — the Smoke Test LED Strip is the upgrade your room needs.',
+          0, now(), now())
+  RETURNING id
+`;
+console.log(JSON.stringify({ productId: product.id, batchId: batch.id, imgJobId: imgJob.id, sceneJobId: sceneJob.id }));

@@ -69,6 +69,9 @@ export const SCENE_PRESETS: { id: string; label: string; prompt: string }[] = [
   { id: "studio", label: "Clean studio", prompt: "clean minimal studio backdrop, soft shadows" },
   { id: "shelf", label: "Retail shelf", prompt: "retail shelf display, bright even lighting" },
   { id: "bath", label: "Bathroom spa", prompt: "spa bathroom scene, steam and candles" },
+  // Spec §10 (2026-08-07): the $1.3M TikTok Shop case-study scenes.
+  { id: "vanity_table", label: "Vanity table", prompt: "dark brown wood vanity table with natural lighting" },
+  { id: "kitchen_counter", label: "Marble counter", prompt: "bright marble kitchen counter with soft daylight" },
   { id: "custom", label: "Custom prompt", prompt: "" },
 ];
 

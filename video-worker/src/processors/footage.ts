@@ -30,7 +30,11 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
       : [null];
 
     const engine = (batch?.provider ?? process.env.VIDEO_DEFAULT_ENGINE ?? "sora") as Engine;
-    const imageUrl = product.processed_image_url ?? product.original_image_url;
+    // First frame: the AI scene render when present (spec §10 — never feed the
+    // brand's listing photo to the video provider), else processed/original.
+    const meta = (job.metadata ?? {}) as { sourceFrame?: string; sceneImageUrl?: string };
+    const imageUrl =
+      meta.sceneImageUrl ?? product.processed_image_url ?? product.original_image_url;
     if (!imageUrl) {
       await failWithRetry(job, `product ${product.name} has no image (run product processing first)`, maxRetries);
       return;
@@ -40,7 +44,10 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
     // block bot fetchers). Sora requires the image to match the requested size
     // exactly — img-worker pads to 720x1280, so this holds for processed images.
     let firstFrame = imageUrl;
-    if (!imageUrl.startsWith("data:")) {
+    if (imageUrl.startsWith("dryrun:")) {
+      // Dry-run marker: no real image exists; the provider dry-run path ignores it.
+      firstFrame = imageUrl;
+    } else if (!imageUrl.startsWith("data:")) {
       const res = await fetch(imageUrl, {
         headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
       });

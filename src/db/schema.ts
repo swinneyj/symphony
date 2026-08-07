@@ -26,7 +26,7 @@ export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approve
 export const productSourceEnum = pgEnum("product_source", ["manual", "link", "tiktok_showcase"]);
 export const productStatusEnum = pgEnum("product_status", ["raw", "processing", "ready", "failed"]);
 export const videoProviderEnum = pgEnum("video_provider", ["sora", "seedance", "kling", "openai_tts", "elevenlabs", "kokoro"]);
-export const videoJobTypeEnum = pgEnum("video_job_type", ["product_process", "footage", "overlay", "slideshow", "batch_video"]);
+export const videoJobTypeEnum = pgEnum("video_job_type", ["product_process", "footage", "overlay", "slideshow", "batch_video", "scene_render"]);
 export const videoJobStatusEnum = pgEnum("video_job_status", ["queued", "running", "done", "failed", "cancelled"]);
 export const videoBatchStatusEnum = pgEnum("video_batch_status", ["queued", "running", "done", "partial", "failed"]);
 
@@ -341,6 +341,7 @@ export const products = pgTable("products", {
   currency: text("currency").default("USD"),
   originalImageUrl: text("original_image_url"),
   processedImageUrl: text("processed_image_url"),
+  sceneImageUrl: text("scene_image_url"),
   sourceType: productSourceEnum("source_type").notNull().default("manual"),
   sourceUrl: text("source_url"),
   tiktokProductId: text("tiktok_product_id"),
@@ -371,6 +372,10 @@ export const videoFormulas = pgTable("video_formulas", {
   category: text("category"),
   scriptTemplate: text("script_template").notNull(),
   scenePromptTemplate: text("scene_prompt_template"),
+  // 'render' (default): AI re-renders the product into a custom scene before
+  // image-to-video (compliance: brand-owned listing photos must not be copied).
+  // 'original': use the user's own photography as the first frame.
+  sourceFrame: text("source_frame").notNull().default("render"),
   motionPreset: text("motion_preset").default("none"),
   voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
   durationSec: integer("duration_sec").default(6),
@@ -412,6 +417,7 @@ export const videoBatchJobs = pgTable("video_batch_jobs", {
   jobType: videoJobTypeEnum("job_type").notNull().default("batch_video"),
   status: videoJobStatusEnum("status").notNull().default("queued"),
   script: text("script"),
+  sceneImageUrl: text("scene_image_url"),
   footageUrl: text("footage_url"),
   voiceoverUrl: text("voiceover_url"),
   finalUrl: text("final_url"),

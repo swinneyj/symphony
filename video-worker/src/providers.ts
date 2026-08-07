@@ -224,6 +224,183 @@ async function generateKling(req: FootageRequest): Promise<string> {
   });
 }
 
+// ─── Scene image (AI re-render) ──────────────────────────────────────────────
+
+export interface SceneRenderRequest {
+  /** Product image (listing photo or processed cutout) used as reference only. */
+  imageUrl: string;
+  /** Scene description, e.g. "dark brown wood vanity table, natural lighting". */
+  prompt: string;
+  quality: "standard" | "pro";
+}
+
+export interface SceneRenderResult {
+  url: string;
+  dryRun: boolean;
+}
+
+/**
+ * Re-renders the product into an ORIGINAL scene (spec §10): the input image is
+ * used only as a reference for scale/dimension, never copied — brand-owned
+ * listing photos must not appear as the video's first frame (TikTok Shop
+ * copyright compliance).
+ *
+ * Primary: fal Gemini 2.5 Flash Image ("Nano Banana Pro" consumer name) — best
+ * at preserving product text/logos. Fallback: flux-pro (cheaper, weaker text).
+ * Queue ids marked TODO_VERIFY — confirmed at first real call.
+ */
+async function falImageSubmit(queueId: string, key: string, body: unknown): Promise<string> {
+  const submit = await fetch(`https://queue.fal.run${queueId}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!submit.ok) throw new Error(`fal image submit failed: ${submit.status} ${await submit.text()}`);
+  const { status_url, request_id } = (await submit.json()) as { status_url?: string; request_id?: string };
+  const pollUrl = status_url ?? `https://queue.fal.run/fal-ai/requests/${request_id}/status`;
+  for (let i = 0; i < 120; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const poll = await fetch(pollUrl, { headers: { authorization: `Bearer ${key}` } });
+    if (!poll.ok) throw new Error(`fal image poll failed: ${poll.status}`);
+    const state = (await poll.json()) as { status?: string; response_url?: string; error?: unknown };
+    if (state.status === "COMPLETED" && state.response_url) {
+      const res = await fetch(state.response_url, { headers: { authorization: `Bearer ${key}` } });
+      const data = (await res.json()) as { images?: Array<{ url?: string } | string>; image?: { url?: string } | string };
+      const images = data.images ?? [];
+      const first = typeof images[0] === "string" ? images[0] : images[0]?.url;
+      const url = first ?? (typeof data.image === "string" ? data.image : data.image?.url);
+      if (url) return url;
+    }
+    if (state.status === "FAILED" || state.error) {
+      throw new Error(`fal image generation failed: ${JSON.stringify(state.error ?? state.status)}`);
+    }
+  }
+  throw new Error("fal image generation timed out");
+}
+
+/** Dry-run placeholder: solid-color 9:16 PNG → Blob (or marker URL). */
+async function renderScenePlaceholder(outPath: string): Promise<void> {
+  const { execFileSync } = await import("node:child_process");
+  execFileSync(
+    "ffmpeg",
+    ["-y", "-f", "lavfi", "-i", "color=c=0x8a6f5d:s=720x1280", "-frames:v", "1", outPath],
+    { stdio: "ignore", timeout: 60_000 }
+  );
+}
+
+export async function generateSceneImage(req: SceneRenderRequest): Promise<SceneRenderResult> {
+  if (DRY_RUN) {
+    const out = `/tmp/scene-${Date.now()}.png`;
+    await renderScenePlaceholder(out);
+    const { put } = await import("@vercel/blob");
+    if (blobToken()) {
+      const { url } = await put(`scene/${Date.now()}.png`, createReadStream(out), {
+        access: "private",
+        contentType: "image/png",
+        token: blobToken(),
+      });
+      return { url, dryRun: true };
+    }
+    return { url: `dryrun:scene:${Date.now()}`, dryRun: true };
+  }
+
+  // Primary: Gemini 2.5 Flash Image ("Nano Banana Pro") via the Google REST
+  // API — the GEMINI_API_KEY is verified-good (the veo adapter uses it), and
+  // this model is the best at preserving product text/logos.
+  const key = requireKey("veo"); // GEMINI_API_KEY
+  try {
+    const url = await geminiImageEdit(key, req.imageUrl, req.prompt, req.quality);
+    return { url, dryRun: false };
+  } catch (primaryError) {
+    console.warn(
+      `[video-worker] gemini scene image failed, falling back to fal flux: ${(primaryError as Error).message}`
+    );
+    // Fallback: fal flux-pro (cheaper, weaker at product text). Only when a
+    // usable FAL_KEY exists (the stored one has been malformed — see notes).
+    const falKey = process.env.FAL_KEY;
+    if (falKey) {
+      const url = await falImageSubmit("/fal-ai/flux-pro/v1.1", falKey, {
+        prompt: req.prompt,
+        image_url: req.imageUrl,
+        num_images: 1,
+        aspect_ratio: "9:16",
+        output_format: "png",
+      });
+      return { url, dryRun: false };
+    }
+    throw primaryError;
+  }
+}
+
+/**
+ * Gemini 2.5 Flash Image image-edit call:
+ * POST /v1beta/models/gemini-2.5-flash-image:generateContent
+ * Input: text prompt + the product photo as inline base64 (reference only).
+ * Output: inline base64 PNG (or fileData URI) → stored to private Blob.
+ */
+async function geminiImageEdit(
+  key: string,
+  imageUrl: string,
+  prompt: string,
+  quality: "standard" | "pro"
+): Promise<string> {
+  const res = await fetch(imageUrl, {
+    headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
+  });
+  if (!res.ok) throw new Error(`failed to fetch reference image for scene render: ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/png";
+
+  const gen = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${key}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: mime, data: buf.toString("base64") } },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          imageConfig: { aspectRatio: quality === "pro" ? "9:16" : "9:16", imageSize: "2K" },
+        },
+      }),
+    }
+  );
+  if (!gen.ok) throw new Error(`gemini scene image failed: ${gen.status} ${(await gen.text()).slice(0, 200)}`);
+
+  const data = (await gen.json()) as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: { data?: string; mimeType?: string };
+          fileData?: { fileUri?: string };
+        }>;
+      };
+    }>;
+  };
+  const part = data.candidates?.[0]?.content?.parts?.[0];
+  if (!part) throw new Error("gemini scene image: empty response");
+  if (part.fileData?.fileUri) return part.fileData.fileUri;
+
+  if (part.inlineData?.data) {
+    const { put } = await import("@vercel/blob");
+    const imgBuf = Buffer.from(part.inlineData.data, "base64");
+    const { url } = await put(`scene/${Date.now()}.png`, imgBuf, {
+      access: "private",
+      contentType: "image/png",
+      token: blobToken(),
+    });
+    return url;
+  }
+  throw new Error("gemini scene image: no image in response");
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 export async function generateFootage(req: FootageRequest): Promise<FootageResult> {

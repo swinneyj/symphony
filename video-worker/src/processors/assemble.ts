@@ -47,7 +47,8 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     }
 
     // 2. Footage (download, or re-render placeholder for dry-run markers)
-    const footagePath = `${workdir}/footage.mp4`;
+    let footagePath = `${workdir}/footage.mp4`;
+    const extendMode = (job.metadata?.extendMode as string | undefined) ?? null;
     if (footageUrl.startsWith("dryrun:")) {
       await renderPlaceholder(6, "720p", footagePath);
     } else {
@@ -57,6 +58,26 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
       if (!res.ok) throw new Error(`failed to download footage: ${res.status}`);
       const { writeFile } = await import("node:fs/promises");
       await writeFile(footagePath, Buffer.from(await res.arrayBuffer()));
+    }
+
+    // 2b. Reverse-extend (spec §10.7): play clip forward then backward — 10s
+    // video from a 5s generation, halves footage credit spend. Ambient motion
+    // only (zoom/pan); not for action demos.
+    if (extendMode === "reverse") {
+      const revPath = `${workdir}/footage-rev.mp4`;
+      const extPath = `${workdir}/footage-ext.mp4`;
+      execFileSync(
+        "ffmpeg",
+        ["-y", "-i", footagePath, "-vf", "reverse", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "23", revPath],
+        { stdio: "ignore", timeout: 180_000 }
+      );
+      execFileSync(
+        "ffmpeg",
+        ["-y", "-i", footagePath, "-i", revPath, "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p", extPath],
+        { stdio: "ignore", timeout: 180_000 }
+      );
+      footagePath = extPath;
+      console.log(`[video-worker] assemble reverse-extended job=${job.id}`);
     }
 
     // 3. Assemble: footage video + VO audio, silence-cut start, 9:16, faststart.

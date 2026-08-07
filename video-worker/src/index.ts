@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { blobToken } from "./env.js";
 import { sql, claimJobs, requeueStaleRunning, type JobRow } from "./db.js";
 import { handleProductProcess } from "./processors/product-process.js";
+import { handleSceneRender } from "./processors/scene-render.js";
 import { handleFootage } from "./processors/footage.js";
 import { handleAssemble } from "./processors/assemble.js";
 
@@ -42,6 +43,9 @@ async function processJob(job: JobRow) {
     case "product_process":
       await handleProductProcess(job, MAX_RETRIES);
       break;
+    case "scene_render":
+      await handleSceneRender(job, MAX_RETRIES);
+      break;
     case "footage":
       await handleFootage(job, MAX_RETRIES);
       break;
@@ -68,7 +72,7 @@ async function tick() {
       console.log(`[video-worker] requeued ${reclaimed} stale running job(s)`);
     }
 
-    const jobs = await claimJobs(CONCURRENCY, ["footage", "batch_video", "overlay", "slideshow"]);
+    const jobs = await claimJobs(CONCURRENCY, ["scene_render", "footage", "batch_video", "overlay", "slideshow"]);
     if (jobs.length === 0) return;
 
     console.log(`[video-worker] claiming ${jobs.length} job(s)`);

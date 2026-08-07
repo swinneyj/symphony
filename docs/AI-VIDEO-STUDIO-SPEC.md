@@ -257,14 +257,22 @@ product → product_process (rembg) → scene_render (NEW) → footage (I2V) →
 
 | | Choice | Cost |
 |---|---|---|
-| Primary | **`gemini-2.5-flash-image` on fal.ai** (the "Nano Banana Pro" model, product-faithful text/logos) | ~$0.02–0.05/img |
+| Primary | **`gemini-2.5-flash-image` via Google REST** (the "Nano Banana Pro" model, product-faithful text/logos) | ~$0.02–0.05/img |
 | Fallback | `flux` (fal) — cheaper, weaker at preserving product text | ~$0.01–0.02/img |
 | Volume | 10–20 renders/day | **~$0.30–1.00/day** |
 
-- No new secrets: reuses `FAL_KEY` (already the Seedance/Kling video key).
+- Reuses `GEMINI_API_KEY` (already the Veo key) — no new secret.
 - Prompts mirror the case study: image-size 9:16, quality 2K, one output.
 - vs Higgsfield subscription (~$20+/mo) — in-house at pennies, consistent with the
   build-don't-buy rule.
+- **IMPLEMENTED 2026-08-07 — production notes:** primary = Gemini REST
+  (`models/gemini-2.5-flash-image:generateContent`, inline base64 edit); fallback = fal
+  `flux-pro/v1.1`. Full chain E2E'd in dry-run (scene_render → footage → batch_video,
+  reverse-extend 1s→2s verified). **Live-render blockers:** stored `GEMINI_API_KEY`
+  exceeded quota (HTTP 429) and stored `FAL_KEY` is malformed (fal 401 "unable to decode
+  issuer") — both keys need refreshing before real renders run. OpenAI `gpt-image-1`
+  (valid `sk-proj-` key present) is the proposed third fallback if no Google/fal key is
+  available.
 
 ### 10.4 Prompt engine & scene presets
 
