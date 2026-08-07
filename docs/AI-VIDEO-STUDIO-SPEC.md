@@ -207,3 +207,136 @@ videoBatchJobs: {
 2. **Worker host:** green light to add a `video-worker` container on the VPS docker host.
 3. **Voice reference:** want the "Reese"-style clone, or start with stock voices?
 4. **Go/no-go on Phase 1** (schema + products + worker skeleton) → feature branch `feature/video-studio`.
+
+---
+
+## 10. AI Scene Render step + reverse-extend (added 2026-08-07)
+
+**Source:** $1.3M/5mo TikTok Shop faceless-video case study (yt: Yyq9Htlghg8). The creator's
+production recipe: Kalodata research → **AI image re-render (Higgsfield "Nano Banana Pro" =
+Gemini 2.5 Flash Image)** → Kling I2V (5s) → **CapCut reverse-extend to 10s** → CTA caption.
+Approved by Slippaz: *"if you believe this is a better way, sounds good — I want to avoid as
+many violations as possible."* This section amends §4.3/§4.7/§4.9/§7.
+
+### 10.1 Why — the compliance gap (the kicker)
+
+Our current pipeline (`listing photo → rembg → I2V`) animates the **brand's copyrighted
+photograph** — same background, lighting, staging. The case-study creator explicitly avoids
+this: *"you would likely get into issues and get a violation from TikTok Shop because the
+brand owns these listing images."* He re-renders the product into an **original scene**
+(prompt: *"Only use the attached image as a reference for the scale and dimension of the
+products"*) — faithful product, new creative asset.
+
+- **Copyright risk:** a video that is a derivative of the brand's photo invites automated
+  takedowns and brand flags → strike on account + Shop penalties.
+- **Spam signal:** identical background across creators = recognizable re-used ad.
+- **Quality:** clean scene renders smoother in I2V (fewer artifacts) than cluttered listing
+  backgrounds.
+- **Line drawn:** the *product* is re-created (accurate depiction = truthful promotion); the
+  brand's *photograph* is not copied (no infringement). Product details/text/logos must stay
+  correct (his emphasis, encoded in §10.6).
+
+### 10.2 Pipeline change
+
+```
+product → product_process (rembg) → scene_render (NEW) → footage (I2V) → batch_video (assemble) → publish
+                                       │                              │
+                                       └── gemini-2.5-flash-image     └── first frame = RENDERED image
+```
+
+- New `scene_render` value in `video_job_type` enum (currently: product_process, footage,
+  overlay, slideshow, batch_video) — **migration 0007**.
+- Runs in **video-worker** (not img-worker): it's an HTTP provider call exactly like the
+  footage job's Sora call — reuses `providers.ts` patterns, `FAL_KEY`, retry/claim/`VIDEO_DRY_RUN`
+  machinery already in `index.ts`. New processor: `video-worker/src/processors/scene-render.ts`.
+- Input: `product.processed_image_url` (or `original_image_url` fallback). Output:
+  `job.scene_image_url` (Blob) → footage job reads it as its `input_reference` instead of the
+  processed cutout when `source_frame = "render"` (formula setting, §10.5).
+
+### 10.3 Provider & cost
+
+| | Choice | Cost |
+|---|---|---|
+| Primary | **`gemini-2.5-flash-image` on fal.ai** (the "Nano Banana Pro" model, product-faithful text/logos) | ~$0.02–0.05/img |
+| Fallback | `flux` (fal) — cheaper, weaker at preserving product text | ~$0.01–0.02/img |
+| Volume | 10–20 renders/day | **~$0.30–1.00/day** |
+
+- No new secrets: reuses `FAL_KEY` (already the Seedance/Kling video key).
+- Prompts mirror the case study: image-size 9:16, quality 2K, one output.
+- vs Higgsfield subscription (~$20+/mo) — in-house at pennies, consistent with the
+  build-don't-buy rule.
+
+### 10.4 Prompt engine & scene presets
+
+- `video_formulas.scene_prompt_template` **already exists and is unused** — this step finally
+  wires it. Formula builder gets a **Scene preset** picker.
+- New `SCENE_PRESETS` array in `src/lib/video/presets.ts` (sibling to `MOTION_PRESETS`), e.g.:
+  - `vanity`: *"dark brown wood makeup vanity table, natural lighting"* (the case-study scene)
+  - `kitchen_counter` · `bedroom_flatlay` · `patio_goldenhour` · `neutral_studio`
+- The injected reference clause is automatic and constant: *"Only use the attached image as a
+  reference for the scale and dimension of the products. {scene}. Keep all product details,
+  text, and logos identical."* — same clause the case study uses; encoded, not optional.
+
+### 10.5 Data model (migration 0007)
+
+- `ALTER TYPE video_job_type ADD VALUE 'scene_render';`
+- `ALTER TABLE video_formulas ADD COLUMN source_frame text NOT NULL DEFAULT 'render';`
+  (`'render'` = re-render brand images; `'original'` = use user's own photography — no render)
+- `ALTER TABLE products ADD COLUMN scene_image_url text;`
+- `ALTER TABLE video_batch_jobs ADD COLUMN scene_image_url text;` (job output; footage reads it)
+- Apply via `scripts/apply-migration.mjs migrations/0007_scene_render.sql scene_render` and
+  verify `tables OK:` + enum existence (runner pattern; never trust "done." alone).
+
+### 10.6 Compliance — fidelity + originality (amends §4.9)
+
+§4.9's rule "first frame = truth" was about *fidelity* (depict the actual listed product).
+The render adds *originality* (don't copy the brand's photograph). Both stay:
+
+1. **Fidelity:** rendered product must match the listing — LLM check on the render against
+   the product title/description (flag mismatches, don't batch), plus **Slippaz eyeballs the
+   render preview before a batch runs** (the existing preview-before-batch flow).
+2. **Originality:** `source_frame = 'render'` becomes the **default for imported/link
+   products** (brand-owned images); `'original'` only for user-uploaded photography.
+3. New checklist entries in `buildComplianceChecklist` (§4.9 lib): *"frame is original scene
+   (render used for non-owned images)"* + existing disclosure/length/title checks.
+4. Appeal story (for `compliance_events`, Phase 6): *"video depicts the actual listed product
+   in an original AI-generated scene; no brand-owned imagery reproduced."*
+
+### 10.7 Reverse-extend assembly option
+
+- `batch_video` (assemble) gets `extend_mode` in job metadata: `none` (default) | `reverse`.
+- Implementation: ffmpeg `-vf reverse` on the footage clip, concat forward+reversed →
+  **10s video from a 5s generation → halves footage credit spend** (the case study's exact
+  CapCut trick, done in the worker).
+- Caveats (documented in the formula builder): only for ambient motion (zoom/pan, e.g.
+  `earthZoom`, `orbit360`); not for demos with appearing actions. On-screen text is added
+  after assembly, so reversed text is never an issue.
+
+### 10.8 Research add-on: ad-backing signal
+
+- Kalodata play = promote **new releases from brands that run paid ads** (his "purple ad
+  sign"). Add `ad_backed boolean` to `market_products` + "New releases from ad-backed brands"
+  filter on the Market tab. **TODO_VERIFY**: whether EchoTik's product-video stats expose an
+  ad flag — check `open.echotik.live/api/v3` video fields on the next live fetch; if absent,
+  approximate with the brand's top-video ad/boost signal or drop the filter (don't scrape).
+
+### 10.9 Test plan & rollout
+
+1. Dry-run: `scene_render` job with `VIDEO_DRY_RUN=1` → placeholder URL, no external call.
+2. One real render (~$0.03) on a test product → **Slippaz eyeballs fidelity** (product
+   details/text correct) before anything batches.
+3. E2E: extend `scripts/e2e-smoke-setup.mjs` with a `scene_render` job in the chain;
+   workers in REAL mode; verify chained product_process → scene_render → footage → assemble.
+4. Cleanup pattern: DELETE smoke rows (`name LIKE 'Smoke Test%'`) after verify.
+5. Ship on `feature/video-studio` (temp-branch policy), PR #3 head, nothing on main.
+
+### 10.10 Cost deltas (amends §5)
+
+| Line | Delta |
+|---|---|
+| Scene renders (10–20/day, gemini flash image) | +$0.30–1.00/day (~$9–30/mo) |
+| Reverse-extend halves footage spend | −$6–18/mo at current Sora volume |
+| **Net** | **≈ −$0 to +$25/mo worst case; likely ~breakeven or better** |
+
+The render step is not a cost add — the reverse-extend credit saving roughly offsets it, and
+the compliance protection is the actual payoff.
