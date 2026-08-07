@@ -3,8 +3,8 @@ import { cookies } from "next/headers";
 import { randomUUID } from "crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { workspaceMembers } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { workspaceMembers, workspaces } from "@/db/schema";
+import { desc, eq } from "drizzle-orm";
 
 const GRAPH_DIALOG = "https://www.facebook.com/v21.0/dialog/oauth";
 
@@ -40,11 +40,14 @@ export async function GET(request: Request) {
       );
     }
 
-    // Resolve the user's first workspace (same convention as video-studio).
+    // First workspace the user belongs to, matching GET /api/workspaces
+    // ordering (newest first) so accounts land in the workspace the UI shows.
     const [membership] = await db
       .select({ workspaceId: workspaceMembers.workspaceId })
       .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
       .where(eq(workspaceMembers.userId, session.user.id))
+      .orderBy(desc(workspaces.createdAt))
       .limit(1);
     if (!membership) {
       return NextResponse.json({ error: "No workspace for user" }, { status: 404 });
