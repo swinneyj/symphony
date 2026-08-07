@@ -76,6 +76,13 @@ videos live in the private Blob store. The pending **`symphony-blob-public`** Ve
   `INSTAGRAM_ACCESS_TOKEN`).
 
 | **P3** | Composer multi-select + scheduler cross-post + draft-first UI | P1+P2 |
+
+**P3 IMPLEMENTED 2026-08-07 (commit `b7e2a37`, E2E 9/9 live):** `src/lib/publish.ts` fan-out dispatcher
+(per-platform state in `platformConfigs[platform].publish` — map convention, legacy `{platforms}` shape still
+resolved) · `POST /api/posts/[id]/publish` · `GET /api/cron/publish` (CRON_SECRET-guarded, Vercel cron `*/5`,
+production-only) · composer "Publish Now" = draft-first save → real dispatch → per-platform result chips ·
+`PlatformPostConfig.publish` state (jsonb, no migration). Remaining: IG/TikTok need composer media upload +
+public-Blob store (honest per-platform failures reported until then).
 | **P4** | MCP tools + IG insights analytics + IG DM/comment webhooks (Blotato gap) | P3 + public Blob store |
 
 **All phases:** feature/video-studio branch → preview → Justin approval. Nothing near main
