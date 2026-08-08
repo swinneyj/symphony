@@ -24,6 +24,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { toast } from "sonner";
+import { Share2 } from "lucide-react";
 
 type NodeType =
   | "product"
@@ -286,6 +287,20 @@ function StudioInner() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {formulaId && (
+            <Button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(`${window.location.origin}/f/${formulaId}`);
+                  toast.success("Share link copied");
+                } catch {
+                  toast.error("Copy failed");
+                }
+              }}
+            >
+              <Share2 className="h-4 w-4" /> Share
+            </Button>
+          )}
           <Button onClick={handleSave} disabled={saving}>
             {saving ? "Saving…" : "Save formula"}
           </Button>

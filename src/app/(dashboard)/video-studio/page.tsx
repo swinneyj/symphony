@@ -20,6 +20,7 @@ import {
   Send,
   Copy,
   Check,
+  Share2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -713,6 +714,21 @@ function FormulasTab({
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title="Copy share link"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(`${window.location.origin}/f/${formula.id}`);
+                      toast.success("Share link copied");
+                    } catch {
+                      toast.error("Copy failed");
+                    }
+                  }}
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
