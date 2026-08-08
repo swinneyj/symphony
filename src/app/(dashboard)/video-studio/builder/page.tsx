@@ -15,6 +15,7 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   Handle,
   Position,
   type Connection,
@@ -154,6 +155,10 @@ function StudioInner() {
   const [selected, setSelected] = useState<Node | null>(null);
   const [saving, setSaving] = useState(false);
   const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
+  const [agentPrompt, setAgentPrompt] = useState("");
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentSummary, setAgentSummary] = useState<string | null>(null);
+  const { fitView } = useReactFlow();
 
   // Load workspace + optional formula to edit.
   useEffect(() => {
@@ -265,6 +270,44 @@ function StudioInner() {
   };
 
   const selData = (selected?.data ?? {}) as Record<string, unknown>;
+
+  // Formula Studio agent: LLM rewires the graph from a natural-language prompt.
+  const runAgent = async () => {
+    if (!agentPrompt.trim()) return toast.error("Describe what you want first");
+    if (!workspaceId) return toast.error("No workspace");
+    setAgentBusy(true);
+    setAgentSummary(null);
+    try {
+      const currentGraph = {
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          type: (n.data as { type?: string }).type ?? "product",
+          position: n.position,
+          data: n.data,
+        })),
+        edges,
+      };
+      const res = await fetch("/api/formulas/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId, prompt: agentPrompt.trim(), nodeGraph: currentGraph }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Agent failed");
+      const newNodes = (data.nodes as Array<{ id: string; type: string; position: { x: number; y: number }; data: Record<string, unknown> }>).map(
+        (n) => ({ id: n.id, type: "studio" as const, position: n.position, data: { type: n.type, ...n.data } })
+      );
+      setNodes(newNodes);
+      setEdges(data.edges as Edge[]);
+      setAgentSummary(data.summary as string);
+      setTimeout(() => fitView({ padding: 0.2 }), 60);
+      toast.success("Agent applied the change");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Agent failed");
+    } finally {
+      setAgentBusy(false);
+    }
+  };
   const selType = selData.type as NodeType | undefined;
 
   return (
@@ -495,6 +538,30 @@ function StudioInner() {
             </>
           )}
         </div>
+      </div>
+
+      {/* Agent bar — LLM rewires the graph from a prompt */}
+      <div className="flex items-center gap-2 rounded-lg border bg-white p-2">
+        <span className="text-base">🤖</span>
+        <input
+          value={agentPrompt}
+          onChange={(e) => setAgentPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !agentBusy) runAgent();
+          }}
+          placeholder='Ask the agent: "add a boomerang before output and a sale CTA overlay"'
+          className="h-9 flex-1 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus:border-blue-500"
+        />
+        {agentSummary && (
+          <span className="max-w-72 truncate text-xs text-emerald-700">{agentSummary}</span>
+        )}
+        <Button onClick={runAgent} disabled={agentBusy}>
+          {agentBusy ? (
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600" />
+          ) : (
+            "Ask agent"
+          )}
+        </Button>
       </div>
     </div>
   );
