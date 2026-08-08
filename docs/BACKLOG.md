@@ -6,8 +6,8 @@ Durable work list (mirrors the session to-do). Status: `pending` | `done` | `dro
 
 | # | Item | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| 1 | Add `DEEPSEEK_API_KEY` (or `OPENAI_API_KEY`) to Vercel env for the symphony project | Slippaz | pending | Unlocks the Formula Studio agent bar + LLM `{features}` in formula Render. ~$0.03/M input on deepseek-chat. |
-| 2 | Test Formula Studio agent bar end-to-end (real graph change) | Hermes | pending | Blocked on #1. |
+| 1 | Add `DEEPSEEK_API_KEY` (or `OPENAI_API_KEY)` to Vercel env for the symphony project | Slippaz | **done** | Unlocked the Formula Studio agent bar + LLM `{features}` in formula Render. |
+| 2 | Test Formula Studio agent bar end-to-end (real graph change) | Hermes | **done** | Prompt → deepseek → 6-node graph applied live (boomerang + CTA overlay), saved as "Agent Demo — Boomerang + CTA". |
 | 3 | Meta long-lived token expiry default (60d when `expires_in` absent) | Hermes | pending | 1-line fix in `src/app/api/auth/meta/callback/route.ts`. |
 | 4 | Preview login bounce to prod (`www.symphonyapp.company`) | Hermes | pending | Auth redirect target hardcoded to prod; session cookie survives on preview domain. |
 | 5 | IG media publish (public-Blob media store) | Hermes | pending | IG correctly refuses media-less posts today (honest failure). |
