@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { mediaAssets } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { blobToken } from "@/lib/blob-token";
 
 export const runtime = "nodejs";
 

@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { videoBatchJobs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
+import { blobToken } from "@/lib/blob-token";
 
 /**
  * GET /api/videos/[jobId]?kind=final|footage
@@ -45,7 +46,7 @@ export async function GET(
 
     // Blob storage → proxy with server token. Anything else → redirect.
     if (url.includes("blob.vercel-storage.com")) {
-      const token = process.env.BLOB_READ_WRITE_TOKEN;
+      const token = blobToken();
       if (!token) {
         return NextResponse.json({ error: "Blob token missing" }, { status: 500 });
       }

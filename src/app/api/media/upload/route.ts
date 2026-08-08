@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { mediaAssets, workspaceMembers } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { put } from "@vercel/blob";
+import { blobToken } from "@/lib/blob-token";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
       access: "private",
       addRandomSuffix: true,
       contentType: mime,
+      token: blobToken(),
     });
 
     const [asset] = await db
