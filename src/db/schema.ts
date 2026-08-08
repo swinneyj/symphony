@@ -431,6 +431,9 @@ export const videoBatchJobs = pgTable("video_batch_jobs", {
   thumbnailUrl: text("thumbnail_url"),
   error: text("error"),
   retries: integer("retries").default(0),
+  /** Manual Post Queue: user marked the finished video as posted. */
+  posted: boolean("posted").notNull().default(false),
+  postedAt: timestamp("posted_at", { mode: "date" }),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),

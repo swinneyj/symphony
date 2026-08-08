@@ -37,6 +37,8 @@ export async function GET(
         footageUrl: videoBatchJobs.footageUrl,
         voiceoverUrl: videoBatchJobs.voiceoverUrl,
         finalUrl: videoBatchJobs.finalUrl,
+        posted: videoBatchJobs.posted,
+        postedAt: videoBatchJobs.postedAt,
         error: videoBatchJobs.error,
         metadata: videoBatchJobs.metadata,
         retries: videoBatchJobs.retries,

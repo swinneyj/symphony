@@ -17,6 +17,9 @@ import {
   Users,
   Star,
   Workflow,
+  Send,
+  Copy,
+  Check,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -158,6 +161,9 @@ export default function VideoStudioPage() {
           <TabsTrigger value="market" className="gap-1.5">
             <TrendingUp className="h-4 w-4" /> Market Research
           </TabsTrigger>
+          <TabsTrigger value="queue" className="gap-1.5">
+            <Send className="h-4 w-4" /> Post Queue
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="products" className="mt-4">
@@ -202,6 +208,10 @@ export default function VideoStudioPage() {
             workspaceId={workspaceId!}
             onAdopted={() => loadProducts(workspaceId!)}
           />
+        </TabsContent>
+
+        <TabsContent value="queue" className="mt-4">
+          <PostQueueTab workspaceId={workspaceId!} />
         </TabsContent>
       </Tabs>
     </div>
@@ -1796,6 +1806,187 @@ function MarketTab({
         </CardContent>
         )}
       </Card>
+    </div>
+  );
+}
+
+// ─── Post Queue tab ────────────────────────────────────────────────────────
+// Finished batch videos + captions, ready to post manually anywhere
+// (TikTok Studio, IG, FB…). Mark posted to track what's left.
+
+interface QueueItem {
+  id: string;
+  batchId: string;
+  batchName: string;
+  productName: string;
+  script: string | null;
+  posted: boolean;
+  postedAt: string | null;
+  createdAt: string | null;
+}
+
+function PostQueueTab({ workspaceId }: { workspaceId: string }) {
+  const [items, setItems] = useState<QueueItem[] | null>(null);
+  const [filter, setFilter] = useState<"ready" | "posted" | "all">("ready");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const batches = await (await fetch(`/api/batches?workspaceId=${workspaceId}`)).json();
+      const all: QueueItem[] = [];
+      for (const b of batches) {
+        const detail = await (await fetch(`/api/batches/${b.id}`)).json();
+        for (const j of detail.jobs ?? []) {
+          if (j.jobType === "batch_video" && j.status === "done" && j.finalUrl) {
+            all.push({
+              id: j.id,
+              batchId: b.id,
+              batchName: detail.name ?? b.name ?? "Batch",
+              productName: j.productName ?? "Product",
+              script: j.script ?? null,
+              posted: j.posted,
+              postedAt: j.postedAt ?? null,
+              createdAt: j.createdAt ?? null,
+            });
+          }
+        }
+      }
+      all.sort((a, b) =>
+        a.posted === b.posted
+          ? String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""))
+          : a.posted
+            ? 1
+            : -1
+      );
+      setItems(all);
+    } catch {
+      setItems([]);
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const togglePosted = async (item: QueueItem) => {
+    const res = await fetch(`/api/batches/${item.batchId}/jobs/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ posted: !item.posted }),
+    });
+    if (res.ok) {
+      toast.success(item.posted ? "Marked as unposted" : "Marked as posted 🎉");
+      load();
+    } else {
+      toast.error("Update failed");
+    }
+  };
+
+  const copyCaption = async (item: QueueItem) => {
+    const text = item.script ?? item.productName;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(item.id);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
+  const shown = items?.filter((i) =>
+    filter === "all" ? true : filter === "posted" ? i.posted : !i.posted
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground">
+            Finished videos ready to post anywhere — TikTok Studio, IG, FB, YT. You post, we track.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {items ? `${items.filter((i) => !i.posted).length} ready · ${items.filter((i) => i.posted).length} posted` : "Loading…"}
+          </p>
+        </div>
+        <div className="flex items-center gap-1">
+          {(["ready", "posted", "all"] as const).map((f) => (
+            <Button
+              key={f}
+              size="sm"
+              variant={filter === f ? "default" : "outline"}
+              onClick={() => setFilter(f)}
+              className="capitalize"
+            >
+              {f}
+            </Button>
+          ))}
+          <Button size="sm" variant="ghost" onClick={load}>
+            <Loader2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {shown && shown.length === 0 && (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            No finished videos in this filter — run a batch to fill the queue.
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {shown?.map((item) => (
+          <Card key={item.id}>
+            <CardContent className="flex gap-4 pt-4">
+              <video
+                src={`/api/videos/${item.id}`}
+                controls
+                preload="metadata"
+                className="aspect-[9/16] w-32 shrink-0 rounded-md bg-black object-contain"
+              />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{item.productName}</p>
+                    <p className="truncate text-xs text-muted-foreground">{item.batchName}</p>
+                  </div>
+                  {item.posted ? (
+                    <Badge variant="secondary">posted ✓</Badge>
+                  ) : (
+                    <Badge className="bg-emerald-100 text-emerald-700">ready</Badge>
+                  )}
+                </div>
+                <p className="line-clamp-3 rounded-md bg-muted p-2 text-xs text-muted-foreground">
+                  {item.script ?? item.productName}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => copyCaption(item)}>
+                    {copiedId === item.id ? (
+                      <Check className="h-3.5 w-3.5" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                    Caption
+                  </Button>
+                  <a href={`/api/videos/${item.id}`} download>
+                    <Button size="sm" variant="outline">
+                      Download
+                    </Button>
+                  </a>
+                  <Button
+                    size="sm"
+                    variant={item.posted ? "ghost" : "default"}
+                    className={item.posted ? "text-muted-foreground" : ""}
+                    onClick={() => togglePosted(item)}
+                  >
+                    {item.posted ? "Unmark" : "Posted ✓"}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }
