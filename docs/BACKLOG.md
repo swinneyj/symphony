@@ -10,8 +10,8 @@ Durable work list (mirrors the session to-do). Status: `pending` | `done` | `dro
 | 2 | Test Formula Studio agent bar end-to-end (real graph change) | Hermes | **done** | Prompt → deepseek → 6-node graph applied live (boomerang + CTA overlay), saved as "Agent Demo — Boomerang + CTA". |
 | 3 | Meta long-lived token expiry default (60d when `expires_in` absent) | Hermes | **done** | `src/app/api/auth/meta/callback/route.ts` — `expires_in` omitted → 60d. |
 | 4 | Preview login/signout bounce to prod (`www.symphonyapp.company`) | Hermes | **done** | login+register: `redirect:false` + relative `redirect()`; sidebar signOut uses `window.location.origin` callbackUrl. Verified live. |
-| 5 | IG media publish (public-Blob media store) | Hermes | **done** (code) | Server upload route + UUID-gated public proxy + dispatcher reel/image publish. **BLOCKED ON ENV**: add `BLOB_READ_WRITE_TOKEN` to Vercel env → test upload + container. |
-| 6 | Add `BLOB_READ_WRITE_TOKEN` to Vercel env (symphony project) | Slippaz | **pending** | Same token the video-worker uses. Unblocks composer media upload + IG publish + blob streaming in Post Queue. |
+| 5 | IG media publish (public-Blob media store) | Hermes | **done** | Server upload route + UUID-gated public proxy + dispatcher reel/image publish. **Verified live**: upload 201 → proxy 200 → IG container created (nokturnal_lifestyle). NOTE: `thestripclubcrawl` IG account is Meta-restricted (subcode 2207050) — account-level, not code. |
+| 6 | Add `BLOB_READ_WRITE_TOKEN` to Vercel env (symphony project) | Slippaz | **done** | Token live (resolver checks both `BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN` and `BLOB_READ_WRITE_TOKEN`). |
 | 7 | Real batch run with boomerang + overlay formula (credits ~$0.10–0.30) | Slippaz/Hermes | pending | Optional spend; confirm before running. |
 | 8 | TikTok approval → enable direct publish path | — | waiting | External. |
 
