@@ -12,6 +12,8 @@
  *    public-Blob store is NOT required for Facebook (only for TikTok/IG).
  */
 
+import { blobToken } from "@/lib/blob-token";
+
 const GRAPH = "https://graph.facebook.com/v21.0";
 
 async function graph<T>(path: string, init?: RequestInit): Promise<T> {
@@ -59,9 +61,9 @@ export async function facebookPostVideo(opts: {
   const isPrivateBlob = videoUrl.includes(".private.blob.vercel-storage.com");
   const form = new FormData();
   if (isPrivateBlob) {
-    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    const token = blobToken();
     const dl = await fetch(videoUrl, {
-      headers: blobToken ? { Authorization: `Bearer ${blobToken}` } : undefined,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
     if (!dl.ok) throw new Error(`failed to fetch private blob video: ${dl.status}`);
     const buf = Buffer.from(await dl.arrayBuffer());

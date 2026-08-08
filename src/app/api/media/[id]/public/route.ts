@@ -26,7 +26,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!asset) return new Response("Not found", { status: 404 });
 
   if (asset.url.startsWith("https://") && asset.url.includes("blob.vercel-storage.com")) {
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    const token = blobToken();
     if (!token) return new Response("Blob token missing", { status: 500 });
     const upstream = await fetch(asset.url, {
       headers: { Authorization: `Bearer ${token}` },
