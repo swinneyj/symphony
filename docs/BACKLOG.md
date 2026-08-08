@@ -8,11 +8,12 @@ Durable work list (mirrors the session to-do). Status: `pending` | `done` | `dro
 |---|------|-------|--------|-------|
 | 1 | Add `DEEPSEEK_API_KEY` (or `OPENAI_API_KEY)` to Vercel env for the symphony project | Slippaz | **done** | Unlocked the Formula Studio agent bar + LLM `{features}` in formula Render. |
 | 2 | Test Formula Studio agent bar end-to-end (real graph change) | Hermes | **done** | Prompt → deepseek → 6-node graph applied live (boomerang + CTA overlay), saved as "Agent Demo — Boomerang + CTA". |
-| 3 | Meta long-lived token expiry default (60d when `expires_in` absent) | Hermes | pending | 1-line fix in `src/app/api/auth/meta/callback/route.ts`. |
-| 4 | Preview login bounce to prod (`www.symphonyapp.company`) | Hermes | pending | Auth redirect target hardcoded to prod; session cookie survives on preview domain. |
-| 5 | IG media publish (public-Blob media store) | Hermes | pending | IG correctly refuses media-less posts today (honest failure). |
-| 6 | Real batch run with boomerang + overlay formula | Hermes | optional | Costs ~$0.10–0.30 credits (scene render + footage). |
-| 7 | TikTok app approval → enable direct publish | External | pending | Triple-gated `publish_to_tiktok` / batch `/post` path already built and waiting. |
+| 3 | Meta long-lived token expiry default (60d when `expires_in` absent) | Hermes | **done** | `src/app/api/auth/meta/callback/route.ts` — `expires_in` omitted → 60d. |
+| 4 | Preview login/signout bounce to prod (`www.symphonyapp.company`) | Hermes | **done** | login+register: `redirect:false` + relative `redirect()`; sidebar signOut uses `window.location.origin` callbackUrl. Verified live. |
+| 5 | IG media publish (public-Blob media store) | Hermes | **done** (code) | Server upload route + UUID-gated public proxy + dispatcher reel/image publish. **BLOCKED ON ENV**: add `BLOB_READ_WRITE_TOKEN` to Vercel env → test upload + container. |
+| 6 | Add `BLOB_READ_WRITE_TOKEN` to Vercel env (symphony project) | Slippaz | **pending** | Same token the video-worker uses. Unblocks composer media upload + IG publish + blob streaming in Post Queue. |
+| 7 | Real batch run with boomerang + overlay formula (credits ~$0.10–0.30) | Slippaz/Hermes | pending | Optional spend; confirm before running. |
+| 8 | TikTok approval → enable direct publish path | — | waiting | External. |
 
 ## Done (feature/video-studio, Aug 2026)
 
@@ -28,6 +29,9 @@ Durable work list (mirrors the session to-do). Status: `pending` | `done` | `dro
 - Post Queue: finished videos + captions, preview/download proxy, posted tracking
 - Share links (`/f/[id]`, unlisted) + Remix (copy to workspace → open in Studio)
 - DB hardening: Neon role timeouts (idle tx 5min / statement 60s / lock 10s)
+- Login/sign-out stay on the current origin (`redirect:false` + `window.location.origin` callbackUrl)
+- Meta token expiry defaults to 60d when `expires_in` is omitted
+- Composer media upload (server-side Blob put) + IG reel/image publish via public proxy
 
 ## Dropped
 
