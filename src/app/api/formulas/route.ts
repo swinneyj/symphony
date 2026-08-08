@@ -72,6 +72,9 @@ export async function POST(request: Request) {
       motionPreset,
       durationSec,
       quality,
+      boomerang,
+      overlayTemplate,
+      nodeGraph,
     } = body;
 
     if (!workspaceId || typeof workspaceId !== "string") {
@@ -112,6 +115,9 @@ export async function POST(request: Request) {
         motionPreset: motionPreset || "none",
         durationSec: Number(durationSec) || 6,
         quality: quality || "standard",
+        boomerang: Boolean(boomerang),
+        overlayTemplate: overlayTemplate?.trim() || null,
+        nodeGraph: nodeGraph ?? null,
         isSystem: false,
       })
       .returning();
