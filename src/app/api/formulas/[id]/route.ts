@@ -56,6 +56,9 @@ export async function PATCH(
       "motionPreset",
       "durationSec",
       "quality",
+      "boomerang",
+      "overlayTemplate",
+      "nodeGraph",
     ]) {
       if (body[key] !== undefined) patch[key] = body[key];
     }

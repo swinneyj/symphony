@@ -32,7 +32,14 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
     const engine = (batch?.provider ?? process.env.VIDEO_DEFAULT_ENGINE ?? "sora") as Engine;
     // First frame: the AI scene render when present (spec §10 — never feed the
     // brand's listing photo to the video provider), else processed/original.
-    const meta = (job.metadata ?? {}) as { sourceFrame?: string; sceneImageUrl?: string };
+    const meta = (job.metadata ?? {}) as {
+      sourceFrame?: string;
+      sceneImageUrl?: string;
+      scenePromptTemplate?: string;
+      motionPreset?: string;
+      durationSec?: number;
+      quality?: string;
+    };
     const imageUrl =
       meta.sceneImageUrl ?? product.processed_image_url ?? product.original_image_url;
     if (!imageUrl) {
@@ -58,8 +65,9 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
     }
 
     const scenePrompt = buildScenePrompt({
-      scenePromptTemplate: formula?.scene_prompt_template ?? null,
-      motionPreset: formula?.motion_preset ?? null,
+      // Graph-authored (Formula Studio) values override the formula row.
+      scenePromptTemplate: meta.scenePromptTemplate ?? formula?.scene_prompt_template ?? null,
+      motionPreset: meta.motionPreset ?? formula?.motion_preset ?? null,
       product: {
         name: product.name,
         description: product.description,
@@ -71,8 +79,8 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
       engine,
       imageUrl: firstFrame,
       prompt: scenePrompt,
-      durationSec: formula?.duration_sec ?? 6,
-      resolution: (formula?.quality ?? "standard") === "pro" ? "1080p" : "720p",
+      durationSec: meta.durationSec ?? formula?.duration_sec ?? 6,
+      resolution: (meta.quality ?? formula?.quality ?? "standard") === "pro" ? "1080p" : "720p",
     });
 
     await markDone(job.id, { footage_url: result.url });

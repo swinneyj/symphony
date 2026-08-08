@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import Link from "next/link";
 import {
   Package,
   Plus,
@@ -15,6 +16,7 @@ import {
   TrendingUp,
   Users,
   Star,
+  Workflow,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -560,7 +562,13 @@ function FormulasTab({
         <p className="text-sm text-muted-foreground">
           {formulas.length} formulas · system templates plus your own
         </p>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <div className="flex items-center gap-2">
+          <Link href="/video-studio/builder">
+            <Button size="sm" variant="outline">
+              <Workflow className="h-4 w-4" /> Formula Studio
+            </Button>
+          </Link>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button size="sm">
               <Plus className="h-4 w-4" /> New formula
@@ -667,6 +675,7 @@ function FormulasTab({
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

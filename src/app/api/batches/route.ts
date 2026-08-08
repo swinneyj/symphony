@@ -13,6 +13,33 @@ import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { renderScript } from "@/lib/video/script-fill";
 
 /**
+ * Flatten a Formula Studio node graph into per-product formula config.
+ * The graph is a linear chain: product → sceneRender → footage → script →
+ * voice → overlay → boomerang → output. Missing nodes fall back to the
+ * formula's flat fields.
+ */
+function flattenGraph(
+  graph: unknown
+): { scriptTemplate?: string; scenePromptTemplate?: string; motionPreset?: string; durationSec?: number; quality?: string; overlayTemplate?: string; boomerang?: boolean } {
+  const g = graph as { nodes?: Array<{ type?: string; data?: Record<string, unknown> }> };
+  const nodes = g?.nodes ?? [];
+  const by = (t: string) => nodes.find((n) => n.type === t)?.data ?? {};
+  const script = by("script");
+  const scene = by("sceneRender");
+  const footage = by("footage");
+  const overlay = by("overlay");
+  return {
+    scriptTemplate: (script.scriptTemplate as string | undefined) ?? undefined,
+    scenePromptTemplate: (scene.prompt as string | undefined) ?? undefined,
+    motionPreset: (footage.motionPreset as string | undefined) ?? undefined,
+    durationSec: footage.durationSec != null ? Number(footage.durationSec) : undefined,
+    quality: (footage.quality as string | undefined) ?? undefined,
+    overlayTemplate: (overlay.text as string | undefined) ?? undefined,
+    boomerang: nodes.some((n) => n.type === "boomerang"),
+  };
+}
+
+/**
  * GET /api/batches?workspaceId=…  — list batches + per-batch progress
  * POST /api/batches               — create a batch (batch + one footage job per product)
  */
@@ -130,6 +157,16 @@ export async function POST(request: Request) {
       .from(products)
       .where(inArray(products.id, productIds));
 
+    // Graph-authored formulas win over flat fields (per-node data).
+    const cfg = formula.nodeGraph ? flattenGraph(formula.nodeGraph) : null;
+    const scriptTemplate = cfg?.scriptTemplate ?? formula.scriptTemplate;
+    const gScenePrompt = cfg?.scenePromptTemplate ?? null;
+    const gMotionPreset = cfg?.motionPreset ?? null;
+    const gDurationSec = cfg?.durationSec ?? null;
+    const gQuality = cfg?.quality ?? null;
+    const overlayTemplate = cfg?.overlayTemplate ?? formula.overlayTemplate;
+    const boomerang = cfg?.boomerang ?? formula.boomerang;
+
     // Sequential inserts — Neon HTTP driver has no transactions.
     const [batch] = await db
       .insert(videoBatches)
@@ -148,7 +185,7 @@ export async function POST(request: Request) {
 
     for (const product of productRows) {
       const rendered = await renderScript(
-        formula.scriptTemplate,
+        scriptTemplate,
         {
           name: product.name,
           description: product.description,
@@ -166,8 +203,13 @@ export async function POST(request: Request) {
         script: rendered.script,
         metadata: {
           // Boomerang + CTA overlay flow from the formula to the final assembly.
-          extendMode: formula.boomerang ? "reverse" : "none",
-          overlayTemplate: formula.overlayTemplate ?? null,
+          extendMode: boomerang ? "reverse" : "none",
+          overlayTemplate: overlayTemplate ?? null,
+          // Graph-authored scene/motion/duration/quality override the formula row.
+          ...(gScenePrompt ? { scenePromptTemplate: gScenePrompt } : {}),
+          ...(gMotionPreset ? { motionPreset: gMotionPreset } : {}),
+          ...(gDurationSec ? { durationSec: gDurationSec } : {}),
+          ...(gQuality ? { quality: gQuality } : {}),
         },
       });
     }

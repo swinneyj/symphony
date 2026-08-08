@@ -384,6 +384,9 @@ export const videoFormulas = pgTable("video_formulas", {
   boomerang: boolean("boomerang").notNull().default(false),
   /** CTA text burned onto the video; supports {product} and {price} variables. */
   overlayTemplate: text("overlay_template"),
+  /** Formula Studio node graph (@xyflow/react serialization). When set, the
+   *  batch executor flattens it per product; when null, flat fields apply. */
+  nodeGraph: jsonb("node_graph").$type<unknown>(),
   isSystem: boolean("is_system").default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
