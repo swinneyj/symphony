@@ -79,9 +79,14 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
     if (job.batch_id) await updateBatchProgress(job.batch_id);
     // Chain: footage done → enqueue final assembly (voiceover + concat).
     if (job.batch_id) {
+      const meta = (job.metadata ?? {}) as Record<string, unknown>;
       await sql`
         INSERT INTO video_batch_jobs (batch_id, workspace_id, product_id, formula_id, job_type, status, script, metadata, created_at, updated_at)
-        VALUES (${job.batch_id}, ${job.workspace_id}, ${job.product_id}, ${job.formula_id}, 'batch_video', 'queued', ${job.script}, ${JSON.parse(JSON.stringify({ footageUrl: result.url }))}, now(), now())
+        VALUES (${job.batch_id}, ${job.workspace_id}, ${job.product_id}, ${job.formula_id}, 'batch_video', 'queued', ${job.script}, ${JSON.parse(JSON.stringify({
+          footageUrl: result.url,
+          extendMode: meta.extendMode ?? "none",
+          overlayTemplate: meta.overlayTemplate ?? null,
+        }))}, now(), now())
       `;
     }
     console.log(

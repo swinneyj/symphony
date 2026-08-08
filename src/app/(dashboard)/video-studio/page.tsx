@@ -50,6 +50,8 @@ interface Formula {
   durationSec: number | null;
   quality: string | null;
   isSystem: boolean;
+  boomerang: boolean;
+  overlayTemplate: string | null;
 }
 
 interface Voice {
@@ -476,6 +478,8 @@ function FormulasTab({
     motionPreset: "none",
     durationSec: "6",
     quality: "standard",
+    boomerang: false,
+    overlayTemplate: "",
   });
   const [creating, setCreating] = useState(false);
 
@@ -521,6 +525,8 @@ function FormulasTab({
           motionPreset: draft.motionPreset,
           durationSec: Number(draft.durationSec),
           quality: draft.quality,
+          boomerang: draft.boomerang,
+          overlayTemplate: draft.overlayTemplate.trim() || null,
         }),
       });
       const data = await res.json();
@@ -608,6 +614,26 @@ function FormulasTab({
                   placeholder="Optional video scene description"
                 />
               </div>
+              <div>
+                <Label>Text overlay (CTA)</Label>
+                <Input
+                  value={draft.overlayTemplate}
+                  onChange={(e) => setDraft({ ...draft, overlayTemplate: e.target.value })}
+                  placeholder='e.g. "So sorry to those that already got the {product}..."'
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Burned onto the video. Variables: {"{product}"} {"{price}"}
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={draft.boomerang}
+                  onChange={(e) => setDraft({ ...draft, boomerang: e.target.checked })}
+                  className="h-4 w-4 rounded border-input"
+                />
+                Boomerang — play forward then reversed (doubles length, $0)
+              </label>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Motion preset</Label>
@@ -652,6 +678,8 @@ function FormulasTab({
                   <CardTitle className="text-base">{formula.name}</CardTitle>
                   <CardDescription className="capitalize">
                     {formula.category} · {formula.durationSec}s · {formula.quality}
+                    {formula.boomerang && " · ↺ boomerang"}
+                    {formula.overlayTemplate && " · TXT overlay"}
                   </CardDescription>
                 </div>
                 {formula.isSystem ? (

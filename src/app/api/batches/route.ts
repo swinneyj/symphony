@@ -164,6 +164,11 @@ export async function POST(request: Request) {
         jobType: "footage",
         status: "queued",
         script: rendered.script,
+        metadata: {
+          // Boomerang + CTA overlay flow from the formula to the final assembly.
+          extendMode: formula.boomerang ? "reverse" : "none",
+          overlayTemplate: formula.overlayTemplate ?? null,
+        },
       });
     }
 

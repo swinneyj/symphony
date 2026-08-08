@@ -80,6 +80,33 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
       console.log(`[video-worker] assemble reverse-extended job=${job.id}`);
     }
 
+    // 2c. CTA text overlay (formula.overlayTemplate): burn "{product} / {price}"
+    // substituted text onto the clip. $0 (ffmpeg drawtext). Skipped if no font
+    // is available on the worker so the job can never fail over a font.
+    let overlayArgs: string[] = [];
+    const overlayTemplate = (job.metadata?.overlayTemplate as string | undefined) ?? null;
+    if (overlayTemplate && overlayTemplate.trim().length > 0) {
+      const [product] = await sql`
+        SELECT name, price FROM products WHERE id = ${job.product_id}
+      `;
+      const text = overlayTemplate
+        .replaceAll("{product}", product?.name ?? "this")
+        .replaceAll("{price}", product?.price != null ? String(product.price) : "");
+      const font = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "/usr/share/fonts/truetype/freefont/FreeSans.ttf"].find((p) => existsSync(p));
+      if (font) {
+        const textFile = `${workdir}/overlay.txt`;
+        const { writeFile } = await import("node:fs/promises");
+        await writeFile(textFile, text, "utf8");
+        overlayArgs = [
+          "-vf",
+          `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=44:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=18:x=(w-text_w)/2:y=h*0.82`,
+        ];
+        console.log(`[video-worker] assemble overlay job=${job.id}: "${text.slice(0, 60)}"`);
+      } else {
+        console.warn(`[video-worker] assemble: no font found, skipping overlay job=${job.id}`);
+      }
+    }
+
     // 3. Assemble: footage video + VO audio, silence-cut start, 9:16, faststart.
     const finalPath = `${workdir}/final.mp4`;
     const args = ["-y"];
@@ -88,6 +115,7 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     args.push(
       "-map", "0:v:0",
       ...(haveVoiceover ? ["-map", "1:a:0"] : []),
+      ...overlayArgs,
       "-c:v", "libx264", "-preset", "medium", "-crf", "23",
       ...(haveVoiceover
         ? ["-c:a", "aac", "-b:a", "128k", "-af", "silenceremove=start_periods=1:start_threshold=-45dB,alimiter=limit=0.95"]

@@ -380,6 +380,10 @@ export const videoFormulas = pgTable("video_formulas", {
   voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
   durationSec: integer("duration_sec").default(6),
   quality: text("quality").default("standard"),
+  /** True: assemble plays the clip forward then reversed (boomerang) — doubles length at $0. */
+  boomerang: boolean("boomerang").notNull().default(false),
+  /** CTA text burned onto the video; supports {product} and {price} variables. */
+  overlayTemplate: text("overlay_template"),
   isSystem: boolean("is_system").default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
