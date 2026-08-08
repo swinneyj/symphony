@@ -85,7 +85,7 @@ export async function GET(request: Request) {
         token = long.access_token;
         expiresAt = long.expires_in
           ? new Date(Date.now() + Number(long.expires_in) * 1000)
-          : null;
+          : new Date(Date.now() + 60 * 24 * 60 * 60 * 1000); // expires_in can be omitted → default 60d
       }
     } catch (error) {
       console.warn("Long-lived token exchange failed, using short-lived:", error);

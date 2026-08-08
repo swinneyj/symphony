@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Image,
+  FileVideo,
+  FileText,
   Hash,
   Sparkles,
   Clock,
@@ -81,6 +83,32 @@ export default function ComposerPage() {
   // Connected social accounts for the workspace + per-platform selection
   const [accounts, setAccounts] = useState<Array<{ id: string; platform: string; accountName: string; accountUsername: string | null }>>([]);
   const [platformAccount, setPlatformAccount] = useState<Record<string, string>>({});
+  // Attached media (composer → media_assets; IG requires at least one)
+  const [attachedMedia, setAttachedMedia] = useState<Array<{ id: string; fileName: string; mediaType: string; url: string }>>([]);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadFiles = async (files: FileList | File[]) => {
+    if (!workspaceId || files.length === 0) return;
+    setUploadingMedia(true);
+    try {
+      for (const file of Array.from(files)) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("workspaceId", workspaceId);
+        const res = await fetch("/api/media/upload", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+        setAttachedMedia((cur) => [...cur, data]);
+        toast.success(`${file.name} attached`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingMedia(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     // Load the user's first workspace so posts can be saved against it
@@ -174,6 +202,7 @@ export default function ComposerPage() {
         body: JSON.stringify({
           workspaceId,
           content,
+          mediaIds: attachedMedia.map((m) => m.id),
           platformConfigs,
           // Draft-first: "Publish now" saves a draft, then dispatches the
           // real cross-post (FB live; IG/TikTok report their media gap).
@@ -208,6 +237,7 @@ export default function ComposerPage() {
         toast.success("Post scheduled — cross-post fires on schedule");
       }
       setContent("");
+      setAttachedMedia([]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save post");
     } finally {
@@ -324,10 +354,28 @@ export default function ComposerPage() {
               <CardTitle className="text-base">Media</CardTitle>
               <CardDescription>Add images or videos to your post</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors hover:border-primary/50 hover:bg-accent/50">
+            <CardContent className="space-y-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,video/mp4,video/quicktime"
+                className="hidden"
+                onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+              />
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
+                }}
+                className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors hover:border-primary/50 hover:bg-accent/50"
+              >
                 <Upload className="h-8 w-8 text-muted-foreground mb-3" />
-                <p className="text-sm font-medium">Drag & drop media here</p>
+                <p className="text-sm font-medium">
+                  {uploadingMedia ? "Uploading…" : "Drag & drop media here"}
+                </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   PNG, JPG, GIF, MP4 up to 100MB
                 </p>
@@ -336,6 +384,36 @@ export default function ComposerPage() {
                   Browse Files
                 </Button>
               </div>
+              {attachedMedia.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {attachedMedia.map((m) => (
+                    <div
+                      key={m.id}
+                      className="group relative flex items-center gap-2 rounded-md border bg-muted/50 px-2 py-1.5 pr-1.5 text-xs"
+                    >
+                      {m.mediaType === "image" ? (
+                        <img
+                          src={`/api/media/${m.id}/public`}
+                          alt={m.fileName}
+                          className="h-10 w-10 rounded object-cover"
+                        />
+                      ) : m.mediaType === "video" ? (
+                        <FileVideo className="h-5 w-5 text-muted-foreground" />
+                      ) : (
+                        <FileText className="h-5 w-5 text-muted-foreground" />
+                      )}
+                      <span className="max-w-32 truncate">{m.fileName}</span>
+                      <button
+                        title="Remove"
+                        onClick={() => setAttachedMedia((cur) => cur.filter((x) => x.id !== m.id))}
+                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 

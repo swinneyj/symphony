@@ -10,16 +10,19 @@
  *
  * Semantics:
  *  - Facebook: feed post via the page-scoped token (live — P1 verified).
- *  - Instagram/TikTok: require media; blocked until composer media upload +
- *    public-Blob store land (IG needs PUBLIC media URLs; TikTok is draft-first).
+ *  - Instagram: media attach → UUID-gated public proxy URL → image/reel
+ *    container → publish (live — P4). IG has no delete API: real publish
+ *    tests are permanent.
+ *  - TikTok: draft-first, gated on app approval.
  *  - youtube / x / linkedin: no adapter yet → skipped.
  */
 
 import { db } from "@/db";
-import { posts, socialAccounts } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { posts, socialAccounts, mediaAssets } from "@/db/schema";
+import { eq, inArray } from "drizzle-orm";
 import type { PlatformPublishState, PlatformPostConfig } from "@/db/schema";
 import { facebookPostFeed } from "@/lib/meta/facebook";
+import { instagramPostImage, instagramPostReel } from "@/lib/meta/instagram";
 
 const KNOWN_PLATFORMS = ["tiktok", "youtube", "instagram", "facebook", "x", "linkedin"] as const;
 
@@ -133,11 +136,48 @@ async function publishToPlatform(
       if (!post.mediaIds?.length) {
         return {
           status: "failed",
-          error: "Instagram posts require media — composer media upload lands with the public-Blob store",
+          error: "Instagram posts require media — attach an image or video in the composer",
         };
       }
-      // TODO(P3+): resolve media → public URL → instagramPostImage/Reel.
-      return { status: "failed", error: "Instagram media path pending public-Blob store" };
+      const assets = await db
+        .select()
+        .from(mediaAssets)
+        .where(inArray(mediaAssets.id, post.mediaIds));
+      if (assets.length === 0) {
+        return { status: "failed", error: "Attached media was not found" };
+      }
+      // Public URLs go through the UUID-gated proxy (Blob is private, and IG's
+      // servers need a fetchable URL). AUTH_URL points at a reachable deploy
+      // sharing the same DB, so the asset resolves on any host.
+      const origin = process.env.AUTH_URL ?? "https://symphonyapp.company";
+      const video = assets.find((a) => a.mediaType === "video");
+      const image = assets.find((a) => a.mediaType === "image");
+      try {
+        if (video) {
+          const { mediaId } = await instagramPostReel({
+            igUserId: account.platformAccountId,
+            accessToken: account.accessToken,
+            caption: post.content ?? "",
+            videoUrl: `${origin}/api/media/${video.id}/public`,
+          });
+          return { status: "published", externalId: mediaId, publishedAt: new Date().toISOString() };
+        }
+        if (image) {
+          const { mediaId } = await instagramPostImage({
+            igUserId: account.platformAccountId,
+            accessToken: account.accessToken,
+            caption: post.content ?? "",
+            imageUrl: `${origin}/api/media/${image.id}/public`,
+          });
+          return { status: "published", externalId: mediaId, publishedAt: new Date().toISOString() };
+        }
+        return { status: "failed", error: "No image or video in the attached media" };
+      } catch (error) {
+        return {
+          status: "failed",
+          error: error instanceof Error ? error.message : "Instagram publish failed",
+        };
+      }
     }
 
     case "tiktok": {

@@ -65,12 +65,13 @@ async function register(_prevState: { error?: string; success?: boolean } | unde
     return { error: "Failed to create account. Please try again." };
   }
 
-  // Auto sign in after registration
+  // Auto sign in after registration (redirect:false → redirect() keeps the
+  // post-signin bounce on the current origin instead of AUTH_URL/prod)
   try {
     await signIn("credentials", {
       email: email.toLowerCase(),
       password,
-      redirectTo: "/dashboard",
+      redirect: false,
     });
   } catch (error) {
     // signIn throws on redirect, which is expected for success
