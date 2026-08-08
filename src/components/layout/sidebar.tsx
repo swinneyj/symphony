@@ -152,7 +152,11 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
               <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => signOut({ callbackUrl: "/login" })}>
+            <DropdownMenuItem
+              onClick={() =>
+                signOut({ callbackUrl: `${window.location.origin}/login` })
+              }
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Sign out
             </DropdownMenuItem>
