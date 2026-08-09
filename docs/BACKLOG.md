@@ -12,7 +12,7 @@ Durable work list (mirrors the session to-do). Status: `pending` | `done` | `dro
 | 4 | Preview login/signout bounce to prod (`www.symphonyapp.company`) | Hermes | **done** | login+register: `redirect:false` + relative `redirect()`; sidebar signOut uses `window.location.origin` callbackUrl. Verified live. |
 | 5 | IG media publish (public-Blob media store) | Hermes | **done** | Server upload route + UUID-gated public proxy + dispatcher reel/image publish. **Verified live**: upload 201 → proxy 200 → IG container created (nokturnal_lifestyle). NOTE: `thestripclubcrawl` IG account is Meta-restricted (subcode 2207050) — account-level, not code. |
 | 6 | Add `BLOB_READ_WRITE_TOKEN` to Vercel env (symphony project) | Slippaz | **done** | Token live (resolver checks both `BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN` and `BLOB_READ_WRITE_TOKEN`). |
-| 7 | Real batch run with boomerang + overlay formula (credits ~$0.10–0.30) | Slippaz/Hermes | pending | Optional spend; confirm before running. |
+| 7 | Real batch run with boomerang + overlay formula (credits ~$0.10–0.30) | Slippaz/Hermes | **done** | Aug 9: 2 real Sora 2 runs (Barebells). v1 exposed stale worker build (Aug 7 dist missing `extendMode`/`overlayTemplate` chaining) + `-shortest` truncating boomerang to VO length → rebuilt image, `-shortest` skipped on reverse-extend. v2 verified: 8.4s fwd+rev boomerang, CTA overlay burned, VO. TODO: Sora returns 4.3s for `durationSec=6` (provider duration param semantics). |
 | 8 | TikTok approval → enable direct publish path | — | waiting | External. |
 
 ## Done (feature/video-studio, Aug 2026)

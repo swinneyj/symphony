@@ -120,7 +120,10 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
       ...(haveVoiceover
         ? ["-c:a", "aac", "-b:a", "128k", "-af", "silenceremove=start_periods=1:start_threshold=-45dB,alimiter=limit=0.95"]
         : ["-an"]),
-      "-shortest", "-movflags", "+faststart", "-pix_fmt", "yuv420p",
+      // Boomerang videos must play their full forward+reverse length; -shortest
+      // would truncate the clip to the VO duration and kill the effect.
+      ...(extendMode === "reverse" ? [] : ["-shortest"]),
+      "-movflags", "+faststart", "-pix_fmt", "yuv420p",
       finalPath
     );
     execFileSync("ffmpeg", args, { stdio: "ignore", timeout: 180_000 });
