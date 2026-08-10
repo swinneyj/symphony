@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   format,
@@ -53,6 +53,16 @@ interface Post {
   time: string;
 }
 
+interface ApiPost {
+  id: string;
+  content: string | null;
+  status: string;
+  scheduledFor: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  platformConfigs: Record<string, unknown>;
+}
+
 // ─── Data ───────────────────────────────────────────────────────────────────
 
 const platformIcons: Record<Platform, React.ElementType> = {
@@ -96,35 +106,73 @@ const statuses: { id: PostStatus; name: string }[] = [
   { id: "pending", name: "Pending" },
 ];
 
-const mockPosts: Post[] = [
-  { id: "1", content: "Behind the scenes of our latest shoot!", platform: "instagram", date: new Date(2025, 6, 23), status: "scheduled", time: "9:00 AM" },
-  { id: "2", content: "New product launch coming soon 🚀", platform: "tiktok", date: new Date(2025, 6, 23), status: "scheduled", time: "2:00 PM" },
-  { id: "3", content: "Thank you for 10K followers!", platform: "x", date: new Date(2025, 6, 22), status: "published", time: "11:30 AM" },
-  { id: "4", content: "Check out our latest blog post", platform: "linkedin", date: new Date(2025, 6, 24), status: "scheduled", time: "10:00 AM" },
-  { id: "5", content: "Weekly tips for better engagement", platform: "facebook", date: new Date(2025, 6, 25), status: "draft", time: "" },
-  { id: "6", content: "Tutorial: How to use our analytics", platform: "youtube", date: new Date(2025, 6, 25), status: "scheduled", time: "3:00 PM" },
-  { id: "7", content: "Summer sale announcement!", platform: "instagram", date: new Date(2025, 6, 26), status: "pending", time: "12:00 PM" },
-  { id: "8", content: "Team spotlight: Meet our designers", platform: "linkedin", date: new Date(2025, 6, 21), status: "published", time: "9:00 AM" },
-  { id: "9", content: "Feature highlight: AI Captions ✨", platform: "tiktok", date: new Date(2025, 6, 28), status: "scheduled", time: "4:00 PM" },
-  { id: "10", content: "User testimonial of the week", platform: "instagram", date: new Date(2025, 6, 20), status: "published", time: "1:00 PM" },
-];
+function toPlatform(p: string): Platform {
+  return (p === "twitter" ? "x" : p) as Platform;
+}
+
+function mapStatus(s: string): PostStatus {
+  if (s === "published" || s === "failed" || s === "cancelled") return "published";
+  if (s === "scheduled" || s === "approved") return "scheduled";
+  if (s === "draft") return "draft";
+  return "pending";
+}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function CalendarPage() {
-  const [currentDate, setCurrentDate] = useState(new Date(2025, 6, 1));
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("month");
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [platformFilter, setPlatformFilter] = useState<Platform | "all">("all");
   const [statusFilter, setStatusFilter] = useState<PostStatus | "all">("all");
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadPosts = useCallback(async (wsId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/posts?workspaceId=${encodeURIComponent(wsId)}&limit=200`);
+      if (res.ok) {
+        const data = await res.json();
+        const mapped = (data.posts ?? [] as ApiPost[]).map((p: ApiPost): Post | null => {
+          const when = p.scheduledFor ?? p.publishedAt ?? p.createdAt;
+          if (!when) return null;
+          const platforms = Object.keys(p.platformConfigs ?? {});
+          const platform = platforms.length > 0 ? toPlatform(platforms[0]) : "instagram";
+          const date = parseISO(when);
+          return {
+            id: p.id,
+            content: p.content ?? "(no text)",
+            platform,
+            date,
+            status: mapStatus(p.status),
+            time: format(date, "h:mm a"),
+          };
+        }).filter(Boolean) as Post[];
+        setPosts(mapped);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/workspaces");
+      if (!res.ok) return;
+      const workspaces = await res.json();
+      if (workspaces.length > 0) loadPosts(workspaces[0].id);
+      else setLoading(false);
+    })();
+  }, [loadPosts]);
 
   const filteredPosts = useMemo(() => {
-    return mockPosts.filter((post) => {
+    return posts.filter((post) => {
       if (platformFilter !== "all" && post.platform !== platformFilter) return false;
       if (statusFilter !== "all" && post.status !== statusFilter) return false;
       return true;
     });
-  }, [platformFilter, statusFilter]);
+  }, [posts, platformFilter, statusFilter]);
 
   const postsForSelectedDate = useMemo(() => {
     if (!selectedDate) return [];
@@ -338,7 +386,11 @@ export default function CalendarPage() {
       {/* Calendar + Side Panel */}
       <div className="grid gap-6 lg:grid-cols-4">
         <div className="lg:col-span-3">
-          {viewMode === "month" && renderMonthGrid()}
+          {loading ? (
+            <div className="flex items-center justify-center rounded-lg border py-20 text-muted-foreground">
+              Loading posts…
+            </div>
+          ) : viewMode === "month" && renderMonthGrid()}
           {viewMode === "week" && (
             <div className="flex items-center justify-center rounded-lg border py-20 text-muted-foreground">
               <CalendarIcon className="h-8 w-8 mr-2" />

@@ -67,7 +67,7 @@ export default function TikTokPage() {
   const [creatorLoading, setCreatorLoading] = useState(false);
   const [mode, setMode] = useState<"draft" | "direct">("draft");
   const [video, setVideo] = useState<File | null>(null);
-  const [caption, setCaption] = useState("Symphony TikTok sandbox integration test");
+  const [caption, setCaption] = useState("");
   const [privacyLevel, setPrivacyLevel] = useState("");
   const [allowComment, setAllowComment] = useState(false);
   const [allowDuet, setAllowDuet] = useState(false);
@@ -182,14 +182,14 @@ export default function TikTokPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="mb-2 flex items-center gap-2">
-            <Badge className="bg-black text-white hover:bg-black">TikTok Sandbox</Badge>
-            <Badge variant="outline">Review Demo</Badge>
+            <Badge className="bg-black text-white hover:bg-black">Production</Badge>
+            <Badge variant="outline">Live</Badge>
           </div>
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
             <Music2 className="h-6 w-6" /> TikTok Integration
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connect a creator with Login Kit, then upload a draft or publish a private test video.
+            Connect a creator with Login Kit, then upload a draft or publish a test video.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -237,7 +237,7 @@ export default function TikTokPage() {
               ) : (
                 <Button className="w-full bg-black text-white hover:bg-black/90" disabled={!workspace} asChild>
                   <a href={workspace ? `/api/tiktok/connect?workspaceId=${workspace.id}` : "#"}>
-                    <Music2 className="mr-2 h-4 w-4" /> Connect TikTok Sandbox Account
+                    <Music2 className="mr-2 h-4 w-4" /> Connect TikTok Account
                   </a>
                 </Button>
               )}
@@ -268,13 +268,13 @@ export default function TikTokPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" /> Content Posting API</CardTitle>
             <CardDescription>
-              The draft flow delivers media to the TikTok inbox. Direct Post publishes an unaudited sandbox test as private.
+              The draft flow delivers media to the TikTok inbox. Direct Post publishes a test video as private.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             {!account ? (
               <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                Connect a TikTok sandbox account to enable posting.
+                Connect a TikTok account to enable posting.
               </div>
             ) : (
               <>
@@ -354,7 +354,7 @@ export default function TikTokPage() {
                           <input className="mt-0.5" type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
                           <span>By posting, I agree to TikTok&apos;s Music Usage Confirmation.</span>
                         </label>
-                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Unaudited sandbox posts use private visibility.</p>
+                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Private visibility keeps test posts off your public profile.</p>
                       </>
                     )}
                   </div>
@@ -394,7 +394,7 @@ export default function TikTokPage() {
       </div>
 
       <p className="flex items-center justify-center gap-1 text-xs text-muted-foreground">
-        <ExternalLink className="h-3 w-3" /> TikTok Sandbox · Symphony Review Demo · live API responses only
+        <ExternalLink className="h-3 w-3" /> TikTok Integration · live API responses only
       </p>
     </div>
   );

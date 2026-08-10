@@ -9,7 +9,6 @@ import {
   Bell,
   Cable,
   KeyRound,
-  Camera,
   CheckCircle2,
   XCircle,
   Link,
@@ -71,10 +70,13 @@ const META_ERRORS: Record<string, string> = {
 
 interface TeamMember {
   id: string;
-  name: string;
-  email: string;
+  workspaceId: string;
+  userId: string;
   role: "owner" | "admin" | "member" | "viewer";
-  avatar?: string;
+  joinedAt: string;
+  name: string | null;
+  email: string | null;
+  image: string | null;
 }
 
 // ─── Data ───────────────────────────────────────────────────────────────────
@@ -106,20 +108,13 @@ const platformColors: Record<Platform, string> = {
   linkedin: "bg-blue-700",
 };
 
-const teamMembers: TeamMember[] = [
-  { id: "t1", name: "Alex Morgan", email: "alex@symphony.app", role: "owner" },
-  { id: "t2", name: "Jordan Lee", email: "jordan@symphony.app", role: "admin" },
-  { id: "t3", name: "Taylor Smith", email: "taylor@symphony.app", role: "member" },
-  { id: "t4", name: "Casey Brown", email: "casey@symphony.app", role: "viewer" },
-];
-
-const apiConnections = [
-  { platform: "Instagram Graph API", status: "connected", lastSync: "2 min ago" },
-  { platform: "X API v2", status: "connected", lastSync: "5 min ago" },
-  { platform: "YouTube Data API", status: "connected", lastSync: "1 hour ago" },
-  { platform: "TikTok Business API", status: "connected", lastSync: "3 min ago" },
-  { platform: "LinkedIn API", status: "error", lastSync: "Failed - 2 hours ago" },
-  { platform: "Facebook Graph API", status: "connected", lastSync: "10 min ago" },
+const NOTIFICATION_DEFS = [
+  { id: "mentions", label: "Mentions & Tags", desc: "When someone mentions your account" },
+  { id: "comments", label: "New Comments", desc: "When you receive new comments on posts" },
+  { id: "dms", label: "Direct Messages", desc: "When you receive a direct message" },
+  { id: "scheduled", label: "Scheduled Posts", desc: "When a scheduled post goes live" },
+  { id: "analytics", label: "Weekly Analytics", desc: "Weekly performance summary" },
+  { id: "team", label: "Team Activity", desc: "When team members make changes" },
 ];
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -132,6 +127,23 @@ export default function SettingsPage() {
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [myRole, setMyRole] = useState<TeamMember["role"] | null>(null);
+  const [me, setMe] = useState<{ id: string; name: string | null; email: string | null; image: string | null } | null>(null);
+  const [workspace, setWorkspace] = useState<{ id: string; name: string; slug: string; description: string | null } | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
+  const [notificationPrefs, setNotificationPrefs] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = localStorage.getItem("symphony-notification-prefs");
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (typeof window === "undefined") return "profile";
     return new URLSearchParams(window.location.search).get("tab") || "profile";
@@ -141,6 +153,26 @@ export default function SettingsPage() {
     const res = await fetch(`/api/accounts?workspaceId=${wsId}`);
     if (res.ok) setRealAccounts(await res.json());
     setLoadingAccounts(false);
+  }, []);
+
+  const loadMembers = useCallback(async (wsId: string) => {
+    setLoadingMembers(true);
+    try {
+      const res = await fetch(`/api/workspaces/${wsId}/members`);
+      if (res.ok) {
+        const members = (await res.json()) as TeamMember[];
+        setTeamMembers(members);
+        // Determine the current user's role from the session
+        const sessionRes = await fetch("/api/auth/session");
+        if (sessionRes.ok) {
+          const session = await sessionRes.json();
+          const me = members.find((m) => m.userId === session?.user?.id);
+          setMyRole(me?.role ?? null);
+        }
+      }
+    } finally {
+      setLoadingMembers(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -154,17 +186,31 @@ export default function SettingsPage() {
     else if (connected) setNotice({ type: "success", text: "Facebook / Instagram connected" });
 
     (async () => {
+      // Load session user for the Profile tab
+      const sessionRes = await fetch("/api/auth/session");
+      if (sessionRes.ok) {
+        const session = await sessionRes.json();
+        if (session?.user) setMe(session.user);
+      }
+
       const res = await fetch("/api/workspaces");
       if (!res.ok) return;
       const workspaces = await res.json();
       if (workspaces.length > 0) {
         setWorkspaceId(workspaces[0].id);
+        setWorkspace({
+          id: workspaces[0].id,
+          name: workspaces[0].name,
+          slug: workspaces[0].slug,
+          description: workspaces[0].description ?? null,
+        });
         loadAccounts(workspaces[0].id);
+        loadMembers(workspaces[0].id);
       } else {
         setLoadingAccounts(false);
       }
     })();
-  }, [loadAccounts]);
+  }, [loadAccounts, loadMembers]);
 
   const disconnect = async (account: RealAccount) => {
     const res = await fetch(`/api/accounts/${account.id}`, { method: "DELETE" });
@@ -172,6 +218,125 @@ export default function SettingsPage() {
       setRealAccounts(realAccounts.filter((a) => a.id !== account.id));
     } else {
       window.alert("Disconnect failed");
+    }
+  };
+
+  const canManageTeam = myRole === "owner" || myRole === "admin";
+
+  const sendInvite = async () => {
+    if (!workspaceId || !inviteEmail.trim()) return;
+    setInviting(true);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail.trim(), invitedRole: inviteRole }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNotice({ type: "success", text: `Invited ${inviteEmail.trim()} as ${inviteRole}` });
+        setInviteDialogOpen(false);
+        setInviteEmail("");
+        setInviteRole("member");
+        loadMembers(workspaceId);
+      } else {
+        setNotice({ type: "error", text: data.error || "Invite failed" });
+      }
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const changeRole = async (member: TeamMember, role: TeamMember["role"]) => {
+    if (!workspaceId || role === member.role) return;
+    const res = await fetch(`/api/workspaces/${workspaceId}/members/${member.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setTeamMembers(teamMembers.map((m) => (m.id === member.id ? { ...m, role } : m)));
+      setNotice({ type: "success", text: `${member.name ?? member.email} is now ${role}` });
+    } else {
+      setNotice({ type: "error", text: data.error || "Failed to update role" });
+    }
+  };
+
+  const removeMember = async (member: TeamMember) => {
+    if (!workspaceId) return;
+    if (!window.confirm(`Remove ${member.name ?? member.email} from this workspace?`)) return;
+    const res = await fetch(`/api/workspaces/${workspaceId}/members/${member.id}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      setTeamMembers(teamMembers.filter((m) => m.id !== member.id));
+      setNotice({ type: "success", text: `Removed ${member.name ?? member.email}` });
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setNotice({ type: "error", text: data.error || "Failed to remove member" });
+    }
+  };
+
+  const toggleNotification = (id: string) => {
+    setNotificationPrefs((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try {
+        localStorage.setItem("symphony-notification-prefs", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const saveProfile = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    setNotice(null);
+    const form = new FormData(e.currentTarget);
+    const name = String(form.get("name") ?? "").trim();
+    try {
+      const res = await fetch("/api/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMe((m) => (m ? { ...m, name: data.name } : m));
+        setNotice({ type: "success", text: "Profile updated" });
+      } else {
+        setNotice({ type: "error", text: data.error || "Failed to update profile" });
+      }
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const saveWorkspace = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!workspaceId) return;
+    setSavingWorkspace(true);
+    setNotice(null);
+    const form = new FormData(e.currentTarget);
+    const name = String(form.get("name") ?? "").trim();
+    const slug = String(form.get("slug") ?? "").trim();
+    const description = String(form.get("description") ?? "").trim();
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, slug, description }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setWorkspace({ id: workspaceId, name: data.name, slug: data.slug, description: data.description ?? null });
+        setNotice({ type: "success", text: "Workspace updated" });
+      } else {
+        setNotice({ type: "error", text: data.error || "Failed to update workspace" });
+      }
+    } finally {
+      setSavingWorkspace(false);
     }
   };
 
@@ -231,25 +396,30 @@ export default function SettingsPage() {
             <CardContent className="space-y-6">
               <div className="flex items-center gap-4">
                 <Avatar className="h-16 w-16">
-                  <AvatarImage src="" />
-                  <AvatarFallback className="text-lg">AM</AvatarFallback>
+                  <AvatarImage src={me?.image ?? undefined} />
+                  <AvatarFallback className="text-lg">
+                    {(me?.name ?? me?.email ?? "?").split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                  </AvatarFallback>
                 </Avatar>
-                <Button variant="outline" size="sm">
-                  <Camera className="h-4 w-4 mr-1" />
-                  Change Avatar
+                <div className="text-sm text-muted-foreground">
+                  {me?.email ?? "Signed in"}
+                </div>
+              </div>
+              <form onSubmit={saveProfile} className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Full Name</Label>
+                    <Input id="name" name="name" defaultValue={me?.name ?? ""} placeholder="Your name" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input id="email" type="email" value={me?.email ?? ""} disabled />
+                  </div>
+                </div>
+                <Button type="submit" disabled={savingProfile}>
+                  {savingProfile ? "Saving…" : "Save Changes"}
                 </Button>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Full Name</Label>
-                  <Input id="name" defaultValue="Alex Morgan" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" defaultValue="alex@symphony.app" />
-                </div>
-              </div>
-              <Button>Save Changes</Button>
+              </form>
             </CardContent>
           </Card>
         </TabsContent>
@@ -264,28 +434,31 @@ export default function SettingsPage() {
             <CardContent className="space-y-6">
               <div className="flex items-center gap-4">
                 <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-primary text-primary-foreground text-xl font-bold">
-                  S
+                  {(workspace?.name ?? "W").charAt(0).toUpperCase()}
                 </div>
-                <Button variant="outline" size="sm">
-                  <ImageIcon className="h-4 w-4 mr-1" />
-                  Change Logo
+                <div className="text-sm text-muted-foreground">
+                  /{workspace?.slug ?? "…"}
+                </div>
+              </div>
+              <form onSubmit={saveWorkspace} className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="ws-name">Workspace Name</Label>
+                    <Input id="ws-name" name="name" defaultValue={workspace?.name ?? ""} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="ws-slug">Slug</Label>
+                    <Input id="ws-slug" name="slug" defaultValue={workspace?.slug ?? ""} required />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ws-desc">Description</Label>
+                  <Textarea id="ws-desc" name="description" defaultValue={workspace?.description ?? ""} />
+                </div>
+                <Button type="submit" disabled={savingWorkspace}>
+                  {savingWorkspace ? "Saving…" : "Save Changes"}
                 </Button>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="ws-name">Workspace Name</Label>
-                  <Input id="ws-name" defaultValue="My Workspace" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ws-slug">Slug</Label>
-                  <Input id="ws-slug" defaultValue="my-workspace" />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ws-desc">Description</Label>
-                <Textarea id="ws-desc" defaultValue="Our main social media management workspace." />
-              </div>
-              <Button>Save Changes</Button>
+              </form>
             </CardContent>
           </Card>
         </TabsContent>
@@ -420,50 +593,72 @@ export default function SettingsPage() {
                 <CardTitle className="text-base">Team Members</CardTitle>
                 <CardDescription>Manage who has access to this workspace</CardDescription>
               </div>
-              <Button size="sm" onClick={() => setInviteDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
-                Invite Member
-              </Button>
+              {canManageTeam && (
+                <Button size="sm" onClick={() => setInviteDialogOpen(true)}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Invite Member
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
-                {teamMembers.map((member) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center justify-between rounded-lg border p-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-9 w-9">
-                        <AvatarImage src={member.avatar} />
-                        <AvatarFallback className="text-xs">
-                          {member.name.split(" ").map(n => n[0]).join("")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm font-medium">{member.name}</p>
-                        <p className="text-xs text-muted-foreground">{member.email}</p>
+              {loadingMembers ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">Loading team members…</div>
+              ) : teamMembers.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  No members yet{canManageTeam ? " — invite someone to join this workspace" : ""}.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {teamMembers.map((member) => (
+                    <div
+                      key={member.id}
+                      className="flex items-center justify-between rounded-lg border p-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-9 w-9">
+                          <AvatarImage src={member.image ?? undefined} />
+                          <AvatarFallback className="text-xs">
+                            {(member.name ?? member.email ?? "?").split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="text-sm font-medium">{member.name ?? member.email}</p>
+                          <p className="text-xs text-muted-foreground">{member.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {canManageTeam && member.role !== "owner" ? (
+                          <select
+                            value={member.role}
+                            onChange={(e) => changeRole(member, e.target.value as TeamMember["role"])}
+                            className="h-8 rounded-md border bg-background px-2 text-xs font-medium capitalize"
+                          >
+                            {(["admin", "member", "viewer"] as const).map((r) => (
+                              <option key={r} value={r} className="capitalize">{r}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <Badge
+                            variant={
+                              member.role === "owner" ? "default" :
+                              member.role === "admin" ? "secondary" :
+                              "outline"
+                            }
+                            className="capitalize"
+                          >
+                            {member.role}
+                          </Badge>
+                        )}
+                        {canManageTeam && member.role !== "owner" && (
+                          <Button variant="ghost" size="icon" onClick={() => removeMember(member)}>
+                            <Trash2 className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <Badge
-                        variant={
-                          member.role === "owner" ? "default" :
-                          member.role === "admin" ? "secondary" :
-                          "outline"
-                        }
-                        className="capitalize"
-                      >
-                        {member.role}
-                      </Badge>
-                      {member.role !== "owner" && (
-                        <Button variant="ghost" size="icon">
-                          <Trash2 className="h-4 w-4 text-muted-foreground" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -492,6 +687,7 @@ export default function SettingsPage() {
                     {(["member", "admin", "viewer"] as const).map((role) => (
                       <button
                         key={role}
+                        type="button"
                         onClick={() => setInviteRole(role)}
                         className={cn(
                           "flex-1 rounded-lg border px-3 py-2 text-sm font-medium capitalize transition-colors",
@@ -510,8 +706,8 @@ export default function SettingsPage() {
                 <Button variant="outline" onClick={() => setInviteDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={() => setInviteDialogOpen(false)}>
-                  Send Invitation
+                <Button onClick={sendInvite} disabled={inviting || !inviteEmail.trim()}>
+                  {inviting ? "Sending…" : "Send Invitation"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -526,30 +722,33 @@ export default function SettingsPage() {
               <CardDescription>Choose what notifications you receive</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {[
-                { id: "mentions", label: "Mentions & Tags", desc: "When someone mentions your account" },
-                { id: "comments", label: "New Comments", desc: "When you receive new comments on posts" },
-                { id: "dms", label: "Direct Messages", desc: "When you receive a direct message" },
-                { id: "scheduled", label: "Scheduled Posts", desc: "When a scheduled post goes live" },
-                { id: "analytics", label: "Weekly Analytics", desc: "Weekly performance summary" },
-                { id: "team", label: "Team Activity", desc: "When team members make changes" },
-              ].map((notif) => (
+              {NOTIFICATION_DEFS.map((notif) => (
                 <div key={notif.id} className="flex items-center justify-between rounded-lg border p-4">
                   <div>
                     <p className="text-sm font-medium">{notif.label}</p>
                     <p className="text-xs text-muted-foreground">{notif.desc}</p>
                   </div>
-                  <div className={cn(
-                    "h-6 w-10 rounded-full transition-colors cursor-pointer relative",
-                    true ? "bg-primary" : "bg-muted"
-                  )}>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!notificationPrefs[notif.id]}
+                    aria-label={notif.label}
+                    onClick={() => toggleNotification(notif.id)}
+                    className={cn(
+                      "h-6 w-10 rounded-full transition-colors cursor-pointer relative",
+                      notificationPrefs[notif.id] ? "bg-primary" : "bg-muted"
+                    )}
+                  >
                     <div className={cn(
                       "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
-                      true ? "translate-x-[18px]" : "translate-x-0.5"
+                      notificationPrefs[notif.id] ? "translate-x-[18px]" : "translate-x-0.5"
                     )} />
-                  </div>
+                  </button>
                 </div>
               ))}
+              <p className="text-xs text-muted-foreground">
+                Preferences are saved to this browser. Account-wide notification delivery is coming soon.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -558,41 +757,53 @@ export default function SettingsPage() {
         <TabsContent value="api" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">API Connection Status</CardTitle>
-              <CardDescription>Status of your platform API connections</CardDescription>
+              <CardTitle className="text-base">Connected Platform APIs</CardTitle>
+              <CardDescription>Platforms currently linked to this workspace</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {apiConnections.map((api) => (
-                <div
-                  key={api.platform}
-                  className="flex items-center justify-between rounded-lg border p-4"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-full",
-                      api.status === "connected" ? "bg-emerald-500/10" : "bg-destructive/10"
-                    )}>
-                      {api.status === "connected" ? (
-                        <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                      ) : (
-                        <XCircle className="h-5 w-5 text-destructive" />
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">{api.platform}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Last synced: {api.lastSync}
-                      </p>
-                    </div>
-                  </div>
-                  <Badge
-                    variant={api.status === "connected" ? "secondary" : "destructive"}
-                    className="capitalize"
-                  >
-                    {api.status}
-                  </Badge>
+              {loadingAccounts ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">Loading connections…</div>
+              ) : realAccounts.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  No platform accounts connected yet — connect one from the Connected Accounts tab.
                 </div>
-              ))}
+              ) : (
+                realAccounts.map((account) => {
+                  const p = platformKey(account.platform);
+                  const Icon = platformIcons[p];
+                  return (
+                    <div
+                      key={account.id}
+                      className="flex items-center justify-between rounded-lg border p-4"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "flex h-9 w-9 items-center justify-center rounded-full",
+                          account.status === "connected" ? "bg-emerald-500/10" : "bg-destructive/10"
+                        )}>
+                          {account.status === "connected" ? (
+                            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                          ) : (
+                            <XCircle className="h-5 w-5 text-destructive" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">{account.accountName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {account.accountUsername ? `@${account.accountUsername} · ` : ""}{platformNames[p]}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={account.status === "connected" ? "secondary" : "destructive"}
+                        className="capitalize"
+                      >
+                        {account.status}
+                      </Badge>
+                    </div>
+                  );
+                })
+              )}
             </CardContent>
           </Card>
         </TabsContent>

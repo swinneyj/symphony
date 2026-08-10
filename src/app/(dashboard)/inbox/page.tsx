@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Search,
-  Filter,
   MessageSquare,
   Send,
   CheckCircle2,
@@ -20,8 +19,9 @@ import {
   ChevronDown,
   ArrowLeft,
   Inbox as InboxIcon,
+  Loader2,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -33,33 +33,48 @@ import { cn } from "@/lib/utils";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "x" | "linkedin";
-type MessageType = "dm" | "comment" | "mention";
-type MessageStatus = "unread" | "read" | "resolved";
+type DbPlatform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitter" | "linkedin";
 
-interface Message {
+interface InboxMessage {
   id: string;
-  senderName: string;
-  senderAvatar: string;
-  platform: Platform;
-  platformAccount: string;
+  workspaceId: string;
+  socialAccountId: string | null;
+  platform: DbPlatform;
+  messageType: "comment" | "direct_message" | "mention" | "reply";
+  status: "unread" | "read" | "replied" | "archived" | "spam";
+  senderId: string | null;
+  senderName: string | null;
+  senderAvatar: string | null;
+  senderUsername: string | null;
   content: string;
-  preview: string;
-  time: string;
-  type: MessageType;
-  status: MessageStatus;
-  thread: { sender: string; content: string; time: string }[];
+  mediaUrls: string[] | null;
+  assignedToId: string | null;
+  tags: string[] | null;
+  receivedAt: string;
+  createdAt: string;
+  socialAccountName: string | null;
+  socialAccountPlatform: DbPlatform | null;
 }
 
-interface AccountSource {
+interface Reply {
+  id: string;
+  messageId: string;
+  repliedById: string | null;
+  content: string;
+  sentAt: string;
+  repliedByName: string | null;
+}
+
+interface MessageDetail extends InboxMessage {
+  replies: Reply[];
+}
+
+interface Source {
   id: string;
   name: string;
-  handle: string;
   platform: Platform;
   unread: number;
-  connected: boolean;
 }
-
-// ─── Data ───────────────────────────────────────────────────────────────────
 
 const platformIcons: Record<Platform, React.ElementType> = {
   tiktok: Music2,
@@ -88,125 +103,34 @@ const platformBadgeColors: Record<Platform, string> = {
   linkedin: "border-blue-700 text-blue-700",
 };
 
-const sources: AccountSource[] = [
-  { id: "s1", name: "Symphony Official", handle: "@symphony", platform: "instagram", unread: 5, connected: true },
-  { id: "s2", name: "Symphony", handle: "@symphonyapp", platform: "x", unread: 3, connected: true },
-  { id: "s3", name: "Symphony", handle: "Symphony", platform: "youtube", unread: 1, connected: true },
-  { id: "s4", name: "Symphony", handle: "@symphony", platform: "tiktok", unread: 2, connected: true },
-  { id: "s5", name: "Symphony Inc.", handle: "Symphony Inc.", platform: "linkedin", unread: 0, connected: true },
-  { id: "s6", name: "Symphony", handle: "Symphony", platform: "facebook", unread: 1, connected: true },
+function toPlatform(p: DbPlatform): Platform {
+  return p === "twitter" ? "x" : p;
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+const messageTypes: { id: string; label: string; db: string }[] = [
+  { id: "all", label: "All", db: "" },
+  { id: "dm", label: "DMs", db: "direct_message" },
+  { id: "comment", label: "Comments", db: "comment" },
+  { id: "mention", label: "Mentions", db: "mention" },
 ];
 
-const messages: Message[] = [
-  {
-    id: "m1",
-    senderName: "Sarah Johnson",
-    senderAvatar: "",
-    platform: "instagram",
-    platformAccount: "@symphony",
-    content: "Love this new feature! When will it be available for all users?",
-    preview: "Love this new feature!",
-    time: "2m ago",
-    type: "comment",
-    status: "unread",
-    thread: [
-      { sender: "Sarah Johnson", content: "Love this new feature! When will it be available for all users?", time: "2m ago" },
-    ],
-  },
-  {
-    id: "m2",
-    senderName: "TechCrunch",
-    senderAvatar: "",
-    platform: "x",
-    platformAccount: "@symphonyapp",
-    content: "Hey! We'd love to feature your app in our next roundup of social media tools. Can you DM us details?",
-    preview: "Hey! We'd love to feature your app...",
-    time: "15m ago",
-    type: "mention",
-    status: "unread",
-    thread: [
-      { sender: "TechCrunch", content: "Hey! We'd love to feature your app in our next roundup of social media tools. Can you DM us details?", time: "15m ago" },
-    ],
-  },
-  {
-    id: "m3",
-    senderName: "Mike Chen",
-    senderAvatar: "",
-    platform: "linkedin",
-    platformAccount: "Symphony Inc.",
-    content: "Great article on social media trends! I'd love to connect and learn more about your platform.",
-    preview: "Great article on social media trends!",
-    time: "1h ago",
-    type: "dm",
-    status: "read",
-    thread: [
-      { sender: "Mike Chen", content: "Great article on social media trends! I'd love to connect and learn more about your platform.", time: "1h ago" },
-      { sender: "You", content: "Thanks Mike! Happy to connect. Let me know if you'd like a demo.", time: "45m ago" },
-    ],
-  },
-  {
-    id: "m4",
-    senderName: "Emily Rodriguez",
-    senderAvatar: "",
-    platform: "tiktok",
-    platformAccount: "@symphony",
-    content: "This hack saved me so much time! More tips please! 🙌",
-    preview: "This hack saved me so much time!",
-    time: "3h ago",
-    type: "comment",
-    status: "read",
-    thread: [
-      { sender: "Emily Rodriguez", content: "This hack saved me so much time! More tips please! 🙌", time: "3h ago" },
-      { sender: "You", content: "So glad it helped! We have more tips coming next week 🎉", time: "2h ago" },
-      { sender: "Emily Rodriguez", content: "Can't wait! Following for more!", time: "1h ago" },
-    ],
-  },
-  {
-    id: "m5",
-    senderName: "Alex Kim",
-    senderAvatar: "",
-    platform: "youtube",
-    platformAccount: "Symphony",
-    content: "Could you make a tutorial on the analytics dashboard? Having trouble understanding the engagement metrics.",
-    preview: "Could you make a tutorial on the analytics dashboard?",
-    time: "5h ago",
-    type: "comment",
-    status: "unread",
-    thread: [
-      { sender: "Alex Kim", content: "Could you make a tutorial on the analytics dashboard? Having trouble understanding the engagement metrics.", time: "5h ago" },
-    ],
-  },
-  {
-    id: "m6",
-    senderName: "Jessica Williams",
-    senderAvatar: "",
-    platform: "facebook",
-    platformAccount: "Symphony",
-    content: "Is there a mobile app coming? Would love to manage on the go.",
-    preview: "Is there a mobile app coming?",
-    time: "1d ago",
-    type: "dm",
-    status: "resolved",
-    thread: [
-      { sender: "Jessica Williams", content: "Is there a mobile app coming? Would love to manage on the go.", time: "1d ago" },
-      { sender: "You", content: "Yes! We're launching the mobile app next quarter. Stay tuned!", time: "20h ago" },
-      { sender: "Jessica Williams", content: "Amazing, thanks!", time: "18h ago" },
-    ],
-  },
-];
-
-const messageTypes: { id: MessageType | "all"; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "dm", label: "DMs" },
-  { id: "comment", label: "Comments" },
-  { id: "mention", label: "Mentions" },
-];
-
-const statusFilters: { id: MessageStatus | "all"; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "unread", label: "Unread" },
-  { id: "read", label: "Read" },
-  { id: "resolved", label: "Resolved" },
+const statusFilters: { id: string; label: string; db: string }[] = [
+  { id: "all", label: "All", db: "" },
+  { id: "unread", label: "Unread", db: "unread" },
+  { id: "read", label: "Read", db: "read" },
+  { id: "resolved", label: "Resolved", db: "replied" },
 ];
 
 const savedReplies = [
@@ -220,24 +144,146 @@ const savedReplies = [
 
 export default function InboxPage() {
   const [selectedSource, setSelectedSource] = useState<string | null>("all");
-  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [selectedMessage, setSelectedMessage] = useState<MessageDetail | null>(null);
   const [replyText, setReplyText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState<MessageType | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<MessageStatus | "all">("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [showSavedReplies, setShowSavedReplies] = useState(false);
+  const [messages, setMessages] = useState<InboxMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [sendingReply, setSendingReply] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadMessages = useCallback(async (wsId: string, status = "", type = "") => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ workspaceId: wsId });
+      if (status) params.set("status", status);
+      if (type) params.set("messageType", type);
+      const res = await fetch(`/api/inbox?${params}`);
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.messages ?? []);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/workspaces");
+      if (!res.ok) return;
+      const workspaces = await res.json();
+      if (workspaces.length > 0) {
+        setWorkspaceId(workspaces[0].id);
+        loadMessages(workspaces[0].id);
+      } else {
+        setLoading(false);
+      }
+    })();
+  }, [loadMessages]);
+
+  const openMessage = async (msg: InboxMessage) => {
+    setLoadingDetail(true);
+    try {
+      const res = await fetch(`/api/inbox/messages/${msg.id}`);
+      if (res.ok) {
+        const detail = (await res.json()) as MessageDetail;
+        setSelectedMessage(detail);
+        // Mark as read when opened
+        if (detail.status === "unread") {
+          await fetch(`/api/inbox/messages/${detail.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "read" }),
+          });
+          if (workspaceId) loadMessages(workspaceId);
+          setSelectedMessage({ ...detail, status: "read" });
+        }
+      }
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  const sendReply = async () => {
+    if (!selectedMessage || !replyText.trim()) return;
+    setSendingReply(true);
+    try {
+      const res = await fetch("/api/inbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId: selectedMessage.id, content: replyText.trim() }),
+      });
+      if (res.ok) {
+        setReplyText("");
+        setNotice("Reply sent");
+        // Refresh detail + list
+        const detailRes = await fetch(`/api/inbox/messages/${selectedMessage.id}`);
+        if (detailRes.ok) setSelectedMessage(await detailRes.json());
+        if (workspaceId) loadMessages(workspaceId);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setNotice(data.error || "Reply failed");
+      }
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
+  const markResolved = async () => {
+    if (!selectedMessage) return;
+    const res = await fetch(`/api/inbox/messages/${selectedMessage.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "replied" }),
+    });
+    if (res.ok) {
+      setSelectedMessage({ ...selectedMessage, status: "replied" });
+      if (workspaceId) loadMessages(workspaceId);
+      setNotice("Marked as resolved");
+    }
+  };
+
+  const sources = useMemo<Source[]>(() => {
+    const byAccount = new Map<string, Source>();
+    for (const msg of messages) {
+      const key = msg.socialAccountId ?? "all";
+      if (!byAccount.has(key)) {
+        byAccount.set(key, {
+          id: key,
+          name: msg.socialAccountName ?? "Unknown",
+          platform: toPlatform(msg.socialAccountPlatform ?? msg.platform),
+          unread: 0,
+        });
+      }
+      if (msg.status === "unread") byAccount.get(key)!.unread += 1;
+    }
+    return Array.from(byAccount.values());
+  }, [messages]);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((msg) => {
-      if (selectedSource !== "all" && msg.platformAccount !== sources.find(s => s.id === selectedSource)?.handle) return false;
-      if (typeFilter !== "all" && msg.type !== typeFilter) return false;
-      if (statusFilter !== "all" && msg.status !== statusFilter) return false;
-      if (searchQuery && !msg.content.toLowerCase().includes(searchQuery.toLowerCase()) && !msg.senderName.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      if (selectedSource !== "all" && msg.socialAccountId !== selectedSource) return false;
+      if (statusFilter !== "all") {
+        if (statusFilter === "resolved") {
+          if (msg.status !== "replied" && msg.status !== "archived") return false;
+        } else if (msg.status !== statusFilter) return false;
+      }
+      if (searchQuery &&
+        !msg.content.toLowerCase().includes(searchQuery.toLowerCase()) &&
+        !(msg.senderName ?? "").toLowerCase().includes(searchQuery.toLowerCase())) return false;
       return true;
     });
-  }, [selectedSource, typeFilter, statusFilter, searchQuery]);
+  }, [messages, selectedSource, statusFilter, searchQuery]);
 
-  const totalUnread = useMemo(() => messages.filter(m => m.status === "unread").length, []);
+  const totalUnread = useMemo(() => messages.filter((m) => m.status === "unread").length, [messages]);
+
+  const currentTypeDb = messageTypes.find((t) => t.id === typeFilter)?.db ?? "";
 
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col">
@@ -255,6 +301,7 @@ export default function InboxPage() {
             {totalUnread} unread
           </Badge>
         </div>
+        {notice && <p className="text-xs text-emerald-600">{notice}</p>}
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -269,7 +316,10 @@ export default function InboxPage() {
             {messageTypes.map((t) => (
               <button
                 key={t.id}
-                onClick={() => setTypeFilter(t.id)}
+                onClick={() => {
+                  setTypeFilter(t.id);
+                  if (workspaceId) loadMessages(workspaceId, currentTypeDb, t.db);
+                }}
                 className={cn(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                   typeFilter === t.id
@@ -285,7 +335,10 @@ export default function InboxPage() {
             {statusFilters.map((s) => (
               <button
                 key={s.id}
-                onClick={() => setStatusFilter(s.id)}
+                onClick={() => {
+                  setStatusFilter(s.id);
+                  if (workspaceId) loadMessages(workspaceId, s.db, currentTypeDb);
+                }}
                 className={cn(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                   statusFilter === s.id
@@ -302,7 +355,7 @@ export default function InboxPage() {
 
       {/* Three-column Layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Sources (hidden on phones; drawer nav + All Sources default) */}
+        {/* Left Sidebar - Sources */}
         <div className="hidden md:block md:w-64 shrink-0 border-r overflow-y-auto p-3">
           <div className="mb-3">
             <button
@@ -322,6 +375,9 @@ export default function InboxPage() {
             </button>
           </div>
           <div className="space-y-1">
+            {sources.length === 0 && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">No connected sources</p>
+            )}
             {sources.map((source) => {
               const Icon = platformIcons[source.platform];
               return (
@@ -340,7 +396,7 @@ export default function InboxPage() {
                   </div>
                   <div className="min-w-0 flex-1 text-left">
                     <p className="truncate text-xs font-medium">{source.name}</p>
-                    <p className="truncate text-[10px] text-muted-foreground">{source.handle}</p>
+                    <p className="truncate text-[10px] text-muted-foreground capitalize">{source.platform}</p>
                   </div>
                   {source.unread > 0 && (
                     <Badge className="h-5 min-w-5 rounded-full p-0 text-[10px] flex items-center justify-center">
@@ -360,18 +416,26 @@ export default function InboxPage() {
             selectedMessage && "hidden md:block"
           )}
         >
-          {filteredMessages.length === 0 ? (
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin mb-2" />
+              <p className="text-sm">Loading messages…</p>
+            </div>
+          ) : filteredMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <MessageSquare className="h-8 w-8 mb-2" />
-              <p className="text-sm">No messages found</p>
+              <p className="text-sm">
+                {messages.length === 0 ? "No messages yet — they'll appear when your accounts receive comments or DMs" : "No messages found"}
+              </p>
             </div>
           ) : (
             filteredMessages.map((msg) => {
-              const Icon = platformIcons[msg.platform];
+              const p = toPlatform(msg.platform);
+              const Icon = platformIcons[p];
               return (
                 <button
                   key={msg.id}
-                  onClick={() => setSelectedMessage(msg)}
+                  onClick={() => openMessage(msg)}
                   className={cn(
                     "w-full border-b px-4 py-3 text-left transition-colors hover:bg-accent/50",
                     selectedMessage?.id === msg.id && "bg-accent",
@@ -380,31 +444,31 @@ export default function InboxPage() {
                 >
                   <div className="flex items-start gap-3">
                     <Avatar className="h-9 w-9">
-                      <AvatarImage src={msg.senderAvatar} />
+                      <AvatarImage src={msg.senderAvatar ?? undefined} />
                       <AvatarFallback className="text-xs">
-                        {msg.senderName.charAt(0)}
+                        {(msg.senderName ?? "?").charAt(0)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between">
-                        <span className={cn("text-sm", msg.status === "unread" && "font-semibold")}>
-                          {msg.senderName}
+                        <span className={cn("text-sm truncate", msg.status === "unread" && "font-semibold")}>
+                          {msg.senderName ?? msg.senderUsername ?? "Unknown"}
                         </span>
-                        <span className="text-[10px] text-muted-foreground">{msg.time}</span>
+                        <span className="text-[10px] text-muted-foreground shrink-0 ml-1">{timeAgo(msg.receivedAt)}</span>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">{msg.preview}</p>
+                      <p className="text-[11px] text-muted-foreground truncate">{msg.content}</p>
                       <div className="mt-1 flex items-center gap-2">
-                        <div className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-medium", platformBadgeColors[msg.platform])}>
+                        <div className={cn("rounded-full border px-1.5 py-0.5 text-[9px] font-medium capitalize", platformBadgeColors[p])}>
                           <Icon className="inline h-2.5 w-2.5 mr-0.5" />
-                          {msg.platform}
+                          {p}
                         </div>
                         <Badge variant="outline" className="text-[9px] px-1.5 py-0 capitalize">
-                          {msg.type}
+                          {msg.messageType === "direct_message" ? "dm" : msg.messageType}
                         </Badge>
                         {msg.status === "unread" && (
                           <div className="h-2 w-2 rounded-full bg-primary" />
                         )}
-                        {msg.status === "resolved" && (
+                        {(msg.status === "replied" || msg.status === "archived") && (
                           <CheckCircle2 className="h-3 w-3 text-emerald-500" />
                         )}
                       </div>
@@ -444,27 +508,23 @@ export default function InboxPage() {
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
                   <Avatar className="h-10 w-10">
-                    <AvatarImage src={selectedMessage.senderAvatar} />
-                    <AvatarFallback>{selectedMessage.senderName.charAt(0)}</AvatarFallback>
+                    <AvatarImage src={selectedMessage.senderAvatar ?? undefined} />
+                    <AvatarFallback>{(selectedMessage.senderName ?? "?").charAt(0)}</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="text-sm font-medium">{selectedMessage.senderName}</p>
-                    <p className="text-xs text-muted-foreground">
-                      via {selectedMessage.platform} ({selectedMessage.platformAccount})
+                    <p className="text-sm font-medium">
+                      {selectedMessage.senderName ?? selectedMessage.senderUsername ?? "Unknown"}
+                    </p>
+                    <p className="text-xs text-muted-foreground capitalize">
+                      via {toPlatform(selectedMessage.platform)} ({selectedMessage.socialAccountName ?? "workspace account"})
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon">
-                    <Tag className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon">
-                    <UserPlus className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon">
+                  <Button variant="ghost" size="icon" onClick={markResolved} aria-label="Mark resolved">
                     <CheckCircle2 className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="icon">
+                  <Button variant="ghost" size="icon" aria-label="More">
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </div>
@@ -472,30 +532,32 @@ export default function InboxPage() {
 
               {/* Thread */}
               <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                {selectedMessage.thread.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "flex gap-3",
-                      msg.sender === "You" && "flex-row-reverse"
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "max-w-[75%] rounded-lg px-4 py-2",
-                        msg.sender === "You"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted"
-                      )}
-                    >
-                      <p className="text-xs font-medium mb-1">
-                        {msg.sender === "You" ? "You" : msg.sender}
-                      </p>
-                      <p className="text-sm">{msg.content}</p>
-                      <p className="text-[10px] mt-1 opacity-70">{msg.time}</p>
-                    </div>
+                {loadingDetail ? (
+                  <div className="flex justify-center py-10 text-muted-foreground">
+                    <Loader2 className="h-6 w-6 animate-spin" />
                   </div>
-                ))}
+                ) : (
+                  <>
+                    {/* Original message */}
+                    <div className="flex gap-3">
+                      <div className="max-w-[75%] rounded-lg px-4 py-2 bg-muted">
+                        <p className="text-xs font-medium mb-1">{selectedMessage.senderName ?? "Unknown"}</p>
+                        <p className="text-sm">{selectedMessage.content}</p>
+                        <p className="text-[10px] mt-1 opacity-70">{timeAgo(selectedMessage.receivedAt)}</p>
+                      </div>
+                    </div>
+                    {/* Replies */}
+                    {selectedMessage.replies?.map((reply) => (
+                      <div key={reply.id} className="flex gap-3">
+                        <div className="max-w-[75%] rounded-lg px-4 py-2 bg-primary text-primary-foreground">
+                          <p className="text-xs font-medium mb-1">{reply.repliedByName ?? "You"}</p>
+                          <p className="text-sm">{reply.content}</p>
+                          <p className="text-[10px] mt-1 opacity-70">{timeAgo(reply.sentAt)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
 
               {/* Reply Area */}
@@ -509,8 +571,8 @@ export default function InboxPage() {
                       onChange={(e) => setReplyText(e.target.value)}
                     />
                   </div>
-                  <Button size="icon" disabled={!replyText}>
-                    <Send className="h-4 w-4" />
+                  <Button size="icon" disabled={!replyText.trim() || sendingReply} onClick={sendReply}>
+                    {sendingReply ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -544,11 +606,7 @@ export default function InboxPage() {
                     )}
                   </div>
                   <Separator orientation="vertical" className="h-5" />
-                  <Button variant="ghost" size="sm">
-                    <UserPlus className="h-3.5 w-3.5 mr-1" />
-                    Assign
-                  </Button>
-                  <Button variant="ghost" size="sm">
+                  <Button variant="ghost" size="sm" onClick={markResolved}>
                     <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
                     Mark Resolved
                   </Button>

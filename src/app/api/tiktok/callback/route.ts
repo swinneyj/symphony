@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
       scope: token.scope,
       tokenType: token.tokenType,
       refreshExpiresIn: token.refreshExpiresIn,
-      environment: "sandbox",
+      environment: "production",
     };
 
     const [existing] = await db

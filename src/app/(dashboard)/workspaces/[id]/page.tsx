@@ -1,15 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
   Users,
   Globe,
-  Settings,
   Trash2,
-  Edit,
   CheckCircle2,
   XCircle,
   Music2,
@@ -18,7 +16,6 @@ import {
   MessageCircle,
   Briefcase,
   Image as ImageIcon,
-  AlertTriangle,
   Mail,
   Shield,
 } from "lucide-react";
@@ -26,9 +23,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -38,23 +32,31 @@ import { cn } from "@/lib/utils";
 type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "x" | "linkedin";
 type MemberRole = "owner" | "admin" | "member" | "viewer";
 
-interface ConnectedAccount {
+interface WorkspaceInfo {
   id: string;
-  platform: Platform;
   name: string;
-  handle: string;
-  status: "connected" | "error";
+  slug: string;
+  description: string | null;
+  memberCount: number;
+  socialAccountCount: number;
+}
+
+interface RealAccount {
+  id: string;
+  platform: string;
+  accountName: string;
+  accountUsername: string | null;
+  avatarUrl: string | null;
+  status: string;
 }
 
 interface TeamMember {
   id: string;
-  name: string;
-  email: string;
+  name: string | null;
+  email: string | null;
   role: MemberRole;
-  avatar?: string;
+  image: string | null;
 }
-
-// ─── Mock Data ──────────────────────────────────────────────────────────────
 
 const platformIcons: Record<Platform, React.ElementType> = {
   tiktok: Music2,
@@ -66,11 +68,11 @@ const platformIcons: Record<Platform, React.ElementType> = {
 };
 
 const platformColors: Record<Platform, string> = {
-  tiktok: "bg-black dark:bg-white",
+  tiktok: "bg-black",
   youtube: "bg-red-600",
   instagram: "bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600",
   facebook: "bg-blue-600",
-  x: "bg-neutral-900 dark:bg-neutral-100",
+  x: "bg-neutral-900",
   linkedin: "bg-blue-700",
 };
 
@@ -83,38 +85,73 @@ const platformNames: Record<Platform, string> = {
   linkedin: "LinkedIn",
 };
 
-const workspaceData = {
-  id: "w1",
-  name: "My Workspace",
-  slug: "my-workspace",
-  description: "Our main social media management workspace for daily operations.",
-  memberCount: 4,
-  accountCount: 6,
-  color: "from-violet-500 to-purple-600",
-};
-
-const connectedAccounts: ConnectedAccount[] = [
-  { id: "a1", platform: "instagram", name: "Symphony Official", handle: "@symphony", status: "connected" },
-  { id: "a2", platform: "x", name: "Symphony", handle: "@symphonyapp", status: "connected" },
-  { id: "a3", platform: "youtube", name: "Symphony", handle: "Symphony", status: "connected" },
-  { id: "a4", platform: "tiktok", name: "Symphony", handle: "@symphony", status: "connected" },
-  { id: "a5", platform: "linkedin", name: "Symphony Inc.", handle: "Symphony Inc.", status: "connected" },
-  { id: "a6", platform: "facebook", name: "Symphony", handle: "Symphony", status: "error" },
-];
-
-const teamMembers: TeamMember[] = [
-  { id: "t1", name: "Alex Morgan", email: "alex@symphony.app", role: "owner" },
-  { id: "t2", name: "Jordan Lee", email: "jordan@symphony.app", role: "admin" },
-  { id: "t3", name: "Taylor Smith", email: "taylor@symphony.app", role: "member" },
-  { id: "t4", name: "Casey Brown", email: "casey@symphony.app", role: "viewer" },
-];
+function toPlatform(p: string): Platform {
+  return (p === "twitter" ? "x" : p) as Platform;
+}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function WorkspaceDetailPage() {
   const params = useParams();
   const workspaceId = params.id as string;
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
+  const [accounts, setAccounts] = useState<RealAccount[]>([]);
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: "error" | "success"; text: string } | null>(null);
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [wsRes, accountsRes, membersRes] = await Promise.all([
+        fetch(`/api/workspaces/${workspaceId}`),
+        fetch(`/api/accounts?workspaceId=${workspaceId}`),
+        fetch(`/api/workspaces/${workspaceId}/members`),
+      ]);
+      if (wsRes.ok) setWorkspace(await wsRes.json());
+      if (accountsRes.ok) setAccounts(await accountsRes.json());
+      if (membersRes.ok) setMembers(await membersRes.json());
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
+  const deleteWorkspace = async () => {
+    setDeleting(true);
+    const res = await fetch(`/api/workspaces/${workspaceId}`, { method: "DELETE" });
+    if (res.ok) {
+      window.location.href = "/workspaces";
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setNotice({ type: "error", text: data.error || "Failed to delete workspace" });
+      setDeleting(false);
+    }
+  };
+
+  const removeMember = async (member: TeamMember) => {
+    if (!window.confirm(`Remove ${member.name ?? member.email} from this workspace?`)) return;
+    setRemovingId(member.id);
+    const res = await fetch(`/api/workspaces/${workspaceId}/members/${member.id}`, { method: "DELETE" });
+    if (res.ok) {
+      setMembers(members.filter((m) => m.id !== member.id));
+      setNotice({ type: "success", text: `Removed ${member.name ?? member.email}` });
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setNotice({ type: "error", text: data.error || "Failed to remove member" });
+    }
+    setRemovingId(null);
+  };
+
+  if (loading && !workspace) {
+    return <div className="flex min-h-[50vh] items-center justify-center text-muted-foreground">Loading workspace…</div>;
+  }
 
   return (
     <div className="flex-1 space-y-6 p-6 md:p-8">
@@ -127,26 +164,36 @@ export default function WorkspaceDetailPage() {
         Back to Workspaces
       </Link>
 
+      {notice && (
+        <div
+          className={cn(
+            "rounded-lg border p-3 text-sm",
+            notice.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700" : "border-destructive/30 bg-destructive/10 text-destructive"
+          )}
+        >
+          {notice.text}
+        </div>
+      )}
+
       {/* Workspace Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
-          <div className={cn(
-            "flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br text-white text-2xl font-bold shadow-lg",
-            workspaceData.color
-          )}>
-            {workspaceData.name.charAt(0)}
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-white text-2xl font-bold shadow-lg">
+            {(workspace?.name ?? "W").charAt(0).toUpperCase()}
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">{workspaceData.name}</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{workspace?.name ?? "Workspace"}</h1>
             <p className="text-sm text-muted-foreground">
-              /{workspaceData.slug} &middot; {workspaceData.memberCount} members &middot; {workspaceData.accountCount} connected accounts
+              /{workspace?.slug ?? "…"} &middot; {workspace?.memberCount ?? 0} members &middot; {workspace?.socialAccountCount ?? 0} connected accounts
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm">
-            <Edit className="h-4 w-4 mr-1" />
-            Edit Workspace
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/settings?tab=workspace">
+              <Shield className="h-4 w-4 mr-1" />
+              Manage in Settings
+            </Link>
           </Button>
           <Button
             variant="destructive"
@@ -165,7 +212,9 @@ export default function WorkspaceDetailPage() {
           <CardTitle className="text-base">About</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground">{workspaceData.description}</p>
+          <p className="text-sm text-muted-foreground">
+            {workspace?.description || "No description yet — edit it in Settings → Workspace."}
+          </p>
         </CardContent>
       </Card>
 
@@ -178,177 +227,117 @@ export default function WorkspaceDetailPage() {
             <CardDescription>Social media accounts linked to this workspace</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            {connectedAccounts.map((account) => {
-              const Icon = platformIcons[account.platform];
-              return (
-                <div
-                  key={account.id}
-                  className="flex items-center gap-3 rounded-lg border p-3"
-                >
-                  <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full", platformColors[account.platform])}>
-                    <Icon className="h-4 w-4 text-white" />
+            {accounts.length === 0 ? (
+              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                No accounts connected yet — connect one in Settings → Connected Accounts.
+              </p>
+            ) : (
+              accounts.map((account) => {
+                const platform = toPlatform(account.platform);
+                const Icon = platformIcons[platform];
+                return (
+                  <div
+                    key={account.id}
+                    className="flex items-center gap-3 rounded-lg border p-3"
+                  >
+                    <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full", platformColors[platform])}>
+                      <Icon className="h-4 w-4 text-white" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">{account.accountName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {account.accountUsername ? `@${account.accountUsername}` : ""} &middot; {platformNames[platform]}
+                      </p>
+                    </div>
+                    {account.status === "connected" ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                    ) : (
+                      <XCircle className="h-4 w-4 shrink-0 text-destructive" />
+                    )}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">{account.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {account.handle} &middot; {platformNames[account.platform]}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className={cn(
-                      "h-2 w-2 rounded-full",
-                      account.status === "connected" ? "bg-emerald-500" : "bg-destructive"
-                    )} />
-                    <span className="text-xs text-muted-foreground capitalize">
-                      {account.status}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-            <Button variant="outline" size="sm" className="w-full mt-2">
-              <Globe className="h-4 w-4 mr-1" />
-              Connect More Accounts
-            </Button>
+                );
+              })
+            )}
           </CardContent>
         </Card>
 
         {/* Team Members */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Team Members</CardTitle>
-            <CardDescription>People with access to this workspace</CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Team Members</CardTitle>
+              <CardDescription>People with access to this workspace</CardDescription>
+            </div>
+            <Button size="sm" variant="outline" asChild>
+              <Link href="/settings?tab=team">
+                <Users className="h-4 w-4 mr-1" />
+                Manage Team
+              </Link>
+            </Button>
           </CardHeader>
           <CardContent className="space-y-2">
-            {teamMembers.map((member) => (
-              <div
-                key={member.id}
-                className="flex items-center justify-between rounded-lg border p-3"
-              >
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-9 w-9">
-                    <AvatarImage src={member.avatar} />
-                    <AvatarFallback className="text-xs">
-                      {member.name.split(" ").map(n => n[0]).join("")}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="text-sm font-medium">{member.name}</p>
-                    <p className="text-xs text-muted-foreground">{member.email}</p>
+            {members.length === 0 ? (
+              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                No members yet.
+              </p>
+            ) : (
+              members.map((member) => (
+                <div
+                  key={member.id}
+                  className="flex items-center justify-between rounded-lg border p-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-9 w-9">
+                      <AvatarImage src={member.image ?? undefined} />
+                      <AvatarFallback className="text-xs">
+                        {(member.name ?? member.email ?? "?").split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-sm font-medium">{member.name ?? member.email}</p>
+                      <p className="text-xs text-muted-foreground">{member.email}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant={member.role === "owner" ? "default" : member.role === "admin" ? "secondary" : "outline"}
+                      className="capitalize"
+                    >
+                      {member.role}
+                    </Badge>
+                    {member.role !== "owner" && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={removingId === member.id}
+                        onClick={() => removeMember(member)}
+                      >
+                        <Trash2 className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    )}
                   </div>
                 </div>
-                <Badge
-                  variant={
-                    member.role === "owner" ? "default" :
-                    member.role === "admin" ? "secondary" :
-                    "outline"
-                  }
-                  className="capitalize"
-                >
-                  {member.role}
-                </Badge>
-              </div>
-            ))}
-            <Button variant="outline" size="sm" className="w-full mt-2">
-              <Mail className="h-4 w-4 mr-1" />
-              Invite Member
-            </Button>
+              ))
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Workspace Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Workspace Settings</CardTitle>
-          <CardDescription>Edit workspace details</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center gap-4">
-            <div className={cn(
-              "flex h-16 w-16 items-center justify-center rounded-xl bg-gradient-to-br text-white text-xl font-bold",
-              workspaceData.color
-            )}>
-              {workspaceData.name.charAt(0)}
-            </div>
-            <Button variant="outline" size="sm">
-              <ImageIcon className="h-4 w-4 mr-1" />
-              Change Logo
-            </Button>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">Workspace Name</Label>
-              <Input id="edit-name" defaultValue={workspaceData.name} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-slug">Slug</Label>
-              <Input id="edit-slug" defaultValue={workspaceData.slug} />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="edit-desc">Description</Label>
-            <Textarea id="edit-desc" defaultValue={workspaceData.description} />
-          </div>
-          <Button>Save Changes</Button>
-        </CardContent>
-      </Card>
-
-      {/* Danger Zone */}
-      <Card className="border-destructive/50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base text-destructive">
-            <AlertTriangle className="h-5 w-5" />
-            Danger Zone
-          </CardTitle>
-          <CardDescription>
-            Irreversible actions for this workspace
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center justify-between rounded-lg border border-destructive/20 p-4">
-            <div>
-              <p className="text-sm font-medium">Delete this workspace</p>
-              <p className="text-xs text-muted-foreground">
-                Permanently delete this workspace and all its data. This action cannot be undone.
-              </p>
-            </div>
-            <Button
-              variant="destructive"
-              onClick={() => setDeleteDialogOpen(true)}
-            >
-              <Trash2 className="h-4 w-4 mr-1" />
-              Delete Workspace
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-5 w-5" />
-              Delete Workspace
-            </DialogTitle>
+            <DialogTitle>Delete Workspace</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <strong>{workspaceData.name}</strong>? This action cannot be undone. All posts, analytics, and settings will be permanently removed.
+              This permanently deletes &quot;{workspace?.name}&quot; and all of its data. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 rounded-lg border border-destructive/20 bg-destructive/5 p-4">
-            <Label htmlFor="confirm-delete" className="text-sm">
-              Type <strong>delete</strong> to confirm
-            </Label>
-            <Input id="confirm-delete" placeholder="delete" />
-          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={() => setDeleteDialogOpen(false)}>
-              <Trash2 className="h-4 w-4 mr-1" />
-              Permanently Delete
+            <Button variant="destructive" onClick={deleteWorkspace} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete Workspace"}
             </Button>
           </DialogFooter>
         </DialogContent>
