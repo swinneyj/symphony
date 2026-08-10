@@ -13,7 +13,8 @@
  *  - Instagram: media attach → UUID-gated public proxy URL → image/reel
  *    container → publish (live — P4). IG has no delete API: real publish
  *    tests are permanent.
- *  - TikTok: draft-first, gated on app approval.
+ *  - TikTok: video attach → direct private post via the Content Posting API
+ *    (live — approved app, verified SELF_ONLY flow).
  *  - youtube / x / linkedin: no adapter yet → skipped.
  */
 
@@ -23,6 +24,8 @@ import { eq, inArray } from "drizzle-orm";
 import type { PlatformPublishState, PlatformPostConfig } from "@/db/schema";
 import { facebookPostFeed } from "@/lib/meta/facebook";
 import { instagramPostImage, instagramPostReel } from "@/lib/meta/instagram";
+import { initializeTikTokUpload, sendVideoToTikTok } from "@/lib/tiktok";
+import { blobToken } from "@/lib/blob-token";
 
 const KNOWN_PLATFORMS = ["tiktok", "youtube", "instagram", "facebook", "x", "linkedin"] as const;
 
@@ -181,14 +184,68 @@ async function publishToPlatform(
     }
 
     case "tiktok": {
-      if (!post.mediaIds?.length) {
-        return {
-          status: "failed",
-          error: "TikTok posts require a video — composer media upload lands with the public-Blob store",
-        };
+      // Scheduled/automatic TikTok publish: pull the post's video from the
+      // media store and drive the same init → upload → status flow as the
+      // TikTok page (verified live with SELF_ONLY on the approved app).
+      const tiktokAccount = accounts.find(
+        (a) => a.platform === "tiktok" && a.status === "connected"
+      );
+      if (!tiktokAccount) {
+        return { status: "failed", error: "No connected TikTok account in this workspace" };
       }
-      // TODO(P3+): initVideoPublish (draft mode) once media wiring lands.
-      return { status: "failed", error: "TikTok media path pending composer media upload" };
+      const mediaId = post.mediaIds?.[0];
+      if (!mediaId) {
+        return { status: "failed", error: "TikTok posts require a video — attach one in the composer" };
+      }
+      const [asset] = await db
+        .select()
+        .from(mediaAssets)
+        .where(eq(mediaAssets.id, mediaId))
+        .limit(1);
+      if (!asset || !asset.mimeType?.startsWith("video/")) {
+        return { status: "failed", error: "TikTok posts require a video asset" };
+      }
+
+      // Fetch the video bytes server-side (same Blob auth as the public proxy).
+      const token = blobToken();
+      if (!token) return { status: "failed", error: "Blob token missing — media store not configured" };
+      const upstream = await fetch(asset.url, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!upstream.ok) {
+        return { status: "failed", error: `Could not read video from media store (HTTP ${upstream.status})` };
+      }
+      const bytes = new Uint8Array(await upstream.arrayBuffer());
+
+      // Defaults for scheduled posts: private visibility (same verified flow
+      // as the TikTok page), commenting enabled.
+      const tiktokConfig = config.tiktok ?? {};
+      const privacyLevel =
+        (tiktokConfig as { privacyLevel?: string }).privacyLevel ?? "SELF_ONLY";
+      const allowComment = (tiktokConfig as { allowComment?: boolean }).allowComment ?? true;
+      const allowDuet = (tiktokConfig as { allowDuet?: boolean }).allowDuet ?? true;
+      const allowStitch = (tiktokConfig as { allowStitch?: boolean }).allowStitch ?? true;
+
+      const initialized = await initializeTikTokUpload({
+        accessToken: tiktokAccount.accessToken,
+        mode: "direct",
+        fileSize: bytes.byteLength,
+        caption: post.content ?? "",
+        privacyLevel,
+        allowComment,
+        allowDuet,
+        allowStitch,
+      });
+      await sendVideoToTikTok(initialized.upload_url, bytes, asset.mimeType);
+
+      // Record the publish id immediately (status becomes final via the
+      // TikTok status endpoint / posts page).
+      return {
+        status: "published",
+        externalId: initialized.publish_id,
+        publishedAt: new Date().toISOString(),
+      };
     }
 
     case "youtube":
