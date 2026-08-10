@@ -213,6 +213,8 @@ export async function initializeTikTokUpload({
   allowComment,
   allowDuet,
   allowStitch,
+  brandContentToggle,
+  brandOrganicToggle,
 }: {
   accessToken: string;
   mode: "draft" | "direct";
@@ -222,6 +224,8 @@ export async function initializeTikTokUpload({
   allowComment: boolean;
   allowDuet: boolean;
   allowStitch: boolean;
+  brandContentToggle: boolean;
+  brandOrganicToggle: boolean;
 }) {
   const endpoint = mode === "draft"
     ? "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
@@ -244,8 +248,8 @@ export async function initializeTikTokUpload({
           disable_duet: !allowDuet,
           disable_stitch: !allowStitch,
           video_cover_timestamp_ms: 1000,
-          brand_content_toggle: false,
-          brand_organic_toggle: false,
+          brand_content_toggle: brandContentToggle,
+          brand_organic_toggle: brandOrganicToggle,
         },
         source_info: sourceInfo,
       };

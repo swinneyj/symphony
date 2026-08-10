@@ -28,7 +28,11 @@ export async function POST(request: Request) {
     const allowComment = formData.get("allowComment") === "true";
     const allowDuet = formData.get("allowDuet") === "true";
     const allowStitch = formData.get("allowStitch") === "true";
+    const contentDisclosure = formData.get("contentDisclosure") === "true";
+    const brandOrganic = formData.get("brandOrganic") === "true";
+    const brandedContent = formData.get("brandedContent") === "true";
     const consent = formData.get("consent") === "true";
+    const videoDurationSec = Number(formData.get("videoDurationSec") || 0);
     const video = formData.get("video");
 
     if (!workspaceId || !["draft", "direct"].includes(mode)) {
@@ -49,6 +53,21 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    if (mode === "direct" && contentDisclosure && !brandOrganic && !brandedContent) {
+      return NextResponse.json(
+        { error: "Indicate whether this content promotes your brand, a third party, or both" },
+        { status: 400 }
+      );
+    }
+    if (mode === "direct" && brandedContent && privacyLevel === "SELF_ONLY") {
+      return NextResponse.json(
+        { error: "Branded content visibility cannot be set to private" },
+        { status: 400 }
+      );
+    }
+    if (mode === "direct" && (!Number.isFinite(videoDurationSec) || videoDurationSec <= 0)) {
+      return NextResponse.json({ error: "Could not verify the video duration" }, { status: 400 });
+    }
 
     const result = await getTikTokAccountForMember(workspaceId, session.user.id);
     if (!result.authorized) {
@@ -63,6 +82,18 @@ export async function POST(request: Request) {
       if (!creator.privacy_level_options.includes(privacyLevel)) {
         return NextResponse.json({ error: "That privacy option is no longer available" }, { status: 409 });
       }
+      if (videoDurationSec > creator.max_video_post_duration_sec) {
+        return NextResponse.json(
+          { error: `This creator currently allows videos up to ${creator.max_video_post_duration_sec} seconds` },
+          { status: 409 }
+        );
+      }
+      if ((creator.comment_disabled && allowComment) || (creator.duet_disabled && allowDuet) || (creator.stitch_disabled && allowStitch)) {
+        return NextResponse.json(
+          { error: "One or more interaction settings are no longer available. Refresh the creator settings and try again." },
+          { status: 409 }
+        );
+      }
     }
 
     const initialized = await initializeTikTokUpload({
@@ -74,6 +105,8 @@ export async function POST(request: Request) {
       allowComment,
       allowDuet,
       allowStitch,
+      brandContentToggle: contentDisclosure && brandedContent,
+      brandOrganicToggle: contentDisclosure && brandOrganic,
     });
     const bytes = new Uint8Array(await video.arrayBuffer());
     await sendVideoToTikTok(initialized.upload_url, bytes, video.type);
