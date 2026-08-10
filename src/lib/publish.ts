@@ -24,8 +24,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { PlatformPublishState, PlatformPostConfig } from "@/db/schema";
 import { facebookPostFeed } from "@/lib/meta/facebook";
 import { instagramPostImage, instagramPostReel } from "@/lib/meta/instagram";
-import { initializeTikTokUpload, sendVideoToTikTok } from "@/lib/tiktok";
-import { blobToken } from "@/lib/blob-token";
+import { initVideoPublish } from "@/lib/tiktok/posting";
 
 const KNOWN_PLATFORMS = ["tiktok", "youtube", "instagram", "facebook", "x", "linkedin"] as const;
 
@@ -184,9 +183,9 @@ async function publishToPlatform(
     }
 
     case "tiktok": {
-      // Scheduled/automatic TikTok publish: pull the post's video from the
-      // media store and drive the same init → upload → status flow as the
-      // TikTok page (verified live with SELF_ONLY on the approved app).
+      // Scheduled/automatic TikTok publish: hand TikTok a public proxy URL
+      // for the post's video and let the Content Posting API pull it
+      // (PULL_FROM_URL — same flow as the video-studio batches).
       const tiktokAccount = accounts.find(
         (a) => a.platform === "tiktok" && a.status === "connected"
       );
@@ -206,44 +205,30 @@ async function publishToPlatform(
         return { status: "failed", error: "TikTok posts require a video asset" };
       }
 
-      // Fetch the video bytes server-side (same Blob auth as the public proxy).
-      const token = blobToken();
-      if (!token) return { status: "failed", error: "Blob token missing — media store not configured" };
-      const upstream = await fetch(asset.url, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!upstream.ok) {
-        return { status: "failed", error: `Could not read video from media store (HTTP ${upstream.status})` };
-      }
-      const bytes = new Uint8Array(await upstream.arrayBuffer());
+      // TikTok's servers fetch the video from this public URL (same proxy the
+      // IG adapter uses — Blob auth is handled server-side).
+      const origin = process.env.AUTH_URL ?? "https://symphonyapp.company";
 
       // Defaults for scheduled posts: private visibility (same verified flow
       // as the TikTok page), commenting enabled.
       const tiktokConfig = config.tiktok ?? {};
       const privacyLevel =
         (tiktokConfig as { privacyLevel?: string }).privacyLevel ?? "SELF_ONLY";
-      const allowComment = (tiktokConfig as { allowComment?: boolean }).allowComment ?? true;
-      const allowDuet = (tiktokConfig as { allowDuet?: boolean }).allowDuet ?? true;
-      const allowStitch = (tiktokConfig as { allowStitch?: boolean }).allowStitch ?? true;
 
-      const initialized = await initializeTikTokUpload({
+      const init = await initVideoPublish({
         accessToken: tiktokAccount.accessToken,
-        mode: "direct",
-        fileSize: bytes.byteLength,
-        caption: post.content ?? "",
-        privacyLevel,
-        allowComment,
-        allowDuet,
-        allowStitch,
+        videoUrl: `${origin}/api/media/${asset.id}/public`,
+        title: post.content ?? "",
+        privacyLevel: (["SELF_ONLY", "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS"] as const).includes(
+          privacyLevel as "SELF_ONLY" | "PUBLIC_TO_EVERYONE" | "MUTUAL_FOLLOW_FRIENDS"
+        )
+          ? (privacyLevel as "SELF_ONLY" | "PUBLIC_TO_EVERYONE" | "MUTUAL_FOLLOW_FRIENDS")
+          : "SELF_ONLY",
       });
-      await sendVideoToTikTok(initialized.upload_url, bytes, asset.mimeType);
 
-      // Record the publish id immediately (status becomes final via the
-      // TikTok status endpoint / posts page).
       return {
         status: "published",
-        externalId: initialized.publish_id,
+        externalId: init.publishId,
         publishedAt: new Date().toISOString(),
       };
     }
