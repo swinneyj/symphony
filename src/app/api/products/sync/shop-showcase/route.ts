@@ -147,7 +147,7 @@ export async function POST(request: Request) {
           currency: sp.currency ?? "USD",
           originalImageUrl: sp.mainImageUrl ?? null,
           sourceType: "tiktok_showcase" as const,
-          sourceUrl: `https://www.tiktok.com/view/product/${sp.id}`,
+          sourceUrl: sp.detailLink ?? `https://www.tiktok.com/view/product/${sp.id}`,
           tiktokProductId: sp.id,
           metadata: {
             shopStatus: sp.status ?? null,

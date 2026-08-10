@@ -145,6 +145,7 @@ export type ShopProduct = {
   mainImageUrl?: string;
   status?: string;
   sellerName?: string;
+  detailLink?: string;
 };
 
 type ShopApiResponse = {
@@ -152,32 +153,53 @@ type ShopApiResponse = {
   message?: string;
   data?: {
     products?: Array<{
-      product_id?: string | number;
+      id?: string | number;
       title?: string;
       description?: string;
-      price?: string | number;
-      currency?: string;
-      main_image?: { url_list?: string[] } | null;
-      status?: string;
-      seller_name?: string;
+      // Showcase endpoint returns images as {width,height,url} objects
+      main_images?: Array<{ url?: string }>;
+      addition?: {
+        customized_main_images?: Array<{ url?: string }>;
+      };
+      price?: {
+        original_price?: {
+          minimum_amount?: string | number;
+          maximum_amount?: string | number;
+          currency?: string;
+        };
+      };
+      status?: {
+        inventory_status?: string;
+        added_status?: string;
+        is_hidden?: boolean;
+        review_status?: string;
+      };
+      source?: string;
+      detail_link?: string;
+      shop?: { name?: string };
     }>;
     next_page_token?: string;
     total?: number;
   };
 };
 
-/** Fetch one page of the creator's shop products. */
+/**
+ * Fetch one page of the creator's SHOWCASE products.
+ * GET /affiliate_creator/202405/showcases/products?origin=SHOWCASE
+ * Requires scope: creator.showcase.read (or creator.video.write)
+ */
 export async function fetchShopProductsPage(
   creds: ShopCredentials,
   opts: { pageToken?: string; pageSize?: number } = {}
 ): Promise<{ products: ShopProduct[]; nextPageToken: string }> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const pageSize = Math.min(opts.pageSize ?? 20, 100);
+  const pageSize = Math.min(opts.pageSize ?? 20, 20); // valid range [1-20]
 
   const params: Record<string, string> = {
     app_key: creds.appKey,
     timestamp,
     page_size: String(pageSize),
+    origin: "SHOWCASE",
   };
   if (opts.pageToken) params.page_token = opts.pageToken;
 
@@ -188,7 +210,7 @@ export async function fetchShopProductsPage(
   const sign = signRequest(creds.appSecret, sortedQuery);
 
   const query = new URLSearchParams({ ...params, sign });
-  const res = await fetch(`${SHOP_API}/affiliate_creator/202509/shop_products?${query.toString()}`, {
+  const res = await fetch(`${SHOP_API}/affiliate_creator/202405/showcases/products?${query.toString()}`, {
     headers: { "x-tts-access-token": creds.accessToken },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
@@ -204,16 +226,22 @@ export async function fetchShopProductsPage(
   const items = json.data?.products ?? [];
   const products: ShopProduct[] = items
     .map((p) => {
-      const imageUrl = p.main_image?.url_list?.[0] ?? null;
+      const imageUrl =
+        p.main_images?.[0]?.url ??
+        p.addition?.customized_main_images?.[0]?.url ??
+        null;
       return {
-        id: String(p.product_id ?? ""),
+        id: String(p.id ?? ""),
         name: p.title ?? "",
         description: p.description,
-        price: p.price != null ? String(p.price) : undefined,
-        currency: p.currency ?? "USD",
+        price: p.price?.original_price?.minimum_amount != null
+          ? String(p.price.original_price.minimum_amount)
+          : undefined,
+        currency: p.price?.original_price?.currency ?? "USD",
         mainImageUrl: imageUrl ?? undefined,
-        status: p.status,
-        sellerName: p.seller_name,
+        status: p.status?.added_status ?? p.status?.inventory_status ?? undefined,
+        sellerName: p.shop?.name,
+        detailLink: p.detail_link,
       };
     })
     .filter((p) => p.id && p.name);
