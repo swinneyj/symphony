@@ -26,6 +26,7 @@ import {
   LogOut,
   Sparkles,
   Clapperboard,
+  X,
 } from "lucide-react";
 
 const navigation = [
@@ -55,9 +56,13 @@ interface SidebarProps {
     name: string;
     slug: string;
   }>;
+  /** Called after any navigation inside the sidebar (used to close the mobile drawer). */
+  onNavigate?: () => void;
+  /** When provided, renders a close button (mobile drawer only). */
+  onClose?: () => void;
 }
 
-export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
+export function Sidebar({ user, workspace, workspaces, onNavigate, onClose }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -72,6 +77,16 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
           className="h-8 w-8"
         />
         <span className="text-lg font-semibold">Symphony</span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close menu"
+            className="ml-auto rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Workspace Switcher */}
@@ -92,14 +107,14 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
             <DropdownMenuContent align="start" className="w-56">
               {workspaces.map((ws) => (
                 <DropdownMenuItem key={ws.id} asChild>
-                  <Link href={`/workspaces/${ws.id}`}>
+                  <Link href={`/workspaces/${ws.id}`} onClick={onNavigate}>
                     {ws.name}
                   </Link>
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link href="/workspaces">Manage Workspaces</Link>
+                <Link href="/workspaces" onClick={onNavigate}>Manage Workspaces</Link>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -114,6 +129,7 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
             <Link
               key={item.name}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive

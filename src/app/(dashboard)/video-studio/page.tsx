@@ -146,23 +146,23 @@ export default function VideoStudioPage() {
       </div>
 
       <Tabs defaultValue="products">
-        <TabsList>
-          <TabsTrigger value="products" className="gap-1.5">
+        <TabsList className="w-full justify-start overflow-x-auto md:w-auto md:justify-center">
+          <TabsTrigger value="products" className="gap-1.5 shrink-0">
             <Package className="h-4 w-4" /> Products
           </TabsTrigger>
-          <TabsTrigger value="formulas" className="gap-1.5">
+          <TabsTrigger value="formulas" className="gap-1.5 shrink-0">
             <Wand2 className="h-4 w-4" /> Formulas
           </TabsTrigger>
-          <TabsTrigger value="voices" className="gap-1.5">
+          <TabsTrigger value="voices" className="gap-1.5 shrink-0">
             <Clapperboard className="h-4 w-4" /> Voices
           </TabsTrigger>
-          <TabsTrigger value="batches" className="gap-1.5">
+          <TabsTrigger value="batches" className="gap-1.5 shrink-0">
             <Play className="h-4 w-4" /> Batch Studio
           </TabsTrigger>
-          <TabsTrigger value="market" className="gap-1.5">
+          <TabsTrigger value="market" className="gap-1.5 shrink-0">
             <TrendingUp className="h-4 w-4" /> Market Research
           </TabsTrigger>
-          <TabsTrigger value="queue" className="gap-1.5">
+          <TabsTrigger value="queue" className="gap-1.5 shrink-0">
             <Send className="h-4 w-4" /> Post Queue
           </TabsTrigger>
         </TabsList>

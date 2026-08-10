@@ -18,6 +18,7 @@ import {
   Globe,
   Briefcase,
   ChevronDown,
+  ArrowLeft,
   Inbox as InboxIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -301,8 +302,8 @@ export default function InboxPage() {
 
       {/* Three-column Layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Sources */}
-        <div className="w-64 shrink-0 border-r overflow-y-auto p-3">
+        {/* Left Sidebar - Sources (hidden on phones; drawer nav + All Sources default) */}
+        <div className="hidden md:block md:w-64 shrink-0 border-r overflow-y-auto p-3">
           <div className="mb-3">
             <button
               onClick={() => setSelectedSource("all")}
@@ -353,7 +354,12 @@ export default function InboxPage() {
         </div>
 
         {/* Message List */}
-        <div className="w-96 shrink-0 border-r overflow-y-auto">
+        <div
+          className={cn(
+            "w-full md:w-96 shrink-0 border-r overflow-y-auto",
+            selectedMessage && "hidden md:block"
+          )}
+        >
           {filteredMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <MessageSquare className="h-8 w-8 mb-2" />
@@ -411,7 +417,12 @@ export default function InboxPage() {
         </div>
 
         {/* Conversation Detail */}
-        <div className="flex-1 flex flex-col">
+        <div
+          className={cn(
+            "flex-1 flex flex-col",
+            !selectedMessage && "hidden md:flex"
+          )}
+        >
           {!selectedMessage ? (
             <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground">
               <MessageSquare className="h-12 w-12 mb-3" />
@@ -421,8 +432,17 @@ export default function InboxPage() {
           ) : (
             <>
               {/* Conversation Header */}
-              <div className="flex items-center justify-between border-b px-6 py-3">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between border-b px-4 py-3 sm:px-6">
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="md:hidden"
+                    onClick={() => setSelectedMessage(null)}
+                    aria-label="Back to messages"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
                   <Avatar className="h-10 w-10">
                     <AvatarImage src={selectedMessage.senderAvatar} />
                     <AvatarFallback>{selectedMessage.senderName.charAt(0)}</AvatarFallback>
@@ -493,7 +513,7 @@ export default function InboxPage() {
                     <Send className="h-4 w-4" />
                   </Button>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <div className="relative">
                     <Button
                       variant="outline"
