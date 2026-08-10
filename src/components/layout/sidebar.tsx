@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -68,14 +68,17 @@ interface SidebarProps {
 
 export function Sidebar({ user, workspace, workspaces, onNavigate, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const router = useRouter();
 
   const active = resolveActiveWorkspace(workspaces ?? []) ?? workspace;
 
   const switchWorkspace = (id: string) => {
     storeWorkspaceId(id);
     onNavigate?.();
-    router.push("/dashboard");
+    // Full reload so every page + the sidebar re-resolve against the new
+    // active workspace. router.push("/dashboard") is a no-op when already
+    // on /dashboard (no re-render, no refetch) — the classic "switcher
+    // doesn't change anything" bug.
+    window.location.href = "/dashboard";
   };
 
   return (

@@ -22,6 +22,7 @@ export default async function DashboardLayout({
       name: workspaces.name,
       slug: workspaces.slug,
       createdAt: workspaces.createdAt,
+      role: workspaceMembers.role,
     })
     .from(workspaceMembers)
     .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
@@ -50,6 +51,7 @@ export default async function DashboardLayout({
       name: newWorkspace.name,
       slug: newWorkspace.slug,
       createdAt: newWorkspace.createdAt,
+      role: "owner",
     };
   }
 
