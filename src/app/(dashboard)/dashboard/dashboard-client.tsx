@@ -95,6 +95,7 @@ export function DashboardClient({ userName }: { userName?: string | null }) {
   });
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [greeting] = useState(() => {
@@ -114,6 +115,7 @@ export function DashboardClient({ userName }: { userName?: string | null }) {
         const active = resolveActiveWorkspace(workspaces);
         if (!active) return;
         const wsId = active.id;
+        setWorkspaceName(active.name ?? null);
 
         const [postsRes, inboxRes, accountsRes] = await Promise.all([
           fetch(`/api/posts?workspaceId=${encodeURIComponent(wsId)}&limit=6`),
@@ -177,10 +179,10 @@ export function DashboardClient({ userName }: { userName?: string | null }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            {greeting}, {userName || "there"}! 👋
+            {greeting}, {workspaceName || userName || "there"}! 👋
           </h1>
           <p className="text-sm text-muted-foreground">
-            Here&apos;s what&apos;s happening with your social media today.
+            Here&apos;s what&apos;s happening with {workspaceName ? "this workspace" : "your social media"} today.
           </p>
         </div>
         <div className="flex items-center gap-2">
