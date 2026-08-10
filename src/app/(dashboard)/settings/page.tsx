@@ -56,8 +56,12 @@ function platformKey(p: string): Platform {
 }
 
 /** OAuth entry point per platform: TikTok has its own flow, FB/IG share Meta. */
-function connectHref(p: Platform): string {
-  if (p === "tiktok") return "/api/auth/tiktok/connect";
+function connectHref(p: Platform, workspaceId?: string | null): string {
+  if (p === "tiktok") {
+    return workspaceId
+      ? `/api/tiktok/connect?workspaceId=${encodeURIComponent(workspaceId)}`
+      : "/tiktok";
+  }
   if (p === "youtube") return "/api/auth/youtube/connect";
   if (p === "linkedin") return "/api/auth/linkedin/connect";
   return "/api/auth/meta/connect";
@@ -529,7 +533,7 @@ export default function SettingsPage() {
                           </div>
                           {platform === "facebook" || platform === "instagram" || platform === "tiktok" || platform === "youtube" || platform === "linkedin" ? (
                             <Button size="sm" asChild>
-                              <a href={connectHref(platform)}>
+                              <a href={connectHref(platform, workspaceId)}>
                                 <Link className="h-3.5 w-3.5 mr-1" />
                                 Connect
                               </a>
@@ -583,7 +587,7 @@ export default function SettingsPage() {
                       {(platform === "facebook" || platform === "instagram" || platform === "tiktok") && (
                         <div className="flex justify-end">
                           <Button variant="outline" size="sm" asChild>
-                            <a href={connectHref(platform)}>
+                            <a href={connectHref(platform, workspaceId)}>
                               <Plus className="h-3.5 w-3.5 mr-1" />
                               Add another {display}
                             </a>
