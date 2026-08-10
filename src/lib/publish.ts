@@ -206,8 +206,10 @@ async function publishToPlatform(
       }
 
       // TikTok's servers fetch the video from this public URL (same proxy the
-      // IG adapter uses — Blob auth is handled server-side).
-      const origin = process.env.AUTH_URL ?? "https://symphonyapp.company";
+      // IG adapter uses — Blob auth is handled server-side). AUTH_URL points
+      // at the apex domain which 308-redirects to www; TikTok's PULL_FROM_URL
+      // does not follow redirects, so use the canonical www origin directly.
+      const origin = "https://www.symphonyapp.company";
 
       // Defaults for scheduled posts: private visibility (same verified flow
       // as the TikTok page), commenting enabled.
