@@ -45,8 +45,8 @@ export async function GET(
         logo: workspaces.logo,
         createdAt: workspaces.createdAt,
         updatedAt: workspaces.updatedAt,
-        memberCount: sql<number>`(SELECT COUNT(*) FROM ${workspaceMembers} WHERE ${workspaceMembers.workspaceId} = ${workspaces.id})`,
-        socialAccountCount: sql<number>`(SELECT COUNT(*) FROM ${socialAccounts} WHERE ${socialAccounts.workspaceId} = ${workspaces.id})`,
+        memberCount: sql<number>`(SELECT COUNT(*) FROM ${workspaceMembers} WHERE ${workspaceMembers.workspaceId} = ${workspaces}.id)`,
+        socialAccountCount: sql<number>`(SELECT COUNT(*) FROM ${socialAccounts} WHERE ${socialAccounts.workspaceId} = ${workspaces}.id)`,
       })
       .from(workspaces)
       .where(eq(workspaces.id, id))
