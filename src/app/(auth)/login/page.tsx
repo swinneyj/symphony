@@ -30,14 +30,12 @@ export async function authenticate(_prevState: string | undefined, formData: For
 
 export async function signInWithGoogle() {
   "use server";
-  await signIn("google", { redirect: false });
-  redirect("/dashboard");
+  await signIn("google", { redirectTo: "/dashboard" });
 }
 
 export async function signInWithGithub() {
   "use server";
-  await signIn("github", { redirect: false });
-  redirect("/dashboard");
+  await signIn("github", { redirectTo: "/dashboard" });
 }
 
 export default function LoginPage() {
