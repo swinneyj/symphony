@@ -23,7 +23,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   pages: {
     signIn: "/login",
-    newUser: "/onboarding",
+    // No /onboarding page exists — new users (OAuth) land on /dashboard, same
+    // as the credentials register flow.
+    newUser: "/dashboard",
   },
   providers: [
     Credentials({
