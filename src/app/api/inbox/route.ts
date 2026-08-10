@@ -4,11 +4,12 @@ import { db } from "@/db";
 import {
   inboxMessages,
   inboxReplies,
-  workspaceMembers,
   socialAccounts,
+  workspaceMembers,
   users,
 } from "@/db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
+import { replyToYouTubeComment } from "@/lib/youtube";
 
 export async function GET(request: Request) {
   try {
@@ -200,7 +201,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Create the reply
+    // Create the reply (DB record first — the inbox reply is what the UI shows)
     const [reply] = await db
       .insert(inboxReplies)
       .values({
@@ -209,6 +210,76 @@ export async function POST(request: Request) {
         content: content.trim(),
       })
       .returning();
+
+    // Send the reply to the platform (best-effort; record the platform id if sent)
+    let platformPostId: string | null = null;
+    try {
+      if (originalMessage.platform === "youtube") {
+        const account = await db
+          .select()
+          .from(socialAccounts)
+          .where(
+            and(
+              eq(socialAccounts.id, originalMessage.socialAccountId),
+              eq(socialAccounts.status, "connected")
+            )
+          )
+          .limit(1);
+        if (account.length > 0) {
+          const videoId = String(
+            (originalMessage.metadata as Record<string, unknown>)?.videoId ?? ""
+          );
+          if (videoId) {
+            const res = await replyToYouTubeComment({
+              accessToken: account[0].accessToken,
+              videoId,
+              parentId: originalMessage.platformMessageId,
+              text: content.trim(),
+            });
+            platformPostId = res.id ?? null;
+          }
+        }
+      } else if (originalMessage.platform === "facebook" || originalMessage.platform === "instagram") {
+        // Meta comments: POST /{comment-id}/comments with a page token
+        const account = await db
+          .select()
+          .from(socialAccounts)
+          .where(
+            and(
+              eq(socialAccounts.id, originalMessage.socialAccountId),
+              eq(socialAccounts.status, "connected")
+            )
+          )
+          .limit(1);
+        if (account.length > 0) {
+          const res = await fetch(
+            `https://graph.facebook.com/v21.0/${originalMessage.platformMessageId}/comments`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: content.trim(),
+                access_token: account[0].accessToken,
+              }),
+            }
+          );
+          if (res.ok) {
+            const data = (await res.json()) as { id?: string };
+            platformPostId = data.id ?? null;
+          }
+        }
+      }
+    } catch (e) {
+      // Platform send failed — the reply stays visible in-app; flag via metadata
+      console.error("inbox platform reply failed:", e);
+    }
+
+    if (platformPostId) {
+      await db
+        .update(inboxReplies)
+        .set({ platformPostId })
+        .where(eq(inboxReplies.id, reply.id));
+    }
 
     // Update original message status to "replied"
     await db

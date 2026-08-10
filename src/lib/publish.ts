@@ -15,7 +15,9 @@
  *    tests are permanent.
  *  - TikTok: video attach → direct private post via the Content Posting API
  *    (live — approved app, verified SELF_ONLY flow).
- *  - youtube / x / linkedin: no adapter yet → skipped.
+ *  - YouTube: video bytes via public proxy → resumable upload (private default).
+ *  - LinkedIn: text share via Posts API v2 (media upload is a follow-up).
+ *  - X: requires a paid API tier — no adapter.
  */
 
 import { db } from "@/db";
@@ -25,6 +27,8 @@ import type { PlatformPublishState, PlatformPostConfig } from "@/db/schema";
 import { facebookPostFeed } from "@/lib/meta/facebook";
 import { instagramPostImage, instagramPostReel } from "@/lib/meta/instagram";
 import { initVideoPublish } from "@/lib/tiktok/posting";
+import { uploadYouTubeVideo } from "@/lib/youtube";
+import { linkedInPostShare } from "@/lib/linkedin";
 
 const KNOWN_PLATFORMS = ["tiktok", "youtube", "instagram", "facebook", "x", "linkedin"] as const;
 
@@ -235,10 +239,67 @@ async function publishToPlatform(
       };
     }
 
-    case "youtube":
+    case "youtube": {
+      if (!account) {
+        return { status: "failed", error: "No connected YouTube channel (Settings → Accounts)" };
+      }
+      const mediaId = post.mediaIds?.[0];
+      if (!mediaId) {
+        return { status: "failed", error: "YouTube posts require a video — attach one in the composer" };
+      }
+      const [asset] = await db
+        .select()
+        .from(mediaAssets)
+        .where(eq(mediaAssets.id, mediaId))
+        .limit(1);
+      if (!asset || !asset.mimeType?.startsWith("video/")) {
+        return { status: "failed", error: "YouTube posts require a video asset" };
+      }
+
+      // Fetch the video bytes via the public proxy (Blob auth server-side).
+      const origin = "https://www.symphonyapp.company";
+      const upstream = await fetch(`${origin}/api/media/${asset.id}/public`, {
+        cache: "no-store",
+      });
+      if (!upstream.ok) {
+        return { status: "failed", error: `Could not read video from media store (HTTP ${upstream.status})` };
+      }
+      const bytes = new Uint8Array(await upstream.arrayBuffer());
+
+      const ytConfig = config.youtube ?? {};
+      const { videoId } = await uploadYouTubeVideo({
+        accessToken: account.accessToken,
+        videoBytes: bytes,
+        mimeType: asset.mimeType,
+        title: (ytConfig as { title?: string }).title ?? post.content ?? "Symphony post",
+        description: post.content ?? "",
+        privacyStatus:
+          (ytConfig as { privacyStatus?: string }).privacyStatus === "public"
+            ? "public"
+            : (ytConfig as { privacyStatus?: string }).privacyStatus === "unlisted"
+              ? "unlisted"
+              : "private",
+      });
+      return { status: "published", externalId: videoId, publishedAt: new Date().toISOString() };
+    }
+
+    case "linkedin": {
+      if (!account) {
+        return { status: "failed", error: "No connected LinkedIn account (Settings → Accounts)" };
+      }
+      if (!post.content?.trim()) {
+        return { status: "failed", error: "LinkedIn posts need text content" };
+      }
+      const { postId } = await linkedInPostShare({
+        accessToken: account.accessToken,
+        personUrn: account.platformAccountId,
+        text: post.content,
+      });
+      return { status: "published", externalId: postId, publishedAt: new Date().toISOString() };
+    }
+
     case "x":
-    case "linkedin":
-      return { status: "skipped", error: "No adapter yet" };
+      return { status: "skipped", error: "X posting requires a paid API tier — not yet available" };
 
     default:
       return { status: "skipped", error: "Unknown platform" };

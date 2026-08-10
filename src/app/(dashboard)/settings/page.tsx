@@ -57,7 +57,10 @@ function platformKey(p: string): Platform {
 
 /** OAuth entry point per platform: TikTok has its own flow, FB/IG share Meta. */
 function connectHref(p: Platform): string {
-  return p === "tiktok" ? "/api/auth/tiktok/connect" : "/api/auth/meta/connect";
+  if (p === "tiktok") return "/api/auth/tiktok/connect";
+  if (p === "youtube") return "/api/auth/youtube/connect";
+  if (p === "linkedin") return "/api/auth/linkedin/connect";
+  return "/api/auth/meta/connect";
 }
 
 const META_ERRORS: Record<string, string> = {
@@ -67,6 +70,10 @@ const META_ERRORS: Record<string, string> = {
   no_pages: "No Facebook Pages found on this account.",
   meta_not_configured: "Meta connection is not configured on this deployment yet.",
   meta_failed: "Meta connection failed. Please try again.",
+  youtube_not_configured: "YouTube is not configured on this deployment yet.",
+  youtube_failed: "YouTube connection failed. Please try again.",
+  linkedin_not_configured: "LinkedIn is not configured on this deployment yet.",
+  linkedin_failed: "LinkedIn connection failed. Please try again.",
 };
 
 interface TeamMember {
@@ -184,6 +191,8 @@ export default function SettingsPage() {
     if (tiktokErr) setNotice({ type: "error", text: tiktokErr });
     else if (err) setNotice({ type: "error", text: META_ERRORS[err] || `Meta connection failed (${err})` });
     else if (connected === "tiktok") setNotice({ type: "success", text: "TikTok account connected" });
+    else if (connected === "youtube") setNotice({ type: "success", text: "YouTube channel connected" });
+    else if (connected === "linkedin") setNotice({ type: "success", text: "LinkedIn account connected" });
     else if (connected) setNotice({ type: "success", text: "Facebook / Instagram connected" });
 
     (async () => {
@@ -518,7 +527,7 @@ export default function SettingsPage() {
                             <div className="h-2 w-2 rounded-full bg-destructive" />
                             <span className="text-xs text-muted-foreground">Disconnected</span>
                           </div>
-                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" ? (
+                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" || platform === "youtube" || platform === "linkedin" ? (
                             <Button size="sm" asChild>
                               <a href={connectHref(platform)}>
                                 <Link className="h-3.5 w-3.5 mr-1" />
