@@ -1,96 +1,202 @@
 /**
- * TikTok Shop API — product catalog sync.
+ * TikTok Shop API — affiliate/creator product catalog sync.
  *
- * Pulls the seller's full product list from the TikTok Shop Open API
- * (partner.tiktokshop.com / open-api.tiktokglobalshop.com) and upserts
- * into the `products` table with source_type = "tiktok_showcase".
+ * Pulls the products a TikTok Shop CREATOR (affiliate) promotes in their
+ * shop showcase. Auth is Creator OAuth (connect → callback → token), NOT
+ * the static seller shop-cipher creds. The creator must be enrolled in the
+ * TikTok Shop affiliate program.
  *
- * Auth: app_key + app_secret (developer app) + shop cipher (authorized
- * shop). All three come from env — set by the workspace owner in the
- * TikTok Shop Partner Center. Same pattern as the other platform
- * connectors: code ships now, creds are a your-lane setup task.
+ * Flow (per TikTok Shop docs, creator-authorization-guide):
+ *   1. Redirect to https://shop.tiktok.com/alliance/creator/auth?app_key=…&state=…
+ *   2. User approves → callback?code=…&state=…
+ *   3. Exchange code via GET https://auth.tiktok-shops.com/api/v2/token/get
+ *      (?app_key&app_secret&auth_code&grant_type=authorized_code)
+ *      → access_token (7d) + refresh_token (1y) + open_id
+ *   4. Call APIs with header `x-tts-access-token: <access_token>`
+ *
+ * Creator product list endpoint (Get Shop Products, scope "Affiliate
+ * Information"):
+ *   GET https://open-api.tiktokglobalshop.com/affiliate_creator/202509/shop_products
+ *       ?app_key=…&sign=…&timestamp=…&page_size=…&page_token=…
+ *   (sign = HMAC-SHA256 of app_secret + sorted query string — see signer below)
  */
 
 const SHOP_API = "https://open-api.tiktokglobalshop.com";
+const AUTH_API = "https://auth.tiktok-shops.com";
 const TIMEOUT_MS = 20_000;
 
 export type ShopCredentials = {
   appKey: string;
   appSecret: string;
-  shopCipher: string;
+  accessToken: string;
 };
 
-export function getShopCredentials(): ShopCredentials {
+/** Creator app creds from env (static) + live access token per connected creator. */
+export function getShopCredentials(accessToken?: string): ShopCredentials {
   const appKey = process.env.TIKTOK_SHOP_APP_KEY ?? "";
   const appSecret = process.env.TIKTOK_SHOP_APP_SECRET ?? "";
-  const shopCipher = process.env.TIKTOK_SHOP_CIPHER ?? "";
-  if (!appKey || !appSecret || !shopCipher) {
-    throw new Error("TikTok Shop is not configured (TIKTOK_SHOP_APP_KEY / _APP_SECRET / _CIPHER)");
+  if (!appKey || !appSecret) {
+    throw new Error("TikTok Shop is not configured (TIKTOK_SHOP_APP_KEY / TIKTOK_SHOP_APP_SECRET)");
   }
-  return { appKey, appSecret, shopCipher };
+  if (!accessToken) {
+    throw new Error("No TikTok Shop creator access token — connect your creator account first");
+  }
+  return { appKey, appSecret, accessToken };
+}
+
+/** Build the creator authorization URL (step 1). */
+export function buildCreatorAuthUrl(redirectUri: string, state: string): string {
+  const appKey = process.env.TIKTOK_SHOP_APP_KEY ?? "";
+  if (!appKey) throw new Error("TIKTOK_SHOP_APP_KEY is not configured");
+  const params = new URLSearchParams({ app_key: appKey, state });
+  return `https://shop.tiktok.com/alliance/creator/auth?${params.toString()}`;
+}
+
+/** Exchange auth_code for tokens (step 3). */
+export async function exchangeCreatorCode(opts: {
+  appKey: string;
+  appSecret: string;
+  code: string;
+}): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpireIn: number;
+  refreshTokenExpireIn: number;
+  openId: string;
+}> {
+  const params = new URLSearchParams({
+    app_key: opts.appKey,
+    app_secret: opts.appSecret,
+    auth_code: opts.code,
+    grant_type: "authorized_code", // intentional — TikTok Shop, not standard OAuth
+  });
+  const res = await fetch(`${AUTH_API}/api/v2/token/get?${params.toString()}`, {
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  const json = (await res.json().catch(() => null)) as {
+    code?: number;
+    message?: string;
+    data?: {
+      access_token?: string;
+      refresh_token?: string;
+      access_token_expire_in?: number;
+      refresh_token_expire_in?: number;
+      open_id?: string;
+    };
+  } | null;
+  if (!res.ok || json?.code !== 0 || !json.data?.access_token) {
+    throw new Error(
+      `TikTok Shop token exchange failed (${res.status}): ${json?.message ?? "unknown"}`
+    );
+  }
+  return {
+    accessToken: json.data.access_token,
+    refreshToken: json.data.refresh_token ?? "",
+    accessTokenExpireIn: json.data.access_token_expire_in ?? 0,
+    refreshTokenExpireIn: json.data.refresh_token_expire_in ?? 0,
+    openId: json.data.open_id ?? "",
+  };
+}
+
+/** Refresh an expiring access token. */
+export async function refreshCreatorToken(opts: {
+  appKey: string;
+  appSecret: string;
+  refreshToken: string;
+}): Promise<{ accessToken: string; refreshToken: string; accessTokenExpireIn: number }> {
+  const params = new URLSearchParams({
+    app_key: opts.appKey,
+    app_secret: opts.appSecret,
+    refresh_token: opts.refreshToken,
+    grant_type: "refresh_token",
+  });
+  const res = await fetch(`${AUTH_API}/api/v2/token/refresh?${params.toString()}`, {
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  const json = (await res.json().catch(() => null)) as {
+    code?: number;
+    message?: string;
+    data?: { access_token?: string; refresh_token?: string; access_token_expire_in?: number };
+  } | null;
+  if (!res.ok || json?.code !== 0 || !json.data?.access_token) {
+    throw new Error(`TikTok Shop token refresh failed (${res.status}): ${json?.message ?? "unknown"}`);
+  }
+  return {
+    accessToken: json.data.access_token,
+    refreshToken: json.data.refresh_token ?? opts.refreshToken,
+    accessTokenExpireIn: json.data.access_token_expire_in ?? 0,
+  };
+}
+
+/** HMAC-SHA256 request signature (per TikTok Shop API docs). */
+function signRequest(appSecret: string, queryString: string): string {
+  const key = appSecret;
+  // docs: sign = hmac_sha256(secret, sorted-query-string); hex digest
+  const { createHmac } = require("crypto");
+  return createHmac("sha256", key).update(queryString).digest("hex");
 }
 
 export type ShopProduct = {
-  id: string; // tiktok product id
+  id: string;
   name: string;
   description?: string;
-  price?: string; // formatted like "49.99"
+  price?: string;
   currency?: string;
   mainImageUrl?: string;
-  status?: string; // ACTIVE | INACTIVE | ...
+  status?: string;
+  sellerName?: string;
 };
 
-type ShopApiListResponse = {
+type ShopApiResponse = {
   code?: number;
   message?: string;
   data?: {
     products?: Array<{
-      id?: string;
+      product_id?: string | number;
       title?: string;
-      name?: string;
       description?: string;
       price?: string | number;
       currency?: string;
       main_image?: { url_list?: string[] } | null;
-      main_image_url?: string;
-      images?: Array<{ url_list?: string[] }>;
       status?: string;
+      seller_name?: string;
     }>;
-    // pagination
     next_page_token?: string;
     total?: number;
   };
 };
 
-/**
- * Fetch one page of products from the shop. Sorted by create time desc.
- * Returns raw products + next-page token ("" when exhausted).
- */
+/** Fetch one page of the creator's shop products. */
 export async function fetchShopProductsPage(
   creds: ShopCredentials,
   opts: { pageToken?: string; pageSize?: number } = {}
 ): Promise<{ products: ShopProduct[]; nextPageToken: string }> {
-  const body = {
-    app_key: creds.appKey,
-    app_secret: creds.appSecret,
-    shop_cipher: creds.shopCipher,
-    page_size: Math.min(opts.pageSize ?? 50, 100),
-    sort_by: "create_time:DESC",
-    ...(opts.pageToken ? { page_token: opts.pageToken } : {}),
-  };
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const pageSize = Math.min(opts.pageSize ?? 20, 100);
 
-  const res = await fetch(`${SHOP_API}/api/product/products`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  const params: Record<string, string> = {
+    app_key: creds.appKey,
+    timestamp,
+    page_size: String(pageSize),
+  };
+  if (opts.pageToken) params.page_token = opts.pageToken;
+
+  const sortedQuery = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+    .join("&");
+  const sign = signRequest(creds.appSecret, sortedQuery);
+
+  const query = new URLSearchParams({ ...params, sign });
+  const res = await fetch(`${SHOP_API}/affiliate_creator/202509/shop_products?${query.toString()}`, {
+    headers: { "x-tts-access-token": creds.accessToken },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
   if (!res.ok) {
     throw new Error(`TikTok Shop API ${res.status}: ${await res.text().catch(() => "")}`);
   }
-
-  const json = (await res.json()) as ShopApiListResponse;
+  const json = (await res.json()) as ShopApiResponse;
   if (json.code && json.code !== 0) {
     throw new Error(`TikTok Shop API error ${json.code}: ${json.message ?? "unknown"}`);
   }
@@ -98,19 +204,16 @@ export async function fetchShopProductsPage(
   const items = json.data?.products ?? [];
   const products: ShopProduct[] = items
     .map((p) => {
-      const imageUrl =
-        p.main_image?.url_list?.[0] ??
-        p.main_image_url ??
-        p.images?.[0]?.url_list?.[0] ??
-        null;
+      const imageUrl = p.main_image?.url_list?.[0] ?? null;
       return {
-        id: String(p.id ?? ""),
-        name: p.title ?? p.name ?? "",
+        id: String(p.product_id ?? ""),
+        name: p.title ?? "",
         description: p.description,
         price: p.price != null ? String(p.price) : undefined,
         currency: p.currency ?? "USD",
         mainImageUrl: imageUrl ?? undefined,
         status: p.status,
+        sellerName: p.seller_name,
       };
     })
     .filter((p) => p.id && p.name);
@@ -118,7 +221,7 @@ export async function fetchShopProductsPage(
   return { products, nextPageToken: json.data?.next_page_token ?? "" };
 }
 
-/** Fetch the whole catalog (paginates until exhausted). */
+/** Fetch the whole creator showcase catalog (paginated). */
 export async function fetchAllShopProducts(
   creds: ShopCredentials,
   onProgress?: (fetched: number) => void
@@ -132,8 +235,7 @@ export async function fetchAllShopProducts(
     all.push(...products);
     onProgress?.(all.length);
     token = nextPageToken;
-    // safety valve — never loop forever on a misbehaving API
-    if (all.length > 10_000) break;
+    if (all.length > 10_000) break; // safety valve
   } while (token);
   return all;
 }

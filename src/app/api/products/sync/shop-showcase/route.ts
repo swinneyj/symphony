@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { products, workspaceMembers } from "@/db/schema";
+import { products, socialAccounts, workspaceMembers } from "@/db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { getShopCredentials, fetchAllShopProducts } from "@/lib/tiktok-shop";
 
@@ -46,10 +46,37 @@ export async function POST(request: Request) {
 
     let creds;
     try {
-      creds = getShopCredentials();
-    } catch {
+      // Creator flow: static app_key/secret from env + LIVE access token from
+      // the connected tiktok_shop social account in this workspace.
+      const connected = await db
+        .select({
+          accessToken: socialAccounts.accessToken,
+          refreshToken: socialAccounts.refreshToken,
+          tokenExpiresAt: socialAccounts.tokenExpiresAt,
+          platformAccountId: socialAccounts.platformAccountId,
+        })
+        .from(socialAccounts)
+        .where(
+          and(
+            eq(socialAccounts.workspaceId, workspaceId),
+            eq(socialAccounts.platform, "tiktok_shop"),
+            eq(socialAccounts.status, "connected")
+          )
+        )
+        .limit(1);
+      if (!connected[0]?.accessToken) {
+        return NextResponse.json(
+          {
+            error:
+              "No TikTok Shop creator connected — connect your creator account in Settings → Connected Accounts first",
+          },
+          { status: 501 }
+        );
+      }
+      creds = getShopCredentials(connected[0].accessToken);
+    } catch (e) {
       return NextResponse.json(
-        { error: "TikTok Shop is not configured — add TIKTOK_SHOP_APP_KEY, TIKTOK_SHOP_APP_SECRET, TIKTOK_SHOP_CIPHER to the environment" },
+        { error: e instanceof Error ? e.message : "TikTok Shop is not configured" },
         { status: 501 }
       );
     }

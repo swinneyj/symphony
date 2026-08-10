@@ -16,7 +16,7 @@ import { relations } from "drizzle-orm";
 
 export const workspaceRoleEnum = pgEnum("workspace_role", ["owner", "admin", "member", "viewer"]);
 export const postStatusEnum = pgEnum("post_status", ["draft", "scheduled", "approved", "published", "failed", "cancelled"]);
-export const platformEnum = pgEnum("platform", ["tiktok", "youtube", "instagram", "facebook", "twitter", "linkedin"]);
+export const platformEnum = pgEnum("platform", ["tiktok", "youtube", "instagram", "facebook", "twitter", "linkedin", "tiktok_shop"]);
 export const accountStatusEnum = pgEnum("account_status", ["connected", "expired", "disconnected"]);
 export const inboxMessageTypeEnum = pgEnum("inbox_message_type", ["comment", "direct_message", "mention", "reply"]);
 export const inboxMessageStatusEnum = pgEnum("inbox_message_status", ["unread", "read", "replied", "archived", "spam"]);

@@ -110,12 +110,13 @@ export async function POST(request: Request) {
       "facebook",
       "twitter",
       "linkedin",
+      "tiktok_shop",
     ];
     if (!validPlatforms.includes(platform)) {
       return NextResponse.json(
         {
           error:
-            "Invalid platform. Must be one of: tiktok, youtube, instagram, facebook, twitter, linkedin",
+            "Invalid platform. Must be one of: tiktok, youtube, instagram, facebook, twitter, linkedin, tiktok_shop",
         },
         { status: 400 }
       );

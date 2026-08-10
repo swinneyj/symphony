@@ -21,6 +21,7 @@ import {
   MessageCircle,
   Briefcase,
   Image as ImageIcon,
+  ShoppingBag,
   ChevronRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -38,7 +39,7 @@ import { ApiKeysPanel } from "./api-keys-panel";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "x" | "linkedin";
+type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "x" | "linkedin" | "tiktok_shop";
 
 interface RealAccount {
   id: string;
@@ -49,7 +50,7 @@ interface RealAccount {
   status: string;
 }
 
-const ACCOUNT_PLATFORMS: Platform[] = ["facebook", "instagram", "tiktok", "youtube", "x", "linkedin"];
+const ACCOUNT_PLATFORMS: Platform[] = ["facebook", "instagram", "tiktok", "youtube", "x", "linkedin", "tiktok_shop"];
 
 function platformKey(p: string): Platform {
   return (p === "twitter" ? "x" : p) as Platform;
@@ -62,6 +63,7 @@ function connectHref(p: Platform, workspaceId?: string | null): string {
       ? `/api/tiktok/connect?workspaceId=${encodeURIComponent(workspaceId)}`
       : "/tiktok";
   }
+  if (p === "tiktok_shop") return "/api/auth/tiktok-shop/connect";
   if (p === "youtube") return "/api/auth/youtube/connect";
   if (p === "linkedin") return "/api/auth/linkedin/connect";
   return "/api/auth/meta/connect";
@@ -100,6 +102,7 @@ const platformIcons: Record<Platform, React.ElementType> = {
   facebook: MessageCircle,
   x: Globe,
   linkedin: Briefcase,
+  tiktok_shop: ShoppingBag,
 };
 
 const platformNames: Record<Platform, string> = {
@@ -109,6 +112,7 @@ const platformNames: Record<Platform, string> = {
   facebook: "Facebook",
   x: "X (Twitter)",
   linkedin: "LinkedIn",
+  tiktok_shop: "TikTok Shop",
 };
 
 const platformColors: Record<Platform, string> = {
@@ -118,6 +122,7 @@ const platformColors: Record<Platform, string> = {
   facebook: "bg-blue-600",
   x: "bg-neutral-900 dark:bg-neutral-100",
   linkedin: "bg-blue-700",
+  tiktok_shop: "bg-teal-600",
 };
 
 const NOTIFICATION_DEFS = [
@@ -531,7 +536,7 @@ export default function SettingsPage() {
                             <div className="h-2 w-2 rounded-full bg-destructive" />
                             <span className="text-xs text-muted-foreground">Disconnected</span>
                           </div>
-                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" || platform === "youtube" || platform === "linkedin" ? (
+                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" || platform === "youtube" || platform === "linkedin" || platform === "tiktok_shop" ? (
                             <Button size="sm" asChild>
                               <a href={connectHref(platform, workspaceId)}>
                                 <Link className="h-3.5 w-3.5 mr-1" />
