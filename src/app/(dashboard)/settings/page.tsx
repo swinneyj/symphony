@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import {
   User,
   Building2,
@@ -197,15 +198,18 @@ export default function SettingsPage() {
       if (!res.ok) return;
       const workspaces = await res.json();
       if (workspaces.length > 0) {
-        setWorkspaceId(workspaces[0].id);
-        setWorkspace({
-          id: workspaces[0].id,
-          name: workspaces[0].name,
-          slug: workspaces[0].slug,
-          description: workspaces[0].description ?? null,
-        });
-        loadAccounts(workspaces[0].id);
-        loadMembers(workspaces[0].id);
+        const active = resolveActiveWorkspace(workspaces);
+        if (active) {
+          setWorkspaceId(active.id);
+          setWorkspace({
+            id: active.id,
+            name: active.name ?? "",
+            slug: active.slug ?? "",
+            description: active.description ?? null,
+          });
+          loadAccounts(active.id);
+          loadMembers(active.id);
+        }
       } else {
         setLoadingAccounts(false);
       }

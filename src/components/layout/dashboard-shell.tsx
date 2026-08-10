@@ -13,6 +13,7 @@ interface DashboardShellProps {
     image?: string | null;
   };
   workspace?: {
+    id: string;
     name: string;
   } | null;
   workspaces?: Array<{

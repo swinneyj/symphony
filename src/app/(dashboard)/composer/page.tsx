@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { toast } from "sonner";
 import {
   Image,
@@ -114,8 +115,9 @@ export default function ComposerPage() {
     // Load the user's first workspace so posts can be saved against it
     fetch("/api/workspaces")
       .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((workspaces: Array<{ id: string }>) => {
-        if (workspaces.length > 0) setWorkspaceId(workspaces[0].id);
+      .then((workspaces: Array<{ id: string; name?: string; role?: string; createdAt?: string | null }>) => {
+        const active = resolveActiveWorkspace(workspaces);
+        if (active) setWorkspaceId(active.id);
       })
       .catch(() => toast.error("Could not load workspace"));
   }, []);

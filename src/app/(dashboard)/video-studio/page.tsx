@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { toast } from "sonner";
 import Link from "next/link";
 import {
@@ -89,7 +90,8 @@ export default function VideoStudioPage() {
     const res = await fetch("/api/workspaces");
     if (!res.ok) return;
     const workspaces = await res.json();
-    if (workspaces.length > 0) setWorkspaceId(workspaces[0].id);
+    const active = resolveActiveWorkspace(workspaces);
+    if (active) setWorkspaceId(active.id);
   }, []);
 
   const loadProducts = useCallback(async (wsId: string) => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import {
   Image,
   Film,
@@ -99,8 +100,11 @@ export default function MediaPage() {
       if (!res.ok) return;
       const workspaces = await res.json();
       if (workspaces.length > 0) {
-        setWorkspaceId(workspaces[0].id);
-        loadMedia(workspaces[0].id);
+        const active = resolveActiveWorkspace(workspaces);
+        if (active) {
+          setWorkspaceId(active.id);
+          loadMedia(active.id);
+        }
       } else {
         setLoading(false);
       }
