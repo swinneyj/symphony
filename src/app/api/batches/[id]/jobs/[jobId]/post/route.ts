@@ -5,6 +5,7 @@ import { videoBatchJobs, videoBatches, products, socialAccounts, posts, postPlat
 import { eq, and } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { initVideoPublish, fetchPublishStatus } from "@/lib/tiktok/posting";
+import { refreshTikTokToken, tiktokClientKey, tiktokClientSecret } from "@/lib/tiktok/auth";
 import { buildComplianceChecklist, buildTikTokTitle } from "@/lib/video/compliance";
 
 // Posts a completed batch job's final video to the workspace's TikTok account.
@@ -50,17 +51,62 @@ export async function POST(
       ? await db.select().from(products).where(eq(products.id, job.productId))
       : [];
 
-    // TikTok account for this workspace
-    const [account] = await db
-      .select()
-      .from(socialAccounts)
-      .where(and(eq(socialAccounts.workspaceId, job.workspaceId), eq(socialAccounts.platform, "tiktok")));
+    // TikTok account for this workspace — the batch's chosen account wins
+    // (job.metadata.tiktokAccountId), falling back to the first connected one.
+    const accountId = typeof meta.tiktokAccountId === "string" ? meta.tiktokAccountId : null;
+    const [account] = accountId
+      ? await db
+          .select()
+          .from(socialAccounts)
+          .where(
+            and(
+              eq(socialAccounts.id, accountId),
+              eq(socialAccounts.workspaceId, job.workspaceId),
+              eq(socialAccounts.platform, "tiktok")
+            )
+          )
+          .limit(1)
+      : await db
+          .select()
+          .from(socialAccounts)
+          .where(and(eq(socialAccounts.workspaceId, job.workspaceId), eq(socialAccounts.platform, "tiktok")))
+          .limit(1);
 
     if (!account?.accessToken) {
       return NextResponse.json(
         { error: "No connected TikTok account for this workspace" },
         { status: 409 }
       );
+    }
+
+    // TikTok user tokens last 24h — refresh when near/past expiry (rotating
+    // refresh token). Falls back to the stored token if refresh fails.
+    let accessToken = account.accessToken;
+    const expiresAtMs = account.tokenExpiresAt ? new Date(account.tokenExpiresAt).getTime() : 0;
+    if (account.refreshToken && expiresAtMs && Date.now() > expiresAtMs - 6 * 3600 * 1000) {
+      try {
+        const refreshed = await refreshTikTokToken({
+          clientKey: tiktokClientKey(),
+          clientSecret: tiktokClientSecret(),
+          refreshToken: account.refreshToken,
+        });
+        if (refreshed) {
+          accessToken = refreshed.accessToken;
+          await db
+            .update(socialAccounts)
+            .set({
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken,
+              tokenExpiresAt: refreshed.expiresIn
+                ? new Date(Date.now() + refreshed.expiresIn * 1000)
+                : null,
+              updatedAt: new Date(),
+            })
+            .where(eq(socialAccounts.id, account.id));
+        }
+      } catch (error) {
+        console.warn("TikTok token refresh failed, using stored token:", error);
+      }
     }
 
     // Compliance gate — Video Studio products are TikTok Shop content by design.
@@ -89,7 +135,7 @@ export async function POST(
       ? (body.privacyLevel as "SELF_ONLY" | "PUBLIC_TO_EVERYONE" | "MUTUAL_FOLLOW_FRIENDS")
       : "SELF_ONLY";
     const init = await initVideoPublish({
-      accessToken: account.accessToken,
+      accessToken,
       videoUrl: job.finalUrl,
       title,
       privacyLevel,
@@ -126,7 +172,7 @@ export async function POST(
     let publishStatus = "SENDING";
     try {
       const statusRes = await fetchPublishStatus({
-        accessToken: account.accessToken,
+        accessToken,
         publishId: init.publishId,
       });
       publishStatus = statusRes.status;

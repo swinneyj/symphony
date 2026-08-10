@@ -55,6 +55,11 @@ function platformKey(p: string): Platform {
   return (p === "twitter" ? "x" : p) as Platform;
 }
 
+/** OAuth entry point per platform: TikTok has its own flow, FB/IG share Meta. */
+function connectHref(p: Platform): string {
+  return p === "tiktok" ? "/api/auth/tiktok/connect" : "/api/auth/meta/connect";
+}
+
 const META_ERRORS: Record<string, string> = {
   meta_denied: "Access to Facebook/Instagram was denied.",
   state_mismatch: "Security check failed — please try again.",
@@ -141,8 +146,11 @@ export default function SettingsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const err = params.get("error");
+    const tiktokErr = params.get("tiktok_error");
     const connected = params.get("connected");
-    if (err) setNotice({ type: "error", text: META_ERRORS[err] || `Meta connection failed (${err})` });
+    if (tiktokErr) setNotice({ type: "error", text: tiktokErr });
+    else if (err) setNotice({ type: "error", text: META_ERRORS[err] || `Meta connection failed (${err})` });
+    else if (connected === "tiktok") setNotice({ type: "success", text: "TikTok account connected" });
     else if (connected) setNotice({ type: "success", text: "Facebook / Instagram connected" });
 
     (async () => {
@@ -317,25 +325,25 @@ export default function SettingsPage() {
                     return (
                       <div
                         key={platform}
-                        className="flex items-center justify-between rounded-lg border p-4"
+                        className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className={cn("flex h-10 w-10 items-center justify-center rounded-full", color)}>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", color)}>
                             <Icon className="h-5 w-5 text-white" />
                           </div>
-                          <div>
-                            <p className="text-sm font-medium">{display}</p>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{display}</p>
                             <p className="text-xs text-muted-foreground">Not connected</p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-between gap-3 sm:justify-end">
                           <div className="flex items-center gap-1">
                             <div className="h-2 w-2 rounded-full bg-destructive" />
                             <span className="text-xs text-muted-foreground">Disconnected</span>
                           </div>
-                          {platform === "facebook" || platform === "instagram" ? (
+                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" ? (
                             <Button size="sm" asChild>
-                              <a href="/api/auth/meta/connect">
+                              <a href={connectHref(platform)}>
                                 <Link className="h-3.5 w-3.5 mr-1" />
                                 Connect
                               </a>
@@ -351,39 +359,53 @@ export default function SettingsPage() {
                     );
                   }
 
-                  return matches.map((account) => (
-                    <div
-                      key={account.id}
-                      className="flex items-center justify-between rounded-lg border p-4"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={cn("flex h-10 w-10 items-center justify-center rounded-full", color)}>
-                          <Icon className="h-5 w-5 text-white" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium">{account.accountName}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {account.accountUsername ? `@${account.accountUsername} · ` : ""}
-                            {display}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-1">
-                          <div className="h-2 w-2 rounded-full bg-emerald-500" />
-                          <span className="text-xs text-muted-foreground">Connected</span>
-                        </div>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => disconnect(account)}
+                  return (
+                    <div key={platform} className="space-y-3">
+                      {matches.map((account) => (
+                        <div
+                          key={account.id}
+                          className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
                         >
-                          <Unlink className="h-3.5 w-3.5 mr-1" />
-                          Disconnect
-                        </Button>
-                      </div>
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", color)}>
+                              <Icon className="h-5 w-5 text-white" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">{account.accountName}</p>
+                              <p className="truncate text-xs text-muted-foreground">
+                                {account.accountUsername ? `@${account.accountUsername} · ` : ""}
+                                {display}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 sm:justify-end">
+                            <div className="flex items-center gap-1">
+                              <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                              <span className="text-xs text-muted-foreground">Connected</span>
+                            </div>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => disconnect(account)}
+                            >
+                              <Unlink className="h-3.5 w-3.5 mr-1" />
+                              Disconnect
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {(platform === "facebook" || platform === "instagram" || platform === "tiktok") && (
+                        <div className="flex justify-end">
+                          <Button variant="outline" size="sm" asChild>
+                            <a href={connectHref(platform)}>
+                              <Plus className="h-3.5 w-3.5 mr-1" />
+                              Add another {display}
+                            </a>
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                  ));
+                  );
                 })
               )}
             </CardContent>

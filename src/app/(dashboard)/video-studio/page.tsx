@@ -1027,6 +1027,32 @@ function BatchStudioTab({
   const [detail, setDetail] = useState<BatchDetailJob[] | null>(null);
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [postingJobId, setPostingJobId] = useState<string | null>(null);
+  const [tiktokAccounts, setTiktokAccounts] = useState<
+    Array<{ id: string; accountName: string; accountUsername?: string | null }>
+  >([]);
+  const [tiktokAccountId, setTiktokAccountId] = useState("");
+
+  // Load connected TikTok accounts so batches can pick which one to publish to.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/accounts?workspaceId=${workspaceId}`);
+      if (!res.ok) return;
+      const all = (await res.json()) as Array<{
+        id: string;
+        platform: string;
+        accountName: string;
+        accountUsername?: string | null;
+      }>;
+      if (cancelled) return;
+      const tts = all.filter((a) => a.platform === "tiktok");
+      setTiktokAccounts(tts);
+      setTiktokAccountId((prev) => prev || tts[0]?.id || "");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
 
   const toggleProduct = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
@@ -1073,6 +1099,7 @@ function BatchStudioTab({
           quality,
           provider: engine,
           productIds: selected,
+          tiktokAccountId: tiktokAccountId || null,
         }),
       });
       const data = await res.json();
@@ -1184,6 +1211,28 @@ function BatchStudioTab({
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-tiktok-account">TikTok account</Label>
+              <select
+                id="batch-tiktok-account"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                value={tiktokAccountId}
+                onChange={(e) => setTiktokAccountId(e.target.value)}
+              >
+                <option value="">Default (first connected)</option>
+                {tiktokAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.accountName}
+                    {a.accountUsername ? ` (@${a.accountUsername})` : ""}
+                  </option>
+                ))}
+              </select>
+              {tiktokAccounts.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No TikTok account connected — add one in Settings → Accounts.
+                </p>
+              )}
             </div>
           </div>
 

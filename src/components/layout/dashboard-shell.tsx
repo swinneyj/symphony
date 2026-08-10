@@ -78,6 +78,7 @@ export function DashboardShell({
             workspace={workspace}
             workspaces={workspaces}
             onClose={() => setOpen(false)}
+            onNavigate={() => setOpen(false)}
           />
         </div>
       </div>

@@ -104,49 +104,91 @@ export async function GET(request: Request) {
 
     if (pages.length === 0) return fail("no_pages");
 
-    // 4. Replace prior Meta rows for this workspace (fresh token each connect)
-    await db
-      .delete(socialAccounts)
-      .where(
-        and(
-          eq(socialAccounts.workspaceId, stored.workspaceId),
-          or(
+    // Upsert per page identity — connecting another Facebook account ADDS its
+    // pages alongside existing ones (previously this wiped all FB/IG rows).
+    for (const page of pages) {
+      const existing = await db
+        .select({ id: socialAccounts.id })
+        .from(socialAccounts)
+        .where(
+          and(
+            eq(socialAccounts.workspaceId, stored.workspaceId),
             eq(socialAccounts.platform, "facebook"),
-            eq(socialAccounts.platform, "instagram")
+            eq(socialAccounts.platformAccountId, page.id)
           )
         )
-      );
+        .limit(1);
 
-    for (const page of pages) {
-      await db.insert(socialAccounts).values({
-        workspaceId: stored.workspaceId,
-        platform: "facebook",
-        platformAccountId: page.id,
-        accountName: page.name,
-        accountUsername: page.name,
-        avatarUrl: null,
-        // Page-scoped token (FB publishing uses the page token)
-        accessToken: page.access_token || token,
-        tokenExpiresAt: expiresAt,
-        status: "connected",
-        metadata: { type: "page", userId: me.id ?? null },
-      });
-
-      const ig = page.instagram_business_account;
-      if (ig) {
+      if (existing[0]) {
+        await db
+          .update(socialAccounts)
+          .set({
+            accountName: page.name,
+            accountUsername: page.name,
+            accessToken: page.access_token || token,
+            tokenExpiresAt: expiresAt,
+            status: "connected",
+            updatedAt: new Date(),
+          })
+          .where(eq(socialAccounts.id, existing[0].id));
+      } else {
         await db.insert(socialAccounts).values({
           workspaceId: stored.workspaceId,
-          platform: "instagram",
-          platformAccountId: ig.id,
-          accountName: ig.username,
-          accountUsername: ig.username,
-          avatarUrl: ig.profile_picture_url || null,
-          // IG publishing also uses the page token
+          platform: "facebook",
+          platformAccountId: page.id,
+          accountName: page.name,
+          accountUsername: page.name,
+          avatarUrl: null,
+          // Page-scoped token (FB publishing uses the page token)
           accessToken: page.access_token || token,
           tokenExpiresAt: expiresAt,
           status: "connected",
-          metadata: { pageId: page.id, pageName: page.name },
+          metadata: { type: "page", userId: me.id ?? null },
         });
+      }
+
+      const ig = page.instagram_business_account;
+      if (ig) {
+        const existingIg = await db
+          .select({ id: socialAccounts.id })
+          .from(socialAccounts)
+          .where(
+            and(
+              eq(socialAccounts.workspaceId, stored.workspaceId),
+              eq(socialAccounts.platform, "instagram"),
+              eq(socialAccounts.platformAccountId, ig.id)
+            )
+          )
+          .limit(1);
+
+        if (existingIg[0]) {
+          await db
+            .update(socialAccounts)
+            .set({
+              accountName: ig.username,
+              accountUsername: ig.username,
+              avatarUrl: ig.profile_picture_url || null,
+              accessToken: page.access_token || token,
+              tokenExpiresAt: expiresAt,
+              status: "connected",
+              updatedAt: new Date(),
+            })
+            .where(eq(socialAccounts.id, existingIg[0].id));
+        } else {
+          await db.insert(socialAccounts).values({
+            workspaceId: stored.workspaceId,
+            platform: "instagram",
+            platformAccountId: ig.id,
+            accountName: ig.username,
+            accountUsername: ig.username,
+            avatarUrl: ig.profile_picture_url || null,
+            // IG publishing also uses the page token
+            accessToken: page.access_token || token,
+            tokenExpiresAt: expiresAt,
+            status: "connected",
+            metadata: { pageId: page.id, pageName: page.name },
+          });
+        }
       }
     }
 

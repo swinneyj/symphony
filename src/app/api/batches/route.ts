@@ -102,6 +102,7 @@ export async function POST(request: Request) {
       quality = "standard",
       provider,
       productIds,
+      tiktokAccountId,
     }: {
       workspaceId?: string;
       name?: string;
@@ -110,6 +111,7 @@ export async function POST(request: Request) {
       quality?: string;
       provider?: string;
       productIds?: string[];
+      tiktokAccountId?: string | null;
     } = body;
 
     if (!workspaceId || !name?.trim() || !formulaId || !Array.isArray(productIds) || productIds.length === 0) {
@@ -205,6 +207,8 @@ export async function POST(request: Request) {
           // Boomerang + CTA overlay flow from the formula to the final assembly.
           extendMode: boomerang ? "reverse" : "none",
           overlayTemplate: overlayTemplate ?? null,
+          // Which TikTok account this batch publishes to (multi-account).
+          ...(tiktokAccountId ? { tiktokAccountId } : {}),
           // Graph-authored scene/motion/duration/quality override the formula row.
           ...(gScenePrompt ? { scenePromptTemplate: gScenePrompt } : {}),
           ...(gMotionPreset ? { motionPreset: gMotionPreset } : {}),
