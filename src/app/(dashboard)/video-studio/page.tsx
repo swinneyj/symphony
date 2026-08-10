@@ -8,6 +8,7 @@ import {
   Package,
   Plus,
   Link2,
+  ShoppingBag,
   Wand2,
   Trash2,
   Play,
@@ -237,6 +238,28 @@ function ProductsTab({
   const [manualOpen, setManualOpen] = useState(false);
   const [manual, setManual] = useState({ name: "", price: "", description: "", imageUrl: "" });
   const [creating, setCreating] = useState(false);
+  const [syncingShop, setSyncingShop] = useState(false);
+
+  const handleShopSync = async () => {
+    setSyncingShop(true);
+    try {
+      const res = await fetch("/api/products/sync/shop-showcase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Shop sync failed");
+      toast.success(
+        `Shop synced — ${data.added} added, ${data.updated} updated, ${data.total} total`
+      );
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Shop sync failed");
+    } finally {
+      setSyncingShop(false);
+    }
+  };
 
   const handleImport = async () => {
     if (!importUrl.trim()) {
@@ -343,6 +366,19 @@ function ProductsTab({
             Import
           </Button>
         </div>
+        <Button
+          variant="secondary"
+          onClick={handleShopSync}
+          disabled={syncingShop}
+          title="Pull your full TikTok Shop product catalog"
+        >
+          {syncingShop ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ShoppingBag className="h-4 w-4" />
+          )}
+          Sync from TikTok Shop
+        </Button>
         <Dialog open={manualOpen} onOpenChange={setManualOpen}>
           <DialogTrigger asChild>
             <Button variant="outline">
