@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { storeWorkspaceId, resolveActiveWorkspace } from "@/lib/active-workspace";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +52,7 @@ interface SidebarProps {
     image?: string | null;
   };
   workspace?: {
+    id: string;
     name: string;
   } | null;
   workspaces?: Array<{
@@ -66,6 +68,15 @@ interface SidebarProps {
 
 export function Sidebar({ user, workspace, workspaces, onNavigate, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const active = resolveActiveWorkspace(workspaces ?? []) ?? workspace;
+
+  const switchWorkspace = (id: string) => {
+    storeWorkspaceId(id);
+    onNavigate?.();
+    router.push("/dashboard");
+  };
 
   return (
     <div className="flex h-full w-64 flex-col border-r bg-sidebar-background">
@@ -101,17 +112,21 @@ export function Sidebar({ user, workspace, workspaces, onNavigate, onClose }: Si
                 className="w-full justify-between text-sm font-normal"
               >
                 <span className="truncate">
-                  {workspace?.name || workspaces[0]?.name}
+                  {active?.name || workspaces[0]?.name}
                 </span>
                 <ChevronDown className="h-4 w-4 opacity-50" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56">
               {workspaces.map((ws) => (
-                <DropdownMenuItem key={ws.id} asChild>
-                  <Link href={`/workspaces/${ws.id}`} onClick={onNavigate}>
-                    {ws.name}
-                  </Link>
+                <DropdownMenuItem
+                  key={ws.id}
+                  onSelect={() => switchWorkspace(ws.id)}
+                >
+                  {ws.name}
+                  {ws.id === active?.id && (
+                    <span className="ml-auto text-xs text-muted-foreground">●</span>
+                  )}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />

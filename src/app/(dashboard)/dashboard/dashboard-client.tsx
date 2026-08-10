@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import Link from "next/link";
 import {
   CalendarClock,
@@ -110,7 +111,9 @@ export function DashboardClient({ userName }: { userName?: string | null }) {
         if (!wsRes.ok) return;
         const workspaces = await wsRes.json();
         if (workspaces.length === 0) return;
-        const wsId = workspaces[0].id;
+        const active = resolveActiveWorkspace(workspaces);
+        if (!active) return;
+        const wsId = active.id;
 
         const [postsRes, inboxRes, accountsRes] = await Promise.all([
           fetch(`/api/posts?workspaceId=${encodeURIComponent(wsId)}&limit=6`),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import {
   Download,
   Heart,
@@ -81,7 +82,9 @@ export default function AnalyticsPage() {
     if (!res.ok) return;
     const workspaces = await res.json();
     if (workspaces.length === 0) return;
-    const wsId = workspaces[0].id;
+    const active = resolveActiveWorkspace(workspaces);
+    if (!active) return;
+    const wsId = active.id;
     const overviewRes = await fetch(`/api/analytics/overview?workspaceId=${encodeURIComponent(wsId)}`);
     if (overviewRes.ok) setData(await overviewRes.json());
   }, []);

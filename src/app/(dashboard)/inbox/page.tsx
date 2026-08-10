@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import {
   Search,
   MessageSquare,
@@ -179,8 +180,11 @@ export default function InboxPage() {
       if (!res.ok) return;
       const workspaces = await res.json();
       if (workspaces.length > 0) {
-        setWorkspaceId(workspaces[0].id);
-        loadMessages(workspaces[0].id);
+        const active = resolveActiveWorkspace(workspaces);
+        if (active) {
+          setWorkspaceId(active.id);
+          loadMessages(active.id);
+        }
       } else {
         setLoading(false);
       }

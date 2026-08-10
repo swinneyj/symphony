@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import {
   CheckCircle2,
   CircleDot,
@@ -109,9 +110,11 @@ export default function TikTokPage() {
         const workspaceResponse = await fetch("/api/workspaces");
         const workspaces = (await workspaceResponse.json()) as Workspace[];
         if (!workspaceResponse.ok || !workspaces.length) throw new Error("No workspace is available");
-        setWorkspace(workspaces[0]);
-        const connected = await loadAccount(workspaces[0].id);
-        if (connected.account) await loadCreator(workspaces[0].id);
+        const active = resolveActiveWorkspace(workspaces);
+        if (!active) return;
+        setWorkspace(active);
+        const connected = await loadAccount(active.id);
+        if (connected.account) await loadCreator(active.id);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Could not load TikTok integration");
       } finally {
