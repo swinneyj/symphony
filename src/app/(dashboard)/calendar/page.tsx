@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import Link from "next/link";
 import {
   format,
@@ -161,7 +162,8 @@ export default function CalendarPage() {
       const res = await fetch("/api/workspaces");
       if (!res.ok) return;
       const workspaces = await res.json();
-      if (workspaces.length > 0) loadPosts(workspaces[0].id);
+      const active = resolveActiveWorkspace(workspaces);
+      if (active) loadPosts(active.id);
       else setLoading(false);
     })();
   }, [loadPosts]);

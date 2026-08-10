@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { KeyRound, Plus, Copy, Trash2, Loader2, Check } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,8 @@ export function ApiKeysPanel() {
     fetch("/api/workspaces")
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((workspaces: Array<{ id: string }>) => {
-        if (workspaces.length > 0) setWorkspaceId(workspaces[0].id);
+        const active = resolveActiveWorkspace(workspaces);
+        if (active) setWorkspaceId(active.id);
       })
       .finally(() => setLoading(false));
   }, []);

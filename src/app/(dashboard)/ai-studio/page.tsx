@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { toast } from "sonner";
 import {
   Sparkles,
@@ -495,8 +496,11 @@ export default function AIStudioPage() {
       if (!res.ok) return;
       const workspaces = await res.json();
       if (workspaces.length > 0) {
-        setWorkspaceId(workspaces[0].id);
-        loadHistory(workspaces[0].id);
+        const active = resolveActiveWorkspace(workspaces);
+        if (active) {
+          setWorkspaceId(active.id);
+          loadHistory(active.id);
+        }
       }
     })();
   }, [loadHistory]);
