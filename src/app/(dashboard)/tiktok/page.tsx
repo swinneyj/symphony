@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import {
   CheckCircle2,
@@ -52,6 +52,12 @@ type PublishResult = {
   capability: string;
   nextStep: string;
 };
+type PublishStatus = {
+  status: string;
+  fail_reason?: string;
+  uploaded_bytes?: number;
+  publicaly_available_post_id?: string[];
+};
 
 const privacyLabels: Record<string, string> = {
   PUBLIC_TO_EVERYONE: "Everyone",
@@ -73,11 +79,17 @@ export default function TikTokPage() {
   const [allowComment, setAllowComment] = useState(false);
   const [allowDuet, setAllowDuet] = useState(false);
   const [allowStitch, setAllowStitch] = useState(false);
+  const [contentDisclosure, setContentDisclosure] = useState(false);
+  const [ownBrand, setOwnBrand] = useState(false);
+  const [brandedContent, setBrandedContent] = useState(false);
   const [consent, setConsent] = useState(false);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const videoPreviewUrlRef = useRef<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [result, setResult] = useState<PublishResult | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<PublishStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadAccount = useCallback(async (workspaceId: string) => {
@@ -123,6 +135,57 @@ export default function TikTokPage() {
     })();
   }, [loadAccount, loadCreator]);
 
+  useEffect(() => () => {
+    if (videoPreviewUrlRef.current) URL.revokeObjectURL(videoPreviewUrlRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!workspace || !result || result.mode !== "direct") return;
+
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+
+    const poll = async () => {
+      if (!active) return;
+      setCheckingStatus(true);
+      try {
+        const response = await fetch("/api/tiktok/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspaceId: workspace.id, publishId: result.publishId }),
+        });
+        const data = (await response.json()) as PublishStatus & { error?: string };
+        if (!response.ok) throw new Error(data.error || "Status lookup failed");
+        if (!active) return;
+        setStatus(data);
+        const terminal = data.status === "PUBLISH_COMPLETE" || data.status === "FAILED";
+        attempts += 1;
+        if (!terminal && attempts < 30) timer = setTimeout(poll, 4_000);
+      } catch (statusError) {
+        if (active) setError(statusError instanceof Error ? statusError.message : "Status lookup failed");
+      } finally {
+        if (active) setCheckingStatus(false);
+      }
+    };
+
+    timer = setTimeout(poll, 1_500);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [result, workspace]);
+
+  const handleVideoChange = (file: File | null) => {
+    if (videoPreviewUrlRef.current) URL.revokeObjectURL(videoPreviewUrlRef.current);
+    const objectUrl = file ? URL.createObjectURL(file) : null;
+    videoPreviewUrlRef.current = objectUrl;
+    setVideo(file);
+    setVideoPreviewUrl(objectUrl);
+    setVideoDuration(null);
+    setError(null);
+  };
+
   const publish = async () => {
     if (!workspace || !video) return;
     setPublishing(true);
@@ -138,14 +201,18 @@ export default function TikTokPage() {
       formData.set("allowComment", String(allowComment));
       formData.set("allowDuet", String(allowDuet));
       formData.set("allowStitch", String(allowStitch));
+      formData.set("contentDisclosure", String(contentDisclosure));
+      formData.set("brandOrganic", String(contentDisclosure && ownBrand));
+      formData.set("brandedContent", String(contentDisclosure && brandedContent));
       formData.set("consent", String(consent));
+      formData.set("videoDurationSec", String(videoDuration || 0));
       formData.set("video", video);
 
       const response = await fetch("/api/tiktok/publish", { method: "POST", body: formData });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "TikTok publishing failed");
       setResult(data);
-      setStatus("Upload complete — ready for TikTok processing");
+      setStatus({ status: mode === "direct" ? "PROCESSING" : "UPLOAD_COMPLETE" });
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : "TikTok publishing failed");
     } finally {
@@ -165,7 +232,7 @@ export default function TikTokPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Status lookup failed");
-      setStatus(`${data.status}${data.uploaded_bytes ? ` · ${data.uploaded_bytes.toLocaleString()} bytes received` : ""}`);
+      setStatus(data);
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : "Status lookup failed");
     } finally {
@@ -178,7 +245,16 @@ export default function TikTokPage() {
   }
 
   const account = accountData?.account;
-  const directReady = mode === "draft" || (!!creator && !!privacyLevel && consent);
+  const disclosureReady = !contentDisclosure || ownBrand || brandedContent;
+  const brandedPrivacyReady = !brandedContent || privacyLevel !== "SELF_ONLY";
+  const durationReady = mode === "draft" || (
+    !!creator && videoDuration !== null && videoDuration > 0 && videoDuration <= creator.max_video_post_duration_sec
+  );
+  const directReady = mode === "draft" || (
+    !!creator && !!privacyLevel && consent && disclosureReady && brandedPrivacyReady && durationReady
+  );
+  const disclosureLabel = brandedContent ? "Paid partnership" : ownBrand ? "Promotional content" : null;
+  const durationTooLong = mode === "direct" && !!creator && videoDuration !== null && videoDuration > creator.max_video_post_duration_sec;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6 md:p-8">
@@ -271,7 +347,7 @@ export default function TikTokPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" /> Content Posting API</CardTitle>
             <CardDescription>
-              The draft flow delivers media to the TikTok inbox. Direct Post publishes a test video as private.
+              The draft flow delivers media to the TikTok inbox. Direct Post publishes with the privacy and disclosure settings you choose.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -302,8 +378,33 @@ export default function TikTokPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="tiktok-video">Video file</Label>
-                  <Input id="tiktok-video" type="file" accept="video/mp4,video/quicktime,video/webm" onChange={(event) => setVideo(event.target.files?.[0] || null)} />
+                  <Input id="tiktok-video" type="file" accept="video/mp4,video/quicktime,video/webm" onChange={(event) => handleVideoChange(event.target.files?.[0] || null)} />
                   <p className="text-xs text-muted-foreground">MP4, MOV, or WebM · up to 4 MB for this web review demo</p>
+                  {video && videoPreviewUrl && (
+                    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                      <div className="mx-auto aspect-[9/16] max-h-[420px] overflow-hidden rounded-md bg-black">
+                        <video
+                          className="h-full w-full object-contain"
+                          src={videoPreviewUrl}
+                          controls
+                          playsInline
+                          preload="metadata"
+                          onLoadedMetadata={(event) => setVideoDuration(event.currentTarget.duration)}
+                          onError={() => {
+                            setVideoDuration(null);
+                            setError("Could not read this video's duration. Choose a valid MP4, MOV, or WebM file.");
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="max-w-full truncate font-medium">{video.name}</span>
+                        <span className="text-muted-foreground">
+                          {(video.size / 1024 / 1024).toFixed(2)} MB
+                          {videoDuration !== null ? ` · ${videoDuration.toFixed(1)} seconds` : " · Reading duration…"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -338,7 +439,11 @@ export default function TikTokPage() {
                             className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                           >
                             <option value="">Select privacy</option>
-                            {creator.privacy_level_options.map((option) => <option key={option} value={option}>{privacyLabels[option] || option}</option>)}
+                            {creator.privacy_level_options.map((option) => (
+                              <option key={option} value={option} disabled={option === "SELF_ONLY" && brandedContent}>
+                                {privacyLabels[option] || option}
+                              </option>
+                            ))}
                           </select>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-3">
@@ -353,19 +458,78 @@ export default function TikTokPage() {
                             </label>
                           ))}
                         </div>
+                        <div className="space-y-3 rounded-md border p-3">
+                          <label className="flex items-start gap-3 text-sm">
+                            <input
+                              className="mt-1"
+                              type="checkbox"
+                              checked={contentDisclosure}
+                              onChange={(event) => {
+                                const enabled = event.target.checked;
+                                setContentDisclosure(enabled);
+                                if (!enabled) {
+                                  setOwnBrand(false);
+                                  setBrandedContent(false);
+                                }
+                              }}
+                            />
+                            <span>
+                              <span className="block font-medium">Content disclosure</span>
+                              <span className="block text-xs text-muted-foreground">This content promotes a brand, product, or service.</span>
+                            </span>
+                          </label>
+                          {contentDisclosure && (
+                            <div className="space-y-2 border-t pt-3">
+                              <p className="text-xs font-medium">Who does this content promote? Select at least one.</p>
+                              <label className="flex items-start gap-2 rounded-md border p-3 text-xs">
+                                <input className="mt-0.5" type="checkbox" checked={ownBrand} onChange={(event) => setOwnBrand(event.target.checked)} />
+                                <span><span className="block font-medium">Your brand</span>Promotes you or your own business.</span>
+                              </label>
+                              <label className={`flex items-start gap-2 rounded-md border p-3 text-xs ${privacyLevel === "SELF_ONLY" ? "opacity-50" : ""}`}>
+                                <input
+                                  className="mt-0.5"
+                                  type="checkbox"
+                                  checked={brandedContent}
+                                  disabled={privacyLevel === "SELF_ONLY"}
+                                  onChange={(event) => setBrandedContent(event.target.checked)}
+                                />
+                                <span><span className="block font-medium">Branded content</span>Promotes another brand or a third party.</span>
+                              </label>
+                              {!disclosureReady && <p className="text-xs font-medium text-destructive">Indicate whether the content promotes your brand, a third party, or both.</p>}
+                              {privacyLevel === "SELF_ONLY" && <p className="text-xs text-muted-foreground">Branded content visibility cannot be set to private.</p>}
+                              {disclosureLabel && <p className="rounded-md bg-muted p-2 text-xs font-medium">Your video will be labeled as “{disclosureLabel}”.</p>}
+                            </div>
+                          )}
+                        </div>
+                        {durationTooLong && (
+                          <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                            This video is {videoDuration?.toFixed(1)} seconds. @{creator.creator_username} currently allows videos up to {creator.max_video_post_duration_sec} seconds.
+                          </p>
+                        )}
                         <label className="flex items-start gap-2 rounded-md bg-muted p-3 text-xs">
                           <input className="mt-0.5" type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-                          <span>By posting, I agree to TikTok&apos;s Music Usage Confirmation.</span>
+                          <span>
+                            By posting, I agree to TikTok&apos;s {brandedContent && (
+                              <><a className="underline" href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer">Branded Content Policy</a> and </>
+                            )}
+                            <a className="underline" href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer">Music Usage Confirmation</a>.
+                          </span>
                         </label>
-                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Private visibility keeps test posts off your public profile.</p>
+                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Your selected privacy and disclosure settings will be sent to TikTok with this post.</p>
                       </>
                     )}
                   </div>
                 )}
 
+                {mode === "direct" && (
+                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
+                    After you publish, TikTok may take a few minutes to process the video and make it visible on the creator&apos;s profile. Symphony will automatically check and display the latest status below.
+                  </div>
+                )}
+
                 <Button className="w-full" disabled={!video || !directReady || publishing} onClick={publish}>
                   {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : mode === "draft" ? <Upload className="mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />}
-                  {publishing ? "Sending to TikTok..." : mode === "draft" ? "Upload Draft to TikTok" : "Post Privately to TikTok"}
+                  {publishing ? "Sending to TikTok..." : mode === "draft" ? "Upload Draft to TikTok" : "Post to TikTok"}
                 </Button>
 
                 {result && (
@@ -386,8 +550,18 @@ export default function TikTokPage() {
                       <Button size="sm" variant="outline" onClick={checkStatus} disabled={checkingStatus}>
                         {checkingStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Check TikTok Status
                       </Button>
-                      {status && <span className="text-xs font-medium">{status}</span>}
+                      {status && (
+                        <span className={`text-xs font-medium ${status.status === "FAILED" ? "text-destructive" : ""}`}>
+                          {status.status}
+                          {status.uploaded_bytes ? ` · ${status.uploaded_bytes.toLocaleString()} bytes received` : ""}
+                        </span>
+                      )}
                     </div>
+                    {checkingStatus && <p className="text-xs text-muted-foreground">TikTok is still processing this post. Symphony will check again automatically.</p>}
+                    {status?.fail_reason && <p className="text-xs text-destructive">TikTok reported: {status.fail_reason}</p>}
+                    {!!status?.publicaly_available_post_id?.length && (
+                      <p className="text-xs"><span className="text-muted-foreground">TikTok post ID:</span> <span className="font-mono">{status.publicaly_available_post_id.join(", ")}</span></p>
+                    )}
                   </div>
                 )}
               </>
