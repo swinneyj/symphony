@@ -95,11 +95,31 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { userId, invitedRole } = body;
+    const { email, invitedRole } = body;
 
-    if (!userId || typeof userId !== "string") {
+    // Support adding by userId OR email (email is what the UI collects)
+    let targetUserId: string | null = null;
+    const bodyUserId = (body as { userId?: unknown }).userId;
+    if (bodyUserId && typeof bodyUserId === "string") {
+      targetUserId = bodyUserId;
+    } else if (email && typeof email === "string") {
+      const [userByEmail] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, email.trim().toLowerCase()))
+        .limit(1);
+      if (!userByEmail) {
+        return NextResponse.json(
+          { error: "No Symphony account found for that email. Ask them to create an account first, then invite again." },
+          { status: 404 }
+        );
+      }
+      targetUserId = userByEmail.id;
+    }
+
+    if (!targetUserId) {
       return NextResponse.json(
-        { error: "User ID is required" },
+        { error: "User ID or email is required" },
         { status: 400 }
       );
     }
@@ -114,11 +134,19 @@ export async function POST(
       );
     }
 
+    // Owner role can only be granted by the existing owner
+    if (memberRole === "owner" && role !== "owner") {
+      return NextResponse.json(
+        { error: "Only the workspace owner can promote to owner" },
+        { status: 403 }
+      );
+    }
+
     // Check that the invited user exists
     const invitedUser = await db
       .select({ id: users.id })
       .from(users)
-      .where(eq(users.id, userId))
+      .where(eq(users.id, targetUserId))
       .limit(1);
 
     if (invitedUser.length === 0) {
@@ -128,6 +156,8 @@ export async function POST(
       );
     }
 
+    const targetId = targetUserId;
+
     // Check if user is already a member
     const existingMember = await db
       .select({ id: workspaceMembers.id })
@@ -135,7 +165,7 @@ export async function POST(
       .where(
         and(
           eq(workspaceMembers.workspaceId, id),
-          eq(workspaceMembers.userId, userId)
+          eq(workspaceMembers.userId, targetId)
         )
       )
       .limit(1);
@@ -151,7 +181,7 @@ export async function POST(
       .insert(workspaceMembers)
       .values({
         workspaceId: id,
-        userId,
+        userId: targetId,
         role: memberRole as "owner" | "admin" | "member" | "viewer",
       })
       .returning();

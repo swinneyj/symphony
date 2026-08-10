@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { workspaceMembers, socialAccounts } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { workspaceMembers, socialAccounts, analyticsSnapshots, posts } from "@/db/schema";
+import { eq, and, desc, sql } from "drizzle-orm";
 
 export async function GET(request: Request) {
   try {
@@ -62,9 +62,34 @@ export async function GET(request: Request) {
       }
     }
 
-    // Return mock analytics data structure
-    // Real analytics will be connected when platform APIs are integrated
-    const mockAnalytics = {
+    // ── Real data from analytics_snapshots (written by platform syncs) ────
+    const snapshots = await db
+      .select()
+      .from(analyticsSnapshots)
+      .where(
+        and(
+          eq(analyticsSnapshots.workspaceId, workspaceId),
+          socialAccountId
+            ? eq(analyticsSnapshots.socialAccountId, socialAccountId)
+            : undefined
+        )
+      )
+      .orderBy(desc(analyticsSnapshots.snapshotDate))
+      .limit(90);
+
+    const latest = snapshots[0];
+    const metrics = latest?.data ?? null;
+
+    // Content stats are always real from our own tables
+    const [contentStats] = await db
+      .select({
+        postsPublished: sql<number>`COUNT(*) FILTER (WHERE ${posts.status} = 'published')`,
+        postsScheduled: sql<number>`COUNT(*) FILTER (WHERE ${posts.status} = 'scheduled')`,
+      })
+      .from(posts)
+      .where(eq(posts.workspaceId, workspaceId));
+
+    const payload = {
       workspaceId,
       socialAccountId: socialAccountId || null,
       period,
@@ -72,37 +97,27 @@ export async function GET(request: Request) {
         from: from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
         to: to || new Date().toISOString(),
       },
-      metrics: {
-        followers: {
-          current: 0,
-          growth: 0,
-          growthRate: 0,
-        },
-        engagement: {
-          likes: 0,
-          comments: 0,
-          shares: 0,
-          saves: 0,
-          total: 0,
-          rate: 0,
-        },
-        reach: {
-          impressions: 0,
-          reach: 0,
-          frequency: 0,
-        },
+      metrics: metrics ?? {
+        followers: { current: 0, growth: 0, growthRate: 0 },
+        engagement: { likes: 0, comments: 0, shares: 0, saves: 0, total: 0, rate: 0 },
+        reach: { impressions: 0, reach: 0, frequency: 0 },
         content: {
-          postsPublished: 0,
-          postsScheduled: 0,
+          postsPublished: Number(contentStats?.postsPublished ?? 0),
+          postsScheduled: Number(contentStats?.postsScheduled ?? 0),
           averagePostsPerDay: 0,
         },
       },
-      breakdown: [],
-      // Real data would be populated from analyticsSnapshots table
-      // and platform API calls
+      breakdown: snapshots.map((s) => ({
+        date: s.snapshotDate,
+        period: s.period,
+        data: s.data,
+      })),
+      snapshotCount: snapshots.length,
+      // Content stats are live from the posts table; platform metrics fill in
+      // as analyticsSnapshots rows arrive from platform API integrations.
     };
 
-    return NextResponse.json(mockAnalytics);
+    return NextResponse.json(payload);
   } catch (error) {
     console.error("Error fetching analytics:", error);
     return NextResponse.json(

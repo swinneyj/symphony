@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { db } from "@/db";
+import { aiGenerations } from "@/db/schema";
 import { generateContent } from "@/lib/ai-generate";
 
 export async function POST(request: Request) {
@@ -10,7 +12,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => null);
-    const { type, prompt, platform } = body ?? {};
+    const { type, prompt, platform, workspaceId } = body ?? {};
 
     if (!type || !["caption", "hashtag", "image", "idea"].includes(type)) {
       return NextResponse.json(
@@ -29,9 +31,24 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
-      generateContent({ type, prompt, platform })
-    );
+    const result = generateContent({ type, prompt, platform });
+
+    // Persist to generation history when a workspace is provided (best-effort)
+    if (workspaceId && typeof workspaceId === "string") {
+      try {
+        await db.insert(aiGenerations).values({
+          workspaceId,
+          userId: session.user.id,
+          type,
+          prompt: prompt.trim(),
+          result: result as unknown as Record<string, unknown>,
+        });
+      } catch (err) {
+        console.error("Failed to persist AI generation history:", err);
+      }
+    }
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Error in AI generation:", error);
     return NextResponse.json(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
   Film,
@@ -10,18 +10,17 @@ import {
   List,
   CheckCheck,
   Trash2,
-  Download,
   X,
   Calendar,
   FileImage,
   FileVideo,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -30,32 +29,36 @@ type MediaType = "image" | "video" | "all";
 
 interface MediaItem {
   id: string;
-  name: string;
-  type: MediaType;
-  url: string;
-  thumbnailColor: string;
-  dimensions: string;
-  fileSize: string;
-  dateUploaded: string;
-  altText: string;
+  fileName: string;
+  mediaType: "image" | "video" | "audio" | "document";
+  mimeType: string | null;
+  fileSize: number | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  alt: string | null;
+  createdAt: string;
+  url: string | null;
+  thumbnailUrl: string | null;
 }
 
-// ─── Mock Data ──────────────────────────────────────────────────────────────
+function formatBytes(bytes: number | null): string {
+  if (bytes === null || bytes === undefined) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
-const mockMedia: MediaItem[] = [
-  { id: "m1", name: "product-launch-banner.jpg", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-blue-400 to-purple-500", dimensions: "1920 × 1080", fileSize: "2.4 MB", dateUploaded: "Jul 22, 2025", altText: "Product launch banner with gradient background" },
-  { id: "m2", name: "team-photo-2025.jpg", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-amber-400 to-orange-500", dimensions: "2400 × 1600", fileSize: "3.1 MB", dateUploaded: "Jul 21, 2025", altText: "Team photo 2025" },
-  { id: "m3", name: "feature-tutorial.mp4", type: "video", url: "", thumbnailColor: "bg-gradient-to-br from-emerald-400 to-teal-500", dimensions: "1920 × 1080", fileSize: "45.2 MB", dateUploaded: "Jul 20, 2025", altText: "Feature tutorial video" },
-  { id: "m4", name: "social-media-tips.png", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-pink-400 to-rose-500", dimensions: "1080 × 1080", fileSize: "1.8 MB", dateUploaded: "Jul 19, 2025", altText: "Social media tips infographic" },
-  { id: "m5", name: "behind-the-scenes.mp4", type: "video", url: "", thumbnailColor: "bg-gradient-to-br from-violet-400 to-indigo-500", dimensions: "1920 × 1080", fileSize: "62.8 MB", dateUploaded: "Jul 18, 2025", altText: "Behind the scenes footage" },
-  { id: "m6", name: "logo-white.png", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-slate-400 to-slate-600", dimensions: "512 × 512", fileSize: "0.4 MB", dateUploaded: "Jul 17, 2025", altText: "Symphony logo white" },
-  { id: "m7", name: "summer-promo.jpg", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-yellow-300 to-yellow-500", dimensions: "1200 × 1200", fileSize: "1.2 MB", dateUploaded: "Jul 16, 2025", altText: "Summer promotion graphic" },
-  { id: "m8", name: "customer-story.mp4", type: "video", url: "", thumbnailColor: "bg-gradient-to-br from-cyan-400 to-blue-500", dimensions: "1080 × 1920", fileSize: "38.5 MB", dateUploaded: "Jul 15, 2025", altText: "Customer success story video" },
-  { id: "m9", name: "analytics-dashboard.png", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-green-400 to-emerald-500", dimensions: "1600 × 900", fileSize: "0.9 MB", dateUploaded: "Jul 14, 2025", altText: "Analytics dashboard screenshot" },
-  { id: "m10", name: "holiday-card.jpg", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-red-400 to-rose-500", dimensions: "1200 × 800", fileSize: "1.5 MB", dateUploaded: "Jul 13, 2025", altText: "Holiday greeting card" },
-  { id: "m11", name: "product-demo.mp4", type: "video", url: "", thumbnailColor: "bg-gradient-to-br from-purple-400 to-pink-500", dimensions: "1920 × 1080", fileSize: "85.1 MB", dateUploaded: "Jul 12, 2025", altText: "Product demonstration video" },
-  { id: "m12", name: "banner-ad.jpg", type: "image", url: "", thumbnailColor: "bg-gradient-to-br from-indigo-400 to-purple-500", dimensions: "728 × 90", fileSize: "0.3 MB", dateUploaded: "Jul 11, 2025", altText: "Banner advertisement" },
-];
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function previewUrl(item: MediaItem): string | null {
+  // Private Blob assets are served through the authenticated public proxy.
+  if (item.mediaType === "image" && item.id) return `/api/media/${item.id}/public`;
+  return null;
+}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -67,14 +70,106 @@ export default function MediaPage() {
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState(false);
+  const [media, setMedia] = useState<MediaItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadMedia = useCallback(async (wsId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/media?workspaceId=${encodeURIComponent(wsId)}`);
+      if (res.ok) {
+        const items = (await res.json()) as MediaItem[];
+        setMedia(items);
+      } else {
+        setError("Failed to load media");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/workspaces");
+      if (!res.ok) return;
+      const workspaces = await res.json();
+      if (workspaces.length > 0) {
+        setWorkspaceId(workspaces[0].id);
+        loadMedia(workspaces[0].id);
+      } else {
+        setLoading(false);
+      }
+    })();
+  }, [loadMedia]);
+
+  const uploadFiles = async (files: FileList | File[]) => {
+    if (!workspaceId || files.length === 0) return;
+    setUploading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      for (const file of Array.from(files)) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("workspaceId", workspaceId);
+        const res = await fetch("/api/media/upload", { method: "POST", body: form });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(data.error || `Failed to upload ${file.name}`);
+          break;
+        }
+      }
+      await loadMedia(workspaceId);
+      setNotice(`Uploaded ${files.length} file${files.length === 1 ? "" : "s"}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
+  };
+
+  const deleteMedia = async (item: MediaItem) => {
+    if (!window.confirm(`Delete "${item.fileName}"? This cannot be undone.`)) return;
+    const res = await fetch(`/api/media?id=${item.id}`, { method: "DELETE" });
+    if (res.ok) {
+      setMedia(media.filter((m) => m.id !== item.id));
+      setSelectedMedia(null);
+      setNotice(`Deleted ${item.fileName}`);
+    } else {
+      setError("Failed to delete media");
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.size} selected file(s)?`)) return;
+    let ok = true;
+    for (const id of selectedIds) {
+      const res = await fetch(`/api/media?id=${id}`, { method: "DELETE" });
+      if (!res.ok) ok = false;
+    }
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    if (workspaceId) await loadMedia(workspaceId);
+    setNotice(ok ? `Deleted ${selectedIds.size} file(s)` : "Some files failed to delete");
+  };
 
   const filteredMedia = useMemo(() => {
-    return mockMedia.filter((item) => {
-      if (typeFilter !== "all" && item.type !== typeFilter) return false;
-      if (searchQuery && !item.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    return media.filter((item) => {
+      if (typeFilter !== "all" && item.mediaType !== typeFilter) return false;
+      if (searchQuery && !item.fileName.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       return true;
     });
-  }, [searchQuery, typeFilter]);
+  }, [media, searchQuery, typeFilter]);
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
@@ -82,6 +177,11 @@ export default function MediaPage() {
     else next.add(id);
     setSelectedIds(next);
   };
+
+  const isVideo = (item: MediaItem) => item.mediaType === "video";
+  const isAudio = (item: MediaItem) => item.mediaType === "audio";
+  const ext = (item: MediaItem) =>
+    item.fileName.includes(".") ? item.fileName.split(".").pop()!.toUpperCase() : "FILE";
 
   return (
     <div className="flex-1 space-y-6 p-6 md:p-8">
@@ -94,6 +194,12 @@ export default function MediaPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {notice && (
+            <span className="text-sm text-emerald-600">{notice}</span>
+          )}
+          {error && (
+            <span className="text-sm text-destructive">{error}</span>
+          )}
           <Button
             variant={bulkMode ? "secondary" : "outline"}
             size="sm"
@@ -101,6 +207,7 @@ export default function MediaPage() {
               setBulkMode(!bulkMode);
               setSelectedIds(new Set());
             }}
+            disabled={media.length === 0}
           >
             {bulkMode ? (
               <>
@@ -115,21 +222,30 @@ export default function MediaPage() {
             )}
           </Button>
           {bulkMode && selectedIds.size > 0 && (
-            <>
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4 mr-1" />
-                Download
-              </Button>
-              <Button variant="destructive" size="sm">
-                <Trash2 className="h-4 w-4 mr-1" />
-                Delete
-              </Button>
-            </>
+            <Button variant="destructive" size="sm" onClick={deleteSelected}>
+              <Trash2 className="h-4 w-4 mr-1" />
+              Delete
+            </Button>
           )}
-          <Button size="sm">
-            <Upload className="h-4 w-4 mr-1" />
-            Upload
+          <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            {uploading ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4 mr-1" />
+            )}
+            {uploading ? "Uploading…" : "Upload"}
           </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,video/*,audio/*"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) uploadFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
         </div>
       </div>
 
@@ -194,9 +310,15 @@ export default function MediaPage() {
         )}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setIsDragging(false); }}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
       >
-        {isDragging ? (
+        {uploading ? (
+          <div className="pointer-events-none">
+            <Loader2 className="mx-auto h-10 w-10 text-primary animate-spin mb-3" />
+            <p className="text-sm font-medium text-primary">Uploading…</p>
+          </div>
+        ) : isDragging ? (
           <div className="pointer-events-none">
             <Upload className="mx-auto h-10 w-10 text-primary mb-3" />
             <p className="text-sm font-medium text-primary">Drop files here to upload</p>
@@ -208,72 +330,90 @@ export default function MediaPage() {
             <p className="text-xs text-muted-foreground mt-1">
               PNG, JPG, GIF, MP4, MOV up to 500MB
             </p>
-            <Button variant="outline" size="sm" className="mt-4">
-              <Upload className="h-4 w-4 mr-1" />
-              Choose Files
-            </Button>
           </>
         )}
       </div>
 
-      {/* Media Grid */}
-      {viewMode === "grid" ? (
+      {/* Content */}
+      {loading ? (
+        <div className="py-12 text-center text-sm text-muted-foreground">Loading media…</div>
+      ) : filteredMedia.length === 0 ? (
+        <div className="rounded-lg border border-dashed py-12 text-center">
+          <p className="text-sm font-medium text-muted-foreground">
+            {media.length === 0 ? "No media yet — upload your first file above" : "No files match your filters"}
+          </p>
+        </div>
+      ) : viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {filteredMedia.map((item) => (
-            <div
-              key={item.id}
-              className={cn(
-                "group relative overflow-hidden rounded-lg border transition-all hover:shadow-md",
-                selectedIds.has(item.id) && "ring-2 ring-primary"
-              )}
-            >
-              <button
-                onClick={() => {
-                  if (bulkMode) {
-                    toggleSelect(item.id);
-                  } else {
-                    setSelectedMedia(item);
-                  }
-                }}
-                className="w-full text-left"
+          {filteredMedia.map((item) => {
+            const preview = previewUrl(item);
+            return (
+              <div
+                key={item.id}
+                className={cn(
+                  "group relative overflow-hidden rounded-lg border transition-all hover:shadow-md",
+                  selectedIds.has(item.id) && "ring-2 ring-primary"
+                )}
               >
-                <div className={cn("aspect-square relative", item.thumbnailColor)}>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    {item.type === "video" ? (
-                      <Film className="h-8 w-8 text-white/80" />
+                <button
+                  onClick={() => {
+                    if (bulkMode) {
+                      toggleSelect(item.id);
+                    } else {
+                      setSelectedMedia(item);
+                    }
+                  }}
+                  className="w-full text-left"
+                >
+                  <div className="aspect-square relative bg-muted">
+                    {preview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={preview}
+                        alt={item.alt ?? item.fileName}
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
                     ) : (
-                      <Image className="h-8 w-8 text-white/80" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {isVideo(item) ? (
+                          <Film className="h-8 w-8 text-muted-foreground" />
+                        ) : isAudio(item) ? (
+                          <FileImage className="h-8 w-8 text-muted-foreground" />
+                        ) : (
+                          <Image className="h-8 w-8 text-muted-foreground" />
+                        )}
+                      </div>
                     )}
+                    {bulkMode && (
+                      <div className={cn(
+                        "absolute top-2 left-2 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors",
+                        selectedIds.has(item.id)
+                          ? "bg-primary border-primary text-primary-foreground"
+                          : "bg-background border-muted-foreground"
+                      )}>
+                        {selectedIds.has(item.id) && (
+                          <CheckCheck className="h-3 w-3" />
+                        )}
+                      </div>
+                    )}
+                    <Badge
+                      variant="secondary"
+                      className="absolute top-2 right-2 text-[9px] px-1.5 py-0"
+                    >
+                      {ext(item)}
+                    </Badge>
                   </div>
-                  {bulkMode && (
-                    <div className={cn(
-                      "absolute top-2 left-2 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors",
-                      selectedIds.has(item.id)
-                        ? "bg-primary border-primary text-primary-foreground"
-                        : "bg-background border-muted-foreground"
-                    )}>
-                      {selectedIds.has(item.id) && (
-                        <CheckCheck className="h-3 w-3" />
-                      )}
+                  <div className="p-2">
+                    <p className="truncate text-xs font-medium">{item.fileName}</p>
+                    <div className="flex items-center gap-1 mt-1 text-[10px] text-muted-foreground">
+                      <Calendar className="h-2.5 w-2.5" />
+                      {formatDate(item.createdAt)}
                     </div>
-                  )}
-                  <Badge
-                    variant="secondary"
-                    className="absolute top-2 right-2 text-[9px] px-1.5 py-0"
-                  >
-                    {item.type === "video" ? "MP4" : "JPG"}
-                  </Badge>
-                </div>
-                <div className="p-2">
-                  <p className="truncate text-xs font-medium">{item.name}</p>
-                  <div className="flex items-center gap-1 mt-1 text-[10px] text-muted-foreground">
-                    <Calendar className="h-2.5 w-2.5" />
-                    {item.dateUploaded}
                   </div>
-                </div>
-              </button>
-            </div>
-          ))}
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : (
         /* List View */
@@ -284,23 +424,31 @@ export default function MediaPage() {
               onClick={() => setSelectedMedia(item)}
               className="flex w-full items-center gap-4 border-b last:border-b-0 px-4 py-3 text-left transition-colors hover:bg-accent/50"
             >
-              <div className={cn("h-12 w-12 shrink-0 rounded-lg flex items-center justify-center", item.thumbnailColor)}>
-                {item.type === "video" ? (
-                  <Film className="h-5 w-5 text-white" />
+              <div className="h-12 w-12 shrink-0 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
+                {previewUrl(item) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={previewUrl(item)!}
+                    alt={item.fileName}
+                    className="h-full w-full object-cover"
+                  />
+                ) : isVideo(item) ? (
+                  <Film className="h-5 w-5 text-muted-foreground" />
                 ) : (
-                  <Image className="h-5 w-5 text-white" />
+                  <Image className="h-5 w-5 text-muted-foreground" />
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium truncate">{item.name}</p>
+                <p className="text-sm font-medium truncate">{item.fileName}</p>
                 <p className="text-xs text-muted-foreground">
-                  {item.dimensions} &middot; {item.fileSize}
+                  {item.width && item.height ? `${item.width} × ${item.height} · ` : ""}
+                  {formatBytes(item.fileSize)}
                 </p>
               </div>
               <Badge variant="outline" className="text-[10px] capitalize">
-                {item.type}
+                {item.mediaType}
               </Badge>
-              <span className="text-xs text-muted-foreground">{item.dateUploaded}</span>
+              <span className="text-xs text-muted-foreground">{formatDate(item.createdAt)}</span>
             </button>
           ))}
         </div>
@@ -311,55 +459,64 @@ export default function MediaPage() {
         {selectedMedia && (
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>{selectedMedia.name}</DialogTitle>
+              <DialogTitle>{selectedMedia.fileName}</DialogTitle>
               <DialogDescription>Media file details</DialogDescription>
             </DialogHeader>
             <div className="grid gap-6 sm:grid-cols-2">
               {/* Preview */}
-              <div className={cn(
-                "aspect-square rounded-lg flex items-center justify-center",
-                selectedMedia.thumbnailColor
-              )}>
-                {selectedMedia.type === "video" ? (
-                  <Film className="h-16 w-16 text-white/80" />
+              <div className="aspect-square rounded-lg bg-muted flex items-center justify-center overflow-hidden">
+                {previewUrl(selectedMedia) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={previewUrl(selectedMedia)!}
+                    alt={selectedMedia.alt ?? selectedMedia.fileName}
+                    className="h-full w-full object-contain"
+                  />
+                ) : selectedMedia.mediaType === "video" ? (
+                  <Film className="h-16 w-16 text-muted-foreground" />
                 ) : (
-                  <Image className="h-16 w-16 text-white/80" />
+                  <Image className="h-16 w-16 text-muted-foreground" />
                 )}
               </div>
               {/* Details */}
               <div className="space-y-4">
                 <div>
                   <p className="text-xs text-muted-foreground">File Name</p>
-                  <p className="text-sm font-medium">{selectedMedia.name}</p>
+                  <p className="text-sm font-medium break-all">{selectedMedia.fileName}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Type</p>
                   <Badge variant="secondary" className="mt-1 capitalize">
-                    {selectedMedia.type}
+                    {selectedMedia.mediaType}
                   </Badge>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Dimensions</p>
-                  <p className="text-sm">{selectedMedia.dimensions}</p>
+                  <p className="text-sm">
+                    {selectedMedia.width && selectedMedia.height
+                      ? `${selectedMedia.width} × ${selectedMedia.height}`
+                      : "—"}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">File Size</p>
-                  <p className="text-sm">{selectedMedia.fileSize}</p>
+                  <p className="text-sm">{formatBytes(selectedMedia.fileSize)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Uploaded</p>
-                  <p className="text-sm">{selectedMedia.dateUploaded}</p>
+                  <p className="text-sm">{formatDate(selectedMedia.createdAt)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Alt Text</p>
-                  <Input defaultValue={selectedMedia.altText} className="mt-1" />
+                  <p className="text-sm">{selectedMedia.alt ?? "—"}</p>
                 </div>
                 <div className="flex gap-2 pt-2">
-                  <Button size="sm" variant="outline" className="flex-1">
-                    <Download className="h-4 w-4 mr-1" />
-                    Download
-                  </Button>
-                  <Button size="sm" variant="destructive" className="flex-1">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="flex-1"
+                    onClick={() => deleteMedia(selectedMedia)}
+                  >
                     <Trash2 className="h-4 w-4 mr-1" />
                     Delete
                   </Button>

@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     : null;
 
   return NextResponse.json({
-    environment: "TikTok Sandbox",
+    environment: "Production",
     products: ["Login Kit", "Content Posting API"],
     scopes: TIKTOK_SCOPES,
     account,

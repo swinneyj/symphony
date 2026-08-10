@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Sparkles,
@@ -36,19 +36,14 @@ interface GenerationHistory {
   time: string;
 }
 
-// ─── Mock Data ──────────────────────────────────────────────────────────────
-
-const historyItems: GenerationHistory[] = [
-  { id: "h1", tool: "caption", prompt: "Product launch enthusiastic professional", result: "Generated 3 caption options", time: "2 min ago" },
-  { id: "h2", tool: "hashtag", prompt: "social media marketing", result: "Generated 12 hashtags", time: "15 min ago" },
-  { id: "h3", tool: "image", prompt: "Modern office with diverse team collaborating", result: "Generated image", time: "1 hour ago" },
-  { id: "h4", tool: "ideas", prompt: "Fitness industry", result: "Generated 8 content ideas", time: "3 hours ago" },
-  { id: "h5", tool: "caption", prompt: "Thank you message to followers", result: "Generated 3 caption options", time: "1 day ago" },
-];
-
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function CaptionGenerator() {
+interface GeneratorProps {
+  workspaceId?: string | null;
+  onGenerated?: () => void;
+}
+
+function CaptionGenerator({ workspaceId, onGenerated }: GeneratorProps) {
   const [topic, setTopic] = useState("");
   const [tone, setTone] = useState("professional");
   const [length, setLength] = useState("medium");
@@ -69,11 +64,13 @@ function CaptionGenerator() {
           type: "caption",
           prompt: `${topic} (tone: ${tone}, length: ${length})`,
           platform: "default",
+          workspaceId,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
       setGenerated(data.result.options);
+      onGenerated?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Generation failed");
     } finally {
@@ -168,7 +165,7 @@ function CaptionGenerator() {
   );
 }
 
-function HashtagGenerator() {
+function HashtagGenerator({ workspaceId, onGenerated }: GeneratorProps) {
   const [keywords, setKeywords] = useState("");
   const [generated, setGenerated] = useState<{ tag: string; popularity: "high" | "medium" | "low" }[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -183,6 +180,7 @@ function HashtagGenerator() {
           type: "hashtag",
           prompt: keywords,
           platform: "default",
+          workspaceId,
         }),
       });
       const data = await res.json();
@@ -195,6 +193,7 @@ function HashtagGenerator() {
           popularity: popularities[i % popularities.length],
         }))
       );
+      onGenerated?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Generation failed");
     } finally {
@@ -267,11 +266,39 @@ function HashtagGenerator() {
   );
 }
 
-function ImageGenerator() {
+function ImageGenerator({ workspaceId, onGenerated }: GeneratorProps) {
   const [prompt, setPrompt] = useState("");
   const [style, setStyle] = useState("realistic");
+  const [generated, setGenerated] = useState<string[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const styles = ["realistic", "illustration", "3d-render", "pixel-art", "anime"];
+
+  const handleGenerate = async () => {
+    if (!prompt.trim()) return;
+    setIsGenerating(true);
+    try {
+      const res = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "image",
+          prompt: `${prompt} (style: ${style})`,
+          platform: "default",
+          workspaceId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+      setGenerated(data.result.options);
+      onGenerated?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Generation failed");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -301,43 +328,86 @@ function ImageGenerator() {
           ))}
         </div>
       </div>
-      <Button disabled={!prompt}>
+      <Button disabled={!prompt.trim() || isGenerating} onClick={handleGenerate}>
         <Image className="h-4 w-4 mr-1" />
-        Generate Image
+        {isGenerating ? "Generating…" : "Generate Image"}
       </Button>
 
-      {/* Placeholder */}
-      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center">
-        <Image className="h-12 w-12 text-muted-foreground mb-3" />
-        <p className="text-sm font-medium text-muted-foreground">
-          Your generated image will appear here
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Enter a prompt and click generate to create an AI image
-        </p>
-      </div>
+      {/* Result */}
+      {generated.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Image Prompts</p>
+          {generated.map((option, i) => (
+            <div
+              key={i}
+              className="flex items-start justify-between gap-2 rounded-lg border p-3 text-sm"
+            >
+              <p className="flex-1 text-muted-foreground">{option}</p>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                onClick={() => {
+                  navigator.clipboard.writeText(option);
+                  setCopiedIndex(i);
+                  setTimeout(() => setCopiedIndex(null), 2000);
+                }}
+              >
+                {copiedIndex === i ? (
+                  <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Placeholder */
+        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center">
+          <Image className="h-12 w-12 text-muted-foreground mb-3" />
+          <p className="text-sm font-medium text-muted-foreground">
+            Your generated image will appear here
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Enter a prompt and click generate to create an AI image
+          </p>
+        </div>
+      )}
     </div>
   );
 }
 
-function ContentIdeas() {
+function ContentIdeas({ workspaceId, onGenerated }: GeneratorProps) {
   const [niche, setNiche] = useState("");
   const [generated, setGenerated] = useState<string[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const niches = ["Technology", "Fashion", "Fitness", "Food", "Travel", "Finance", "Education", "Entertainment"];
 
-  const handleGenerate = () => {
-    const templates = [
-      "10 Tips to Boost Your Productivity with [Niche]-Specific Tools",
-      "The Ultimate Beginner's Guide to [Niche] in 2025",
-      "Behind the Scenes: A Day in the Life of a [Niche] Professional",
-      "Top 5 [Niche] Trends You Need to Know This Month",
-      "How We Built Our [Niche] Community from Scratch",
-      "Myth vs. Reality: Debunking Common [Niche] Misconceptions",
-      "Case Study: How [Company] Used [Niche] to Grow 300%",
-      "The Future of [Niche]: Predictions from Industry Experts",
-    ];
-    setGenerated(templates.map((idea) => idea.replace("[Niche]", niche || "Your")));
+  const handleGenerate = async () => {
+    if (!niche.trim()) return;
+    setIsGenerating(true);
+    try {
+      const res = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "idea",
+          prompt: niche,
+          platform: "default",
+          workspaceId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+      setGenerated(data.result.options);
+      onGenerated?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Generation failed");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   return (
@@ -364,9 +434,9 @@ function ContentIdeas() {
           </button>
         ))}
       </div>
-      <Button onClick={handleGenerate} disabled={!niche}>
+      <Button onClick={handleGenerate} disabled={!niche.trim() || isGenerating}>
         <Lightbulb className="h-4 w-4 mr-1" />
-        Generate Ideas
+        {isGenerating ? "Generating…" : "Generate Ideas"}
       </Button>
       {generated.length > 0 && (
         <div className="space-y-3">
@@ -395,6 +465,46 @@ function ContentIdeas() {
 
 export default function AIStudioPage() {
   const [activeTab, setActiveTab] = useState("caption");
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [history, setHistory] = useState<GenerationHistory[]>([]);
+
+  const loadHistory = useCallback(async (wsId: string) => {
+    const res = await fetch(`/api/ai/generations?workspaceId=${encodeURIComponent(wsId)}`);
+    if (!res.ok) return;
+    const rows = (await res.json()) as Array<{
+      id: string;
+      type: string;
+      prompt: string;
+      result: { options?: string[] } | Record<string, unknown>;
+      createdAt: string;
+    }>;
+    setHistory(
+      rows.map((r) => ({
+        id: r.id,
+        tool: r.type === "idea" ? "ideas" : (r.type as GenerationHistory["tool"]),
+        prompt: r.prompt,
+        result: Array.isArray(r.result?.options) ? `Generated ${r.result.options.length} options` : "Generated",
+        time: new Date(r.createdAt).toLocaleString(),
+      }))
+    );
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/workspaces");
+      if (!res.ok) return;
+      const workspaces = await res.json();
+      if (workspaces.length > 0) {
+        setWorkspaceId(workspaces[0].id);
+        loadHistory(workspaces[0].id);
+      }
+    })();
+  }, [loadHistory]);
+
+  const generatorProps = {
+    workspaceId,
+    onGenerated: () => workspaceId && loadHistory(workspaceId),
+  };
 
   return (
     <div className="flex-1 space-y-6 p-6 md:p-8">
@@ -438,16 +548,16 @@ export default function AIStudioPage() {
                 </TabsList>
 
                 <TabsContent value="caption">
-                  <CaptionGenerator />
+                  <CaptionGenerator {...generatorProps} />
                 </TabsContent>
                 <TabsContent value="hashtag">
-                  <HashtagGenerator />
+                  <HashtagGenerator {...generatorProps} />
                 </TabsContent>
                 <TabsContent value="image">
-                  <ImageGenerator />
+                  <ImageGenerator {...generatorProps} />
                 </TabsContent>
                 <TabsContent value="ideas">
-                  <ContentIdeas />
+                  <ContentIdeas {...generatorProps} />
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -464,10 +574,10 @@ export default function AIStudioPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {historyItems.length === 0 ? (
+              {history.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No generation history yet</p>
               ) : (
-                historyItems.map((item) => (
+                history.slice(0, 10).map((item) => (
                   <button
                     key={item.id}
                     className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent"
@@ -487,12 +597,6 @@ export default function AIStudioPage() {
                   </button>
                 ))
               )}
-              {historyItems.length > 0 && (
-                <Button variant="ghost" size="sm" className="w-full text-xs">
-                  View All History
-                  <ChevronRight className="h-3 w-3 ml-1" />
-                </Button>
-              )}
             </CardContent>
           </Card>
 
@@ -505,18 +609,28 @@ export default function AIStudioPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Today</span>
-                <span className="font-medium">12 generations</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">This Week</span>
-                <span className="font-medium">47 generations</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">This Month</span>
-                <span className="font-medium">203 generations</span>
-              </div>
+              {(() => {
+                const now = Date.now();
+                const day = 24 * 60 * 60 * 1000;
+                const today = history.filter((h) => now - new Date(h.time).getTime() < day).length;
+                const week = history.filter((h) => now - new Date(h.time).getTime() < 7 * day).length;
+                return (
+                  <>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Today</span>
+                      <span className="font-medium">{today} generations</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">This Week</span>
+                      <span className="font-medium">{week} generations</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">All Time</span>
+                      <span className="font-medium">{history.length} generations</span>
+                    </div>
+                  </>
+                );
+              })()}
             </CardContent>
           </Card>
         </div>

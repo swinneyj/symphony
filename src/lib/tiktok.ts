@@ -69,7 +69,7 @@ export function getTikTokCredentials() {
 
   if (!clientKey || !clientSecret) {
     throw new TikTokApiError(
-      "TikTok sandbox credentials are not configured.",
+      "TikTok credentials are not configured.",
       "credentials_missing"
     );
   }
