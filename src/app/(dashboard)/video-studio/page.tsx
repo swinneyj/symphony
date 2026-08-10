@@ -251,7 +251,9 @@ function ProductsTab({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Shop sync failed");
       toast.success(
-        `Shop synced — ${data.added} added, ${data.updated} updated, ${data.total} total`
+        data.removed > 0
+          ? `Shop synced — ${data.added} added, ${data.updated} updated, ${data.removed} removed, ${data.total} total`
+          : `Shop synced — ${data.added} added, ${data.updated} updated, ${data.total} total`
       );
       onChanged();
     } catch (err) {

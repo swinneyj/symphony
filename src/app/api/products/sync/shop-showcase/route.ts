@@ -106,11 +106,36 @@ export async function POST(request: Request) {
       }
     }
 
+    // ─── Removal pass (full circle) ─────────────────────────────────────────
+    // Products that came FROM the shop (source_type = tiktok_showcase) but are
+    // no longer in the shop's catalog were removed by the seller on TikTok —
+    // reflect that here. Manual + link imports are never touched.
+    const shopIds = new Set(shopProducts.map((sp) => sp.id));
+    const stale = await db
+      .select({ id: products.id, tiktokProductId: products.tiktokProductId })
+      .from(products)
+      .where(
+        and(
+          eq(products.workspaceId, workspaceId),
+          eq(products.sourceType, "tiktok_showcase"),
+          isNotNull(products.tiktokProductId)
+        )
+      );
+    const staleToDelete = stale.filter(
+      (p) => p.tiktokProductId && !shopIds.has(p.tiktokProductId)
+    );
+    let removed = 0;
+    for (const p of staleToDelete) {
+      await db.delete(products).where(eq(products.id, p.id));
+      removed++;
+    }
+
     return NextResponse.json({
       ok: true,
       added,
       updated,
       skipped: skipped.length,
+      removed,
       total: shopProducts.length,
     });
   } catch (error) {
