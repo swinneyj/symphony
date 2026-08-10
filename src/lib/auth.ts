@@ -64,10 +64,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
+      // Google verifies emails — safe to auto-link an OAuth sign-in to the
+      // existing email-matching account (otherwise OAuthAccountNotLinked).
+      allowDangerousEmailAccountLinking: true,
     }),
     GitHub({
       clientId: process.env.AUTH_GITHUB_ID,
       clientSecret: process.env.AUTH_GITHUB_SECRET,
+      allowDangerousEmailAccountLinking: true,
     }),
     TikTok({
       clientId: process.env.AUTH_TIKTOK_CLIENT_KEY!,
