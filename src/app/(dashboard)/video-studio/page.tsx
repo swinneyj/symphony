@@ -274,7 +274,11 @@ function ProductsTab({
   };
 
   const handleImport = async () => {
-    if (!importUrl.trim()) {
+    const urls = importUrl
+      .split(/\n/)
+      .map((u) => u.trim())
+      .filter(Boolean);
+    if (urls.length === 0) {
       toast.error("Paste a product link first");
       return;
     }
@@ -283,11 +287,21 @@ function ProductsTab({
       const res = await fetch("/api/products/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspaceId, url: importUrl.trim() }),
+        body: JSON.stringify({ workspaceId, urls }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Import failed");
-      toast.success("Product imported");
+      if (!res.ok && !data.imported) throw new Error(data.error || "Import failed");
+      const added = data.importedCount ?? (data.imported ? data.imported.length : 1);
+      const failedCount = data.failedCount ?? 0;
+      if (failedCount > 0) {
+        toast.error(
+          `${added} imported, ${failedCount} failed${
+            data.failed?.[0] ? ` — ${data.failed[0].url}: ${data.failed[0].error}` : ""
+          }`
+        );
+      } else {
+        toast.success(`${added} product${added === 1 ? "" : "s"} imported`);
+      }
       setImportUrl("");
       onChanged();
     } catch (err) {
@@ -364,10 +378,11 @@ function ProductsTab({
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-1 min-w-[260px] items-center gap-2">
           <Input
-            placeholder="Paste an Amazon / TikTok Shop / product link…"
+            placeholder="Paste product links — one per line (up to 20)…"
             value={importUrl}
             onChange={(e) => setImportUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleImport()}
+            className="min-h-[2.5rem]"
           />
           <Button onClick={handleImport} disabled={importing}>
             {importing ? (

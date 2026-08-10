@@ -6,11 +6,15 @@ import { hasWorkspaceAccess } from "@/lib/workspace-access";
 
 /**
  * POST /api/products/import
- * Imports a product from a link. Body: { workspaceId, url }
+ * Imports product(s) from link(s).
  *
- * Fetches the page, parses Open Graph tags (og:title, og:description,
- * og:image) plus best-effort price extraction (og:price:amount / JSON-LD
- * Product offers), and creates a product with sourceType "link".
+ * Body: { workspaceId, url }                    (single, legacy)
+ *   or: { workspaceId, urls: string[] }         (batch)
+ *
+ * Each URL is fetched and parsed for Open Graph tags (og:title,
+ * og:description, og:image) plus best-effort price extraction
+ * (og:price:amount / JSON-LD Product offers). Returns per-URL results so the
+ * UI can show exactly which links succeeded and which failed.
  */
 export async function POST(request: Request) {
   try {
@@ -20,7 +24,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { workspaceId, url } = body;
+    const { workspaceId, url, urls } = body;
 
     if (!workspaceId || typeof workspaceId !== "string") {
       return NextResponse.json(
@@ -28,121 +32,152 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    if (!url || typeof url !== "string") {
-      return NextResponse.json({ error: "url is required" }, { status: 400 });
-    }
 
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error();
-    } catch {
-      return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+    const list: string[] = Array.isArray(urls)
+      ? urls
+      : typeof url === "string"
+        ? [url]
+        : [];
+    if (list.length === 0) {
+      return NextResponse.json({ error: "url or urls is required" }, { status: 400 });
+    }
+    if (list.length > 20) {
+      return NextResponse.json({ error: "Max 20 URLs per batch" }, { status: 400 });
     }
 
     if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    let html: string;
-    let finalUrl: string | null = null;
-    try {
-      const res = await fetch(parsed.toString(), {
-        headers: {
-          "user-agent":
-            "Mozilla/5.0 (compatible; SymphonyBot/1.0; +https://symphonyapp.company)",
-        },
-        redirect: "follow",
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!res.ok) {
-        return NextResponse.json(
-          { error: `Failed to fetch URL (${res.status})` },
-          { status: 502 }
-        );
+    const imported: unknown[] = [];
+    const failed: { url: string; error: string }[] = [];
+
+    for (const rawUrl of list) {
+      try {
+        const product = await importOne(rawUrl, workspaceId, session.user.id);
+        imported.push(product);
+      } catch (e) {
+        failed.push({
+          url: rawUrl,
+          error: e instanceof Error ? e.message : "Import failed",
+        });
       }
-      html = await res.text();
-      finalUrl = res.url;
-    } catch (error) {
-      console.error("Import fetch failed:", error);
-      return NextResponse.json(
-        { error: "Failed to fetch URL" },
-        { status: 502 }
-      );
     }
 
-    const og = parseOpenGraph(html);
-
-    // TikTok share links (/t/...) redirect to /view/product/<id> and serve a
-    // "Security Check" page to bots (no og tags in HTML) — but the redirect
-    // target carries og_info={"title":...,"image":...}. Parse that first.
-    const resolvedFetchUrl = finalUrl || parsed.toString();
-    let ogInfo: { title?: string; image?: string } | null = null;
-    try {
-      const raw = new URL(resolvedFetchUrl).searchParams.get("og_info");
-      if (raw) ogInfo = JSON.parse(raw);
-    } catch {
-      ogInfo = null;
-    }
-
-    const name =
-      ogInfo?.title ||
-      og.title ||
-      parsed.hostname.replace(/^www\./, "") ||
-      "Imported product";
-    const description = og.description || null;
-    let originalImageUrl = ogInfo?.image
-      ? absolutize(ogInfo.image, parsed)
-      : og.image
-        ? absolutize(og.image, parsed)
-        : null;
-    // TikTok CDN thumbs default to 260:260 — request the 720:720 variant so
-    // the video pipeline gets a usable source (verified serving 200).
-    if (originalImageUrl) {
-      originalImageUrl = originalImageUrl.replace(/:260:260\.webp/, ":720:720.webp");
-    }
-    const price = og.priceAmount || extractJsonLdPrice(html);
-
-    // Resolved product page (e.g. https://www.tiktok.com/view/product/<id>)
-    // without the short-link noise, for dedup + TikTok Shop integration.
-    let resolvedUrl: string | null = null;
-    let tiktokProductId: string | null = null;
-    try {
-      const final = new URL(resolvedFetchUrl);
-      if (final.hostname === "www.tiktok.com" && final.pathname.startsWith("/view/product/")) {
-        resolvedUrl = final.origin + final.pathname;
-        tiktokProductId = final.pathname.split("/").pop() || null;
-      }
-    } catch {
-      /* keep null */
-    }
-
-    const [product] = await db
-      .insert(products)
-      .values({
-        workspaceId,
-        createdById: session.user.id,
-        name: name.trim().slice(0, 255),
-        description: description?.slice(0, 2000) || null,
-        price,
-        currency: og.priceCurrency || "USD",
-        originalImageUrl,
-        sourceType: "link",
-        sourceUrl: resolvedUrl || parsed.toString(),
-        tiktokProductId,
-        status: "raw",
-        metadata: { og: { ...og, image: originalImageUrl }, ogInfo },
-      })
-      .returning();
-
-    return NextResponse.json(product, { status: 201 });
+    return NextResponse.json(
+      {
+        imported,
+        failed,
+        importedCount: imported.length,
+        failedCount: failed.length,
+      },
+      { status: imported.length > 0 ? 200 : 400 }
+    );
   } catch (error) {
-    console.error("Error importing product:", error);
+    console.error("Error importing products:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
     );
   }
+}
+
+/** Import a single URL into the products table. Throws on failure. */
+async function importOne(rawUrl: string, workspaceId: string, userId: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error();
+  } catch {
+    throw new Error("Invalid URL");
+  }
+
+  let html: string;
+  let finalUrl: string | null = null;
+  try {
+    const res = await fetch(parsed.toString(), {
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (compatible; SymphonyBot/1.0; +https://symphonyapp.company)",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch URL (${res.status})`);
+    }
+    html = await res.text();
+    finalUrl = res.url;
+  } catch (error) {
+    console.error("Import fetch failed:", error);
+    throw new Error("Failed to fetch URL");
+  }
+
+  const og = parseOpenGraph(html);
+
+  // TikTok share links (/t/...) redirect to /view/product/<id> and serve a
+  // "Security Check" page to bots (no og tags in HTML) — but the redirect
+  // target carries og_info={"title":...,"image":...}. Parse that first.
+  const resolvedFetchUrl = finalUrl || parsed.toString();
+  let ogInfo: { title?: string; image?: string } | null = null;
+  try {
+    const raw = new URL(resolvedFetchUrl).searchParams.get("og_info");
+    if (raw) ogInfo = JSON.parse(raw);
+  } catch {
+    ogInfo = null;
+  }
+
+  const name =
+    ogInfo?.title ||
+    og.title ||
+    parsed.hostname.replace(/^www\./, "") ||
+    "Imported product";
+  const description = og.description || null;
+  let originalImageUrl = ogInfo?.image
+    ? absolutize(ogInfo.image, parsed)
+    : og.image
+      ? absolutize(og.image, parsed)
+      : null;
+  // TikTok CDN thumbs default to 260:260 — request the 720:720 variant so
+  // the video pipeline gets a usable source (verified serving 200).
+  if (originalImageUrl) {
+    originalImageUrl = originalImageUrl.replace(/:260:260\.webp/, ":720:720.webp");
+  }
+  const price = og.priceAmount || extractJsonLdPrice(html);
+
+  // Resolved product page (e.g. https://www.tiktok.com/view/product/<id>)
+  // without the short-link noise, for dedup + TikTok Shop integration.
+  let resolvedUrl: string | null = null;
+  let tiktokProductId: string | null = null;
+  try {
+    const final = new URL(resolvedFetchUrl);
+    if (final.hostname === "www.tiktok.com" && final.pathname.startsWith("/view/product/")) {
+      resolvedUrl = final.origin + final.pathname;
+      tiktokProductId = final.pathname.split("/").pop() || null;
+    }
+  } catch {
+    /* keep null */
+  }
+
+  const [product] = await db
+    .insert(products)
+    .values({
+      workspaceId,
+      createdById: userId,
+      name: name.trim().slice(0, 255),
+      description: description?.slice(0, 2000) || null,
+      price,
+      currency: og.priceCurrency || "USD",
+      originalImageUrl,
+      sourceType: "link",
+      sourceUrl: resolvedUrl || parsed.toString(),
+      tiktokProductId,
+      status: "raw",
+      metadata: { og: { ...og, image: originalImageUrl }, ogInfo },
+    })
+    .returning();
+
+  return product;
 }
 
 // ─── Parsing helpers ─────────────────────────────────────────────────────────
