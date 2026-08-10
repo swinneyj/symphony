@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Image,
+  FileVideo,
+  FileText,
   Hash,
   Sparkles,
   Clock,
@@ -77,6 +79,36 @@ export default function ComposerPage() {
   const [generatedCaptions, setGeneratedCaptions] = useState<string[]>([]);
   const [generatedHashtags, setGeneratedHashtags] = useState<string[]>([]);
   const [previewPlatform, setPreviewPlatform] = useState<Platform>("instagram");
+  const [publishResults, setPublishResults] = useState<Record<string, { status: string; error?: string; externalId?: string }> | null>(null);
+  // Connected social accounts for the workspace + per-platform selection
+  const [accounts, setAccounts] = useState<Array<{ id: string; platform: string; accountName: string; accountUsername: string | null }>>([]);
+  const [platformAccount, setPlatformAccount] = useState<Record<string, string>>({});
+  // Attached media (composer → media_assets; IG requires at least one)
+  const [attachedMedia, setAttachedMedia] = useState<Array<{ id: string; fileName: string; mediaType: string; url: string }>>([]);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadFiles = async (files: FileList | File[]) => {
+    if (!workspaceId || files.length === 0) return;
+    setUploadingMedia(true);
+    try {
+      for (const file of Array.from(files)) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("workspaceId", workspaceId);
+        const res = await fetch("/api/media/upload", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+        setAttachedMedia((cur) => [...cur, data]);
+        toast.success(`${file.name} attached`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingMedia(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     // Load the user's first workspace so posts can be saved against it
@@ -88,12 +120,27 @@ export default function ComposerPage() {
       .catch(() => toast.error("Could not load workspace"));
   }, []);
 
+  // Load connected accounts so the composer can pick which page/account to use
+  useEffect(() => {
+    if (!workspaceId) return;
+    fetch(`/api/accounts?workspaceId=${workspaceId}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows: Array<{ id: string; platform: string; accountName: string; accountUsername: string | null; status: string }>) =>
+        setAccounts(rows.filter((r) => r.status === "connected"))
+      )
+      .catch(() => {});
+  }, [workspaceId]);
+
   const togglePlatform = (platform: Platform) => {
-    setSelectedPlatforms((prev) =>
-      prev.includes(platform)
-        ? prev.filter((p) => p !== platform)
-        : [...prev, platform]
-    );
+    setSelectedPlatforms((prev) => {
+      if (prev.includes(platform)) return prev.filter((p) => p !== platform);
+      // Default the account picker to the first connected account for this platform
+      const candidates = accounts.filter((a) => a.platform === (platform === "x" ? "twitter" : platform));
+      if (candidates.length > 0) {
+        setPlatformAccount((cur) => (cur[platform] ? cur : { ...cur, [platform]: candidates[0].id }));
+      }
+      return [...prev, platform];
+    });
   };
 
   const generate = async (type: "caption" | "hashtag", prompt: string) => {
@@ -135,16 +182,31 @@ export default function ComposerPage() {
       toast.error("Write some content first");
       return;
     }
+    if (selectedPlatforms.length === 0) {
+      toast.error("Pick at least one platform");
+      return;
+    }
     setIsSaving(true);
     try {
+      // New map convention: platformConfigs = { platform: perPlatformConfig }.
+      // The composer-picked account (social_accounts.id) rides along.
+      const platformConfigs = Object.fromEntries(
+        selectedPlatforms.map((p) => [
+          p,
+          platformAccount[p] ? { accountId: platformAccount[p] } : {},
+        ])
+      );
       const res = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           workspaceId,
           content,
-          platformConfigs: { platforms: selectedPlatforms },
-          status,
+          mediaIds: attachedMedia.map((m) => m.id),
+          platformConfigs,
+          // Draft-first: "Publish now" saves a draft, then dispatches the
+          // real cross-post (FB live; IG/TikTok report their media gap).
+          status: status === "published" ? "draft" : status,
           scheduledFor:
             status === "scheduled"
               ? new Date(`${scheduleDate}T${scheduleTime}`).toISOString()
@@ -153,10 +215,29 @@ export default function ComposerPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to save post");
-      if (status === "draft") toast.success("Draft saved");
-      else if (status === "scheduled") toast.success("Post scheduled");
-      else toast.success("Post published");
+
+      if (status === "published") {
+        const pub = await fetch(`/api/posts/${data.id}/publish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const pubData = await pub.json();
+        if (!pub.ok) throw new Error(pubData.error || "Failed to publish");
+        setPublishResults(pubData.results ?? {});
+        const ok = (Object.values(pubData.results ?? {}) as Array<{ status?: string }>).filter(
+          (r) => r.status === "published"
+        ).length;
+        toast.success(
+          ok > 0 ? `Published to ${ok} platform${ok > 1 ? "s" : ""} ✅` : "Publish attempted — check per-platform results"
+        );
+      } else if (status === "draft") {
+        toast.success("Draft saved");
+      } else {
+        toast.success("Post scheduled — cross-post fires on schedule");
+      }
       setContent("");
+      setAttachedMedia([]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save post");
     } finally {
@@ -212,10 +293,42 @@ export default function ComposerPage() {
                   );
                 })}
               </div>
+              <div className="mt-3 space-y-2">
+                {selectedPlatforms.map((p) => {
+                  const options = accounts.filter(
+                    (a) => a.platform === (p === "x" ? "twitter" : p)
+                  );
+                  const platformName = platforms.find((x) => x.id === p)?.name ?? p;
+                  if (options.length === 0) {
+                    return (
+                      <p key={p} className="text-xs text-amber-600">
+                        {platformName}: no connected account — add one in Settings → Connected Accounts
+                      </p>
+                    );
+                  }
+                  return (
+                    <div key={p} className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground">{platformName}:</span>
+                      <select
+                        value={platformAccount[p] ?? ""}
+                        onChange={(e) =>
+                          setPlatformAccount((cur) => ({ ...cur, [p]: e.target.value }))
+                        }
+                        className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+                      >
+                        {options.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.accountName}
+                            {a.accountUsername ? ` (@${a.accountUsername})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
-
-          {/* Content Editor */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Post Content</CardTitle>
@@ -241,10 +354,28 @@ export default function ComposerPage() {
               <CardTitle className="text-base">Media</CardTitle>
               <CardDescription>Add images or videos to your post</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors hover:border-primary/50 hover:bg-accent/50">
+            <CardContent className="space-y-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,video/mp4,video/quicktime"
+                className="hidden"
+                onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+              />
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
+                }}
+                className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors hover:border-primary/50 hover:bg-accent/50"
+              >
                 <Upload className="h-8 w-8 text-muted-foreground mb-3" />
-                <p className="text-sm font-medium">Drag & drop media here</p>
+                <p className="text-sm font-medium">
+                  {uploadingMedia ? "Uploading…" : "Drag & drop media here"}
+                </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   PNG, JPG, GIF, MP4 up to 100MB
                 </p>
@@ -253,6 +384,36 @@ export default function ComposerPage() {
                   Browse Files
                 </Button>
               </div>
+              {attachedMedia.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {attachedMedia.map((m) => (
+                    <div
+                      key={m.id}
+                      className="group relative flex items-center gap-2 rounded-md border bg-muted/50 px-2 py-1.5 pr-1.5 text-xs"
+                    >
+                      {m.mediaType === "image" ? (
+                        <img
+                          src={`/api/media/${m.id}/public`}
+                          alt={m.fileName}
+                          className="h-10 w-10 rounded object-cover"
+                        />
+                      ) : m.mediaType === "video" ? (
+                        <FileVideo className="h-5 w-5 text-muted-foreground" />
+                      ) : (
+                        <FileText className="h-5 w-5 text-muted-foreground" />
+                      )}
+                      <span className="max-w-32 truncate">{m.fileName}</span>
+                      <button
+                        title="Remove"
+                        onClick={() => setAttachedMedia((cur) => cur.filter((x) => x.id !== m.id))}
+                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -354,6 +515,34 @@ export default function ComposerPage() {
               </Button>
             </div>
           </div>
+
+          {/* Per-platform publish results */}
+          {publishResults && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Publish results</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {Object.entries(publishResults).map(([platform, r]) => (
+                  <div key={platform} className="flex items-start justify-between gap-2 text-sm">
+                    <span className="font-medium capitalize">{platform}</span>
+                    <span
+                      className={
+                        r.status === "published"
+                          ? "text-emerald-600"
+                          : r.status === "skipped"
+                            ? "text-muted-foreground"
+                            : "text-red-500"
+                      }
+                    >
+                      {r.status}
+                      {r.error ? ` — ${r.error}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Right Sidebar */}

@@ -26,6 +26,8 @@ import {
   LogOut,
   Sparkles,
   Music2,
+  Clapperboard,
+  X,
 } from "lucide-react";
 
 const navigation = [
@@ -37,6 +39,7 @@ const navigation = [
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Media Library", href: "/media", icon: Image },
   { name: "AI Studio", href: "/ai-studio", icon: Sparkles },
+  { name: "Video Studio", href: "/video-studio", icon: Clapperboard },
   { name: "Workspaces", href: "/workspaces", icon: Users },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
@@ -55,9 +58,13 @@ interface SidebarProps {
     name: string;
     slug: string;
   }>;
+  /** Called after any navigation inside the sidebar (used to close the mobile drawer). */
+  onNavigate?: () => void;
+  /** When provided, renders a close button (mobile drawer only). */
+  onClose?: () => void;
 }
 
-export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
+export function Sidebar({ user, workspace, workspaces, onNavigate, onClose }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -72,6 +79,16 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
           className="h-8 w-8"
         />
         <span className="text-lg font-semibold">Symphony</span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close menu"
+            className="ml-auto rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Workspace Switcher */}
@@ -92,14 +109,14 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
             <DropdownMenuContent align="start" className="w-56">
               {workspaces.map((ws) => (
                 <DropdownMenuItem key={ws.id} asChild>
-                  <Link href={`/workspaces/${ws.id}`}>
+                  <Link href={`/workspaces/${ws.id}`} onClick={onNavigate}>
                     {ws.name}
                   </Link>
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link href="/workspaces">Manage Workspaces</Link>
+                <Link href="/workspaces" onClick={onNavigate}>Manage Workspaces</Link>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -114,6 +131,7 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
             <Link
               key={item.name}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive
@@ -152,7 +170,11 @@ export function Sidebar({ user, workspace, workspaces }: SidebarProps) {
               <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => signOut({ callbackUrl: "/login" })}>
+            <DropdownMenuItem
+              onClick={() =>
+                signOut({ callbackUrl: `${window.location.origin}/login` })
+              }
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Sign out
             </DropdownMenuItem>

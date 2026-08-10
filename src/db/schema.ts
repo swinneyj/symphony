@@ -7,6 +7,7 @@ import {
   varchar,
   integer,
   boolean,
+  numeric,
   pgEnum,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
@@ -21,6 +22,13 @@ export const inboxMessageTypeEnum = pgEnum("inbox_message_type", ["comment", "di
 export const inboxMessageStatusEnum = pgEnum("inbox_message_status", ["unread", "read", "replied", "archived", "spam"]);
 export const mediaTypeEnum = pgEnum("media_type", ["image", "video", "audio", "document"]);
 export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approved", "changes_requested", "rejected"]);
+// Video Studio (AI product content)
+export const productSourceEnum = pgEnum("product_source", ["manual", "link", "tiktok_showcase"]);
+export const productStatusEnum = pgEnum("product_status", ["raw", "processing", "ready", "failed"]);
+export const videoProviderEnum = pgEnum("video_provider", ["sora", "seedance", "kling", "openai_tts", "elevenlabs", "kokoro"]);
+export const videoJobTypeEnum = pgEnum("video_job_type", ["product_process", "footage", "overlay", "slideshow", "batch_video", "scene_render"]);
+export const videoJobStatusEnum = pgEnum("video_job_status", ["queued", "running", "done", "failed", "cancelled"]);
+export const videoBatchStatusEnum = pgEnum("video_batch_status", ["queued", "running", "done", "partial", "failed"]);
 
 // ─── USERS & AUTH ────────────────────────────────────────────────────────────
 
@@ -316,10 +324,238 @@ export const aiGenerations = pgTable("ai_generations", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+// ─── VIDEO STUDIO: PRODUCTS & AI CONTENT PIPELINE ─────────────────────────────
+
+export const products = pgTable("products", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Keep price as text so "49.99" and "$49.99" both survive a link import.
+  price: text("price"),
+  currency: text("currency").default("USD"),
+  originalImageUrl: text("original_image_url"),
+  processedImageUrl: text("processed_image_url"),
+  sceneImageUrl: text("scene_image_url"),
+  sourceType: productSourceEnum("source_type").notNull().default("manual"),
+  sourceUrl: text("source_url"),
+  tiktokProductId: text("tiktok_product_id"),
+  status: productStatusEnum("status").notNull().default("raw"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const voices = pgTable("voices", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  // null = system voice available to every workspace
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  provider: videoProviderEnum("provider").notNull().default("openai_tts"),
+  providerVoiceId: text("provider_voice_id"),
+  isCloned: boolean("is_cloned").default(false),
+  sampleUrl: text("sample_url"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const videoFormulas = pgTable("video_formulas", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  // null = system formula available to every workspace
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  category: text("category"),
+  scriptTemplate: text("script_template").notNull(),
+  scenePromptTemplate: text("scene_prompt_template"),
+  // 'render' (default): AI re-renders the product into a custom scene before
+  // image-to-video (compliance: brand-owned listing photos must not be copied).
+  // 'original': use the user's own photography as the first frame.
+  sourceFrame: text("source_frame").notNull().default("render"),
+  motionPreset: text("motion_preset").default("none"),
+  voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  durationSec: integer("duration_sec").default(6),
+  quality: text("quality").default("standard"),
+  /** True: assemble plays the clip forward then reversed (boomerang) — doubles length at $0. */
+  boomerang: boolean("boomerang").notNull().default(false),
+  /** CTA text burned onto the video; supports {product} and {price} variables. */
+  overlayTemplate: text("overlay_template"),
+  /** Formula Studio node graph (@xyflow/react serialization). When set, the
+   *  batch executor flattens it per product; when null, flat fields apply. */
+  nodeGraph: jsonb("node_graph").$type<unknown>(),
+  isSystem: boolean("is_system").default(false),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const videoBatches = pgTable("video_batches", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  name: text("name").notNull(),
+  formulaId: uuid("formula_id").references(() => videoFormulas.id, { onDelete: "set null" }),
+  voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  quality: text("quality").notNull().default("standard"),
+  provider: videoProviderEnum("provider").default("sora"),
+  status: videoBatchStatusEnum("status").notNull().default("queued"),
+  totalCount: integer("total_count").default(0),
+  completedCount: integer("completed_count").default(0),
+  failedCount: integer("failed_count").default(0),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const videoBatchJobs = pgTable("video_batch_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  batchId: uuid("batch_id").references(() => videoBatches.id, { onDelete: "set null" }),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+  formulaId: uuid("formula_id").references(() => videoFormulas.id, { onDelete: "set null" }),
+  jobType: videoJobTypeEnum("job_type").notNull().default("batch_video"),
+  status: videoJobStatusEnum("status").notNull().default("queued"),
+  script: text("script"),
+  sceneImageUrl: text("scene_image_url"),
+  footageUrl: text("footage_url"),
+  voiceoverUrl: text("voiceover_url"),
+  finalUrl: text("final_url"),
+  thumbnailUrl: text("thumbnail_url"),
+  error: text("error"),
+  retries: integer("retries").default(0),
+  /** Manual Post Queue: user marked the finished video as posted. */
+  posted: boolean("posted").notNull().default(false),
+  postedAt: timestamp("posted_at", { mode: "date" }),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const marketProducts = pgTable("market_products", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  sourceProductId: text("source_product_id").notNull(),
+  name: text("name").notNull(),
+  imageUrl: text("image_url"),
+  priceMin: numeric("price_min", { precision: 12, scale: 2 }),
+  priceMax: numeric("price_max", { precision: 12, scale: 2 }),
+  currency: text("currency").default("USD"),
+  categoryL1: text("category_l1"),
+  categoryL2: text("category_l2"),
+  categoryL3: text("category_l3"),
+  region: text("region"),
+  rank: integer("rank"),
+  rankPeriod: text("rank_period"),
+  sales7d: integer("sales_7d"),
+  sales30d: integer("sales_30d"),
+  gmv30d: numeric("gmv_30d", { precision: 14, scale: 2 }),
+  growthRate: numeric("growth_rate", { precision: 8, scale: 3 }),
+  commissionRate: numeric("commission_rate", { precision: 6, scale: 3 }),
+  videoCount: integer("video_count"),
+  creatorCount: integer("creator_count"),
+  isHot: boolean("is_hot").default(false),
+  momentumScore: numeric("momentum_score", { precision: 8, scale: 2 }),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+  snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const marketCreators = pgTable("market_creators", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  sourceCreatorId: text("source_creator_id").notNull(),
+  name: text("name").notNull(),
+  avatarUrl: text("avatar_url"),
+  followers: integer("followers"),
+  engagementRate: numeric("engagement_rate", { precision: 6, scale: 3 }),
+  region: text("region"),
+  rating: numeric("rating", { precision: 4, scale: 2 }),
+  snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const marketProductCreators = pgTable("market_product_creators", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  creatorId: uuid("creator_id")
+    .notNull()
+    .references(() => marketCreators.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => marketProducts.id, { onDelete: "cascade" }),
+  videoCount: integer("video_count"),
+  salesForProduct: integer("sales_for_product"),
+  snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const productWatchlist = pgTable("product_watchlist", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  sourceProductId: text("source_product_id").notNull(),
+  name: text("name").notNull(),
+  imageUrl: text("image_url"),
+  alertRankDrop: integer("alert_rank_drop").default(10),
+  lastAlertedAt: timestamp("last_alerted_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+// ─── API KEYS (MCP / agent access) ───────────────────────────────────────────
+
+export const apiKeys = pgTable("api_keys", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  name: text("name").notNull(),
+  keyHash: text("key_hash").notNull(),
+  keyPrefix: text("key_prefix").notNull(),
+  scopes: text("scopes").array().notNull().default([]),
+  lastUsedAt: timestamp("last_used_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  revokedAt: timestamp("revoked_at", { mode: "date" }),
+});
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
+export type PlatformPublishState = {
+  status: "pending" | "published" | "failed" | "skipped";
+  externalId?: string;
+  error?: string;
+  publishedAt?: string;
+};
+
 export type PlatformPostConfig = {
-  platforms: string[];
+  /** Legacy composer field (the whole config was `{ platforms: [...] }`). */
+  platforms?: string[];
+  /** social_accounts.id chosen in the composer — which page/account to publish with. */
+  accountId?: string;
+  /** Per-platform publish state, recorded by the publish dispatcher. */
+  publish?: PlatformPublishState;
   mediaOrder?: string[];
   firstComment?: string;
   location?: string;
@@ -335,6 +571,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   workspaceMembers: many(workspaceMembers),
   posts: many(posts),
   inboxReplies: many(inboxReplies),
+  products: many(products),
+  videoBatches: many(videoBatches),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
@@ -346,6 +584,11 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
   campaigns: many(campaigns),
   schedules: many(schedules),
   analyticsSnapshots: many(analyticsSnapshots),
+  products: many(products),
+  voices: many(voices),
+  videoFormulas: many(videoFormulas),
+  videoBatches: many(videoBatches),
+  videoBatchJobs: many(videoBatchJobs),
 }));
 
 export const socialAccountsRelations = relations(socialAccounts, ({ one, many }) => ({
@@ -406,5 +649,75 @@ export const mediaAssetsRelations = relations(mediaAssets, ({ one }) => ({
   uploadedBy: one(users, {
     fields: [mediaAssets.uploadedById],
     references: [users.id],
+  }),
+}));
+
+export const productsRelations = relations(products, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [products.workspaceId],
+    references: [workspaces.id],
+  }),
+  createdBy: one(users, {
+    fields: [products.createdById],
+    references: [users.id],
+  }),
+  jobs: many(videoBatchJobs),
+}));
+
+export const voicesRelations = relations(voices, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [voices.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
+
+export const videoFormulasRelations = relations(videoFormulas, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [videoFormulas.workspaceId],
+    references: [workspaces.id],
+  }),
+  voice: one(voices, {
+    fields: [videoFormulas.voiceId],
+    references: [voices.id],
+  }),
+  batches: many(videoBatches),
+}));
+
+export const videoBatchesRelations = relations(videoBatches, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [videoBatches.workspaceId],
+    references: [workspaces.id],
+  }),
+  createdBy: one(users, {
+    fields: [videoBatches.createdById],
+    references: [users.id],
+  }),
+  formula: one(videoFormulas, {
+    fields: [videoBatches.formulaId],
+    references: [videoFormulas.id],
+  }),
+  voice: one(voices, {
+    fields: [videoBatches.voiceId],
+    references: [voices.id],
+  }),
+  jobs: many(videoBatchJobs),
+}));
+
+export const videoBatchJobsRelations = relations(videoBatchJobs, ({ one }) => ({
+  batch: one(videoBatches, {
+    fields: [videoBatchJobs.batchId],
+    references: [videoBatches.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [videoBatchJobs.workspaceId],
+    references: [workspaces.id],
+  }),
+  product: one(products, {
+    fields: [videoBatchJobs.productId],
+    references: [products.id],
+  }),
+  formula: one(videoFormulas, {
+    fields: [videoBatchJobs.formulaId],
+    references: [videoFormulas.id],
   }),
 }));

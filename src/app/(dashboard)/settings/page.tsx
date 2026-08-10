@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   User,
   Building2,
@@ -8,6 +8,7 @@ import {
   Users,
   Bell,
   Cable,
+  KeyRound,
   Camera,
   CheckCircle2,
   XCircle,
@@ -33,19 +34,40 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { ApiKeysPanel } from "./api-keys-panel";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "x" | "linkedin";
 
-interface ConnectedAccount {
+interface RealAccount {
   id: string;
-  platform: Platform;
-  name: string;
-  handle: string;
-  connected: boolean;
-  avatar?: string;
+  platform: string; // social_accounts platform value (may be "twitter")
+  accountName: string;
+  accountUsername: string | null;
+  avatarUrl: string | null;
+  status: string;
 }
+
+const ACCOUNT_PLATFORMS: Platform[] = ["facebook", "instagram", "tiktok", "youtube", "x", "linkedin"];
+
+function platformKey(p: string): Platform {
+  return (p === "twitter" ? "x" : p) as Platform;
+}
+
+/** OAuth entry point per platform: TikTok has its own flow, FB/IG share Meta. */
+function connectHref(p: Platform): string {
+  return p === "tiktok" ? "/api/auth/tiktok/connect" : "/api/auth/meta/connect";
+}
+
+const META_ERRORS: Record<string, string> = {
+  meta_denied: "Access to Facebook/Instagram was denied.",
+  state_mismatch: "Security check failed — please try again.",
+  session_mismatch: "Session changed — please log in and try again.",
+  no_pages: "No Facebook Pages found on this account.",
+  meta_not_configured: "Meta connection is not configured on this deployment yet.",
+  meta_failed: "Meta connection failed. Please try again.",
+};
 
 interface TeamMember {
   id: string;
@@ -84,15 +106,6 @@ const platformColors: Record<Platform, string> = {
   linkedin: "bg-blue-700",
 };
 
-const initialAccounts: ConnectedAccount[] = [
-  { id: "a1", platform: "instagram", name: "Symphony Official", handle: "@symphony", connected: true },
-  { id: "a2", platform: "x", name: "Symphony", handle: "@symphonyapp", connected: true },
-  { id: "a3", platform: "youtube", name: "Symphony", handle: "Symphony", connected: true },
-  { id: "a4", platform: "tiktok", name: "Symphony", handle: "@symphony", connected: true },
-  { id: "a5", platform: "linkedin", name: "Symphony Inc.", handle: "Symphony Inc.", connected: true },
-  { id: "a6", platform: "facebook", name: "Symphony", handle: "Symphony", connected: true },
-];
-
 const teamMembers: TeamMember[] = [
   { id: "t1", name: "Alex Morgan", email: "alex@symphony.app", role: "owner" },
   { id: "t2", name: "Jordan Lee", email: "jordan@symphony.app", role: "admin" },
@@ -112,10 +125,55 @@ const apiConnections = [
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [accounts, setAccounts] = useState(initialAccounts);
+  const [realAccounts, setRealAccounts] = useState<RealAccount[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window === "undefined") return "profile";
+    return new URLSearchParams(window.location.search).get("tab") || "profile";
+  });
+
+  const loadAccounts = useCallback(async (wsId: string) => {
+    const res = await fetch(`/api/accounts?workspaceId=${wsId}`);
+    if (res.ok) setRealAccounts(await res.json());
+    setLoadingAccounts(false);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get("error");
+    const tiktokErr = params.get("tiktok_error");
+    const connected = params.get("connected");
+    if (tiktokErr) setNotice({ type: "error", text: tiktokErr });
+    else if (err) setNotice({ type: "error", text: META_ERRORS[err] || `Meta connection failed (${err})` });
+    else if (connected === "tiktok") setNotice({ type: "success", text: "TikTok account connected" });
+    else if (connected) setNotice({ type: "success", text: "Facebook / Instagram connected" });
+
+    (async () => {
+      const res = await fetch("/api/workspaces");
+      if (!res.ok) return;
+      const workspaces = await res.json();
+      if (workspaces.length > 0) {
+        setWorkspaceId(workspaces[0].id);
+        loadAccounts(workspaces[0].id);
+      } else {
+        setLoadingAccounts(false);
+      }
+    })();
+  }, [loadAccounts]);
+
+  const disconnect = async (account: RealAccount) => {
+    const res = await fetch(`/api/accounts/${account.id}`, { method: "DELETE" });
+    if (res.ok) {
+      setRealAccounts(realAccounts.filter((a) => a.id !== account.id));
+    } else {
+      window.alert("Disconnect failed");
+    }
+  };
 
   return (
     <div className="flex-1 space-y-6 p-6 md:p-8">
@@ -126,7 +184,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="profile" className="space-y-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="w-full flex-wrap h-auto justify-start">
           <TabsTrigger value="profile" className="gap-1.5">
             <User className="h-4 w-4" />
@@ -152,7 +210,16 @@ export default function SettingsPage() {
             <Cable className="h-4 w-4" />
             API Connections
           </TabsTrigger>
+          <TabsTrigger value="api-keys" className="gap-1.5">
+            <KeyRound className="h-4 w-4" />
+            API Keys
+          </TabsTrigger>
         </TabsList>
+
+        {/* API Keys Tab */}
+        <TabsContent value="api-keys" className="space-y-6">
+          <ApiKeysPanel />
+        </TabsContent>
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-6">
@@ -225,65 +292,122 @@ export default function SettingsPage() {
 
         {/* Connected Accounts Tab */}
         <TabsContent value="accounts" className="space-y-6">
+          {notice && (
+            <div
+              className={cn(
+                "rounded-lg border p-3 text-sm",
+                notice.type === "error"
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700"
+              )}
+            >
+              {notice.text}
+            </div>
+          )}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Connected Social Accounts</CardTitle>
               <CardDescription>Connect or disconnect your social media accounts</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {accounts.map((account) => {
-                const Icon = platformIcons[account.platform];
-                return (
-                  <div
-                    key={account.id}
-                    className="flex items-center justify-between rounded-lg border p-4"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={cn("flex h-10 w-10 items-center justify-center rounded-full", platformColors[account.platform])}>
-                        <Icon className="h-5 w-5 text-white" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{account.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {account.handle} &middot; {platformNames[account.platform]}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1">
-                        <div className={cn(
-                          "h-2 w-2 rounded-full",
-                          account.connected ? "bg-emerald-500" : "bg-destructive"
-                        )} />
-                        <span className="text-xs text-muted-foreground">
-                          {account.connected ? "Connected" : "Disconnected"}
-                        </span>
-                      </div>
-                      <Button
-                        variant={account.connected ? "destructive" : "outline"}
-                        size="sm"
-                        onClick={() => {
-                          setAccounts(accounts.map(a =>
-                            a.id === account.id ? { ...a, connected: !a.connected } : a
-                          ));
-                        }}
+              {loadingAccounts ? (
+                <p className="text-sm text-muted-foreground">Loading accounts…</p>
+              ) : (
+                ACCOUNT_PLATFORMS.map((platform) => {
+                  const Icon = platformIcons[platform];
+                  const color = platformColors[platform];
+                  const display = platformNames[platform];
+                  const matches = realAccounts.filter(
+                    (a) => platformKey(a.platform) === platform
+                  );
+
+                  if (matches.length === 0) {
+                    return (
+                      <div
+                        key={platform}
+                        className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
                       >
-                        {account.connected ? (
-                          <>
-                            <Unlink className="h-3.5 w-3.5 mr-1" />
-                            Disconnect
-                          </>
-                        ) : (
-                          <>
-                            <Link className="h-3.5 w-3.5 mr-1" />
-                            Connect
-                          </>
-                        )}
-                      </Button>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", color)}>
+                            <Icon className="h-5 w-5 text-white" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{display}</p>
+                            <p className="text-xs text-muted-foreground">Not connected</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 sm:justify-end">
+                          <div className="flex items-center gap-1">
+                            <div className="h-2 w-2 rounded-full bg-destructive" />
+                            <span className="text-xs text-muted-foreground">Disconnected</span>
+                          </div>
+                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" ? (
+                            <Button size="sm" asChild>
+                              <a href={connectHref(platform)}>
+                                <Link className="h-3.5 w-3.5 mr-1" />
+                                Connect
+                              </a>
+                            </Button>
+                          ) : (
+                            <Button size="sm" variant="outline" disabled title="Coming soon">
+                              <Link className="h-3.5 w-3.5 mr-1" />
+                              Soon
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={platform} className="space-y-3">
+                      {matches.map((account) => (
+                        <div
+                          key={account.id}
+                          className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", color)}>
+                              <Icon className="h-5 w-5 text-white" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">{account.accountName}</p>
+                              <p className="truncate text-xs text-muted-foreground">
+                                {account.accountUsername ? `@${account.accountUsername} · ` : ""}
+                                {display}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 sm:justify-end">
+                            <div className="flex items-center gap-1">
+                              <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                              <span className="text-xs text-muted-foreground">Connected</span>
+                            </div>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => disconnect(account)}
+                            >
+                              <Unlink className="h-3.5 w-3.5 mr-1" />
+                              Disconnect
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {(platform === "facebook" || platform === "instagram" || platform === "tiktok") && (
+                        <div className="flex justify-end">
+                          <Button variant="outline" size="sm" asChild>
+                            <a href={connectHref(platform)}>
+                              <Plus className="h-3.5 w-3.5 mr-1" />
+                              Add another {display}
+                            </a>
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </CardContent>
           </Card>
         </TabsContent>

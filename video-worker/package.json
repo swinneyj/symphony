@@ -1,0 +1,27 @@
+{
+  "name": "video-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Symphony AI Video Studio worker: polls video_batch_jobs, processes product images and generates batch videos.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.6.1"
+  },
+  "optionalDependencies": {
+    "kokoro-js": "^1.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
