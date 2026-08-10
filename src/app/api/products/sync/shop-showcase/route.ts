@@ -11,10 +11,19 @@ export const maxDuration = 120;
 /**
  * POST /api/products/sync/shop-showcase
  *
- * Pulls the workspace's TikTok Shop product catalog and upserts into
- * products (source_type = "tiktok_showcase", dedup on tiktok_product_id).
+ * Pulls the TikTok Shop product catalog for EVERY connected tiktok_shop
+ * creator account in the workspace and upserts into products
+ * (source_type = "tiktok_showcase", dedup on tiktok_product_id).
  *
- * Returns { added, updated, skipped, total } — no fake numbers, ever.
+ * Multi-account safe:
+ *  - products track which creator account(s) they came from
+ *    (metadata.creatorAccountIds)
+ *  - the removal pass is PER ACCOUNT: a product is only deleted when NO
+ *    connected account still has it in its catalog
+ *  - manual + link imports are never touched
+ *
+ * Returns { added, updated, removed, accounts: [{name, added, updated,
+ * removed, total}], total } — no fake numbers, ever.
  */
 export async function POST(request: Request) {
   try {
@@ -44,52 +53,46 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    let creds;
-    try {
-      // Creator flow: static app_key/secret from env + LIVE access token from
-      // the connected tiktok_shop social account in this workspace.
-      const connected = await db
-        .select({
-          accessToken: socialAccounts.accessToken,
-          refreshToken: socialAccounts.refreshToken,
-          tokenExpiresAt: socialAccounts.tokenExpiresAt,
-          platformAccountId: socialAccounts.platformAccountId,
-        })
-        .from(socialAccounts)
-        .where(
-          and(
-            eq(socialAccounts.workspaceId, workspaceId),
-            eq(socialAccounts.platform, "tiktok_shop"),
-            eq(socialAccounts.status, "connected")
-          )
+    // All connected TikTok Shop creator accounts for this workspace.
+    const connected = await db
+      .select({
+        id: socialAccounts.id,
+        accessToken: socialAccounts.accessToken,
+        platformAccountId: socialAccounts.platformAccountId,
+        accountName: socialAccounts.accountName,
+      })
+      .from(socialAccounts)
+      .where(
+        and(
+          eq(socialAccounts.workspaceId, workspaceId),
+          eq(socialAccounts.platform, "tiktok_shop"),
+          eq(socialAccounts.status, "connected")
         )
-        .limit(1);
-      if (!connected[0]?.accessToken) {
-        return NextResponse.json(
-          {
-            error:
-              "No TikTok Shop creator connected — connect your creator account in Settings → Connected Accounts first",
-          },
-          { status: 501 }
-        );
-      }
-      creds = getShopCredentials(connected[0].accessToken);
-    } catch (e) {
+      );
+
+    if (connected.length === 0) {
       return NextResponse.json(
-        { error: e instanceof Error ? e.message : "TikTok Shop is not configured" },
+        {
+          error:
+            "No TikTok Shop creator connected — connect your creator account in Settings → Connected Accounts first",
+        },
         { status: 501 }
       );
     }
 
-    const shopProducts = await fetchAllShopProducts(creds);
-
-    // Existing products for this workspace keyed by tiktok_product_id
+    // Existing showcase products for this workspace (all accounts).
     const existing = await db
-      .select({ id: products.id, tiktokProductId: products.tiktokProductId, name: products.name })
+      .select({
+        id: products.id,
+        tiktokProductId: products.tiktokProductId,
+        name: products.name,
+        metadata: products.metadata,
+      })
       .from(products)
       .where(
         and(
           eq(products.workspaceId, workspaceId),
+          eq(products.sourceType, "tiktok_showcase"),
           isNotNull(products.tiktokProductId)
         )
       );
@@ -100,70 +103,124 @@ export async function POST(request: Request) {
         .map((e) => [e.tiktokProductId as string, e])
     );
 
-    let added = 0;
-    let updated = 0;
-    const skipped: string[] = [];
+    const accountResults: Array<{
+      name: string;
+      added: number;
+      updated: number;
+      removed: number;
+      total: number;
+    }> = [];
+    let grandAdded = 0;
+    let grandUpdated = 0;
+    let grandRemoved = 0;
+    const allShopIds = new Map<string, Set<string>>(); // productId -> account ids that have it
 
-    for (const sp of shopProducts) {
-      const prior = existingById.get(sp.id);
-      const values = {
-        name: sp.name.slice(0, 255),
-        description: sp.description?.slice(0, 2000) ?? null,
-        price: sp.price ?? null,
-        currency: sp.currency ?? "USD",
-        originalImageUrl: sp.mainImageUrl ?? null,
-        sourceType: "tiktok_showcase" as const,
-        sourceUrl: `https://www.tiktok.com/view/product/${sp.id}`,
-        tiktokProductId: sp.id,
-        metadata: { shopStatus: sp.status ?? null },
-      };
-
-      if (prior) {
-        // Only update when something meaningful changed (avoid churn).
-        await db.update(products).set(values).where(eq(products.id, prior.id));
-        updated++;
-      } else {
-        await db.insert(products).values({
-          workspaceId,
-          createdById: session.user.id,
-          ...values,
-          status: "raw",
+    for (const acct of connected) {
+      let creds;
+      try {
+        creds = getShopCredentials(acct.accessToken);
+      } catch (e) {
+        accountResults.push({
+          name: acct.accountName,
+          added: 0,
+          updated: 0,
+          removed: 0,
+          total: 0,
         });
-        added++;
+        continue;
       }
-    }
 
-    // ─── Removal pass (full circle) ─────────────────────────────────────────
-    // Products that came FROM the shop (source_type = tiktok_showcase) but are
-    // no longer in the shop's catalog were removed by the seller on TikTok —
-    // reflect that here. Manual + link imports are never touched.
-    const shopIds = new Set(shopProducts.map((sp) => sp.id));
-    const stale = await db
-      .select({ id: products.id, tiktokProductId: products.tiktokProductId })
-      .from(products)
-      .where(
-        and(
-          eq(products.workspaceId, workspaceId),
-          eq(products.sourceType, "tiktok_showcase"),
-          isNotNull(products.tiktokProductId)
-        )
-      );
-    const staleToDelete = stale.filter(
-      (p) => p.tiktokProductId && !shopIds.has(p.tiktokProductId)
-    );
-    let removed = 0;
-    for (const p of staleToDelete) {
-      await db.delete(products).where(eq(products.id, p.id));
-      removed++;
+      const shopProducts = await fetchAllShopProducts(creds);
+      const accountAdded = [];
+      const accountUpdated = [];
+
+      for (const sp of shopProducts) {
+        const prior = existingById.get(sp.id);
+        const prevAccountIds = new Set<string>(
+          (prior?.metadata?.creatorAccountIds as string[] | undefined) ?? []
+        );
+        prevAccountIds.add(acct.platformAccountId);
+        const values = {
+          name: sp.name.slice(0, 255),
+          description: sp.description?.slice(0, 2000) ?? null,
+          price: sp.price ?? null,
+          currency: sp.currency ?? "USD",
+          originalImageUrl: sp.mainImageUrl ?? null,
+          sourceType: "tiktok_showcase" as const,
+          sourceUrl: `https://www.tiktok.com/view/product/${sp.id}`,
+          tiktokProductId: sp.id,
+          metadata: {
+            shopStatus: sp.status ?? null,
+            creatorAccountIds: [...prevAccountIds],
+          },
+        };
+
+        if (prior) {
+          await db.update(products).set(values).where(eq(products.id, prior.id));
+          accountUpdated.push(sp.id);
+        } else {
+          await db.insert(products).values({
+            workspaceId,
+            createdById: session.user.id,
+            ...values,
+            status: "raw",
+          });
+          accountAdded.push(sp.id);
+        }
+
+        const entry = allShopIds.get(sp.id) ?? new Set<string>();
+        entry.add(acct.platformAccountId);
+        allShopIds.set(sp.id, entry);
+      }
+
+      // ─── Per-account removal pass ────────────────────────────────────────
+      // Products tagged with THIS account but no longer in THIS account's
+      // catalog lose the tag; when the last account drops a product, delete it.
+      const thisAccountIds = new Set(shopProducts.map((sp) => sp.id));
+      const stale = existing.filter((e) => {
+        const ids = (e.metadata?.creatorAccountIds as string[] | undefined) ?? [];
+        return (
+          e.tiktokProductId &&
+          ids.includes(acct.platformAccountId) &&
+          !thisAccountIds.has(e.tiktokProductId)
+        );
+      });
+      let accountRemoved = 0;
+      for (const p of stale) {
+        const ids = new Set<string>(
+          (p.metadata?.creatorAccountIds as string[] | undefined) ?? []
+        );
+        ids.delete(acct.platformAccountId);
+        if (ids.size === 0) {
+          await db.delete(products).where(eq(products.id, p.id));
+        } else {
+          await db
+            .update(products)
+            .set({ metadata: { ...(p.metadata ?? {}), creatorAccountIds: [...ids] } })
+            .where(eq(products.id, p.id));
+        }
+        accountRemoved++;
+      }
+
+      accountResults.push({
+        name: acct.accountName,
+        added: accountAdded.length,
+        updated: accountUpdated.length,
+        removed: accountRemoved,
+        total: shopProducts.length,
+      });
+      grandAdded += accountAdded.length;
+      grandUpdated += accountUpdated.length;
+      grandRemoved += accountRemoved;
     }
 
     return NextResponse.json({
       ok: true,
-      added,
-      updated,
-      skipped: skipped.length,
-      removed,
-      total: shopProducts.length,
+      added: grandAdded,
+      updated: grandUpdated,
+      removed: grandRemoved,
+      accounts: accountResults,
+      total: allShopIds.size,
     });
   } catch (error) {
     console.error("shop showcase sync error:", error);

@@ -250,11 +250,21 @@ function ProductsTab({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Shop sync failed");
-      toast.success(
-        data.removed > 0
-          ? `Shop synced — ${data.added} added, ${data.updated} updated, ${data.removed} removed, ${data.total} total`
-          : `Shop synced — ${data.added} added, ${data.updated} updated, ${data.total} total`
-      );
+      if (data.accounts && data.accounts.length > 1) {
+        const lines = (data.accounts as ShopSyncAccount[])
+          .map(
+            (a) =>
+              `${a.name}: +${a.added}/~${a.updated}/-${a.removed} (${a.total} products)`
+          )
+          .join(" · ");
+        toast.success(`Shop synced — ${lines}`);
+      } else {
+        toast.success(
+          data.removed > 0
+            ? `Shop synced — ${data.added} added, ${data.updated} updated, ${data.removed} removed, ${data.total} total`
+            : `Shop synced — ${data.added} added, ${data.updated} updated, ${data.total} total`
+        );
+      }
       onChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Shop sync failed");
@@ -1004,6 +1014,14 @@ function VoicesTab({
 // ─── Batch Studio tab ────────────────────────────────────────────────────────
 
 type BatchJobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+interface ShopSyncAccount {
+  name: string;
+  added: number;
+  updated: number;
+  removed: number;
+  total: number;
+}
 
 interface BatchSummary {
   id: string;
