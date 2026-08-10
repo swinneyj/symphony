@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { workspaceMembers, posts, socialAccounts } from "@/db/schema";
+import { workspaceMembers, posts, socialAccounts, analyticsSnapshots } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
 
 /**
@@ -111,25 +111,70 @@ export async function GET(request: Request) {
       return { date: dayKey, posts: count };
     });
 
+    // Latest analytics snapshot per platform (written by /api/cron/analytics)
+    const snapshots = await db
+      .select({
+        platform: analyticsSnapshots.platform,
+        data: analyticsSnapshots.data,
+        snapshotDate: analyticsSnapshots.snapshotDate,
+      })
+      .from(analyticsSnapshots)
+      .where(eq(analyticsSnapshots.workspaceId, workspaceId))
+      .orderBy(desc(analyticsSnapshots.snapshotDate))
+      .limit(50);
+
+    // Most recent snapshot per platform (snapshots come newest-first)
+    const latestByPlatform: Record<string, Record<string, unknown>> = {};
+    for (const s of snapshots) {
+      if (!latestByPlatform[s.platform]) {
+        latestByPlatform[s.platform] = s.data;
+      }
+    }
+
     const platforms = ["instagram", "tiktok", "twitter", "facebook", "linkedin", "youtube"];
-    const platformBreakdown = platforms.map((platform) => ({
-      platform,
-      followers: 0, // awaiting platform sync
-      engagement: 0,
-      impressions: 0,
-      posts: platformPosts[platform] ?? 0,
-      accounts: platformCounts[platform] ?? 0,
-    }));
+    const platformBreakdown = platforms.map((platform) => {
+      const snap = latestByPlatform[platform] ?? {};
+      const followers =
+        (snap.followers as number | undefined) ??
+        (snap.followers_count as number | undefined) ??
+        0;
+      const engagement =
+        ((snap.recentLikes as number | undefined) ?? 0) +
+        ((snap.recentComments as number | undefined) ?? 0);
+      return {
+        platform,
+        followers,
+        engagement,
+        impressions: (snap.pageViews as number | undefined) ?? 0,
+        posts: platformPosts[platform] ?? 0,
+        accounts: platformCounts[platform] ?? 0,
+        syncedAt:
+          typeof snap.capturedAt === "string" ? snap.capturedAt : undefined,
+      };
+    });
+
+    const totalFollowers = platformBreakdown.reduce(
+      (sum, p) => sum + (p.followers ?? 0),
+      0
+    );
+    const totalEngagement = platformBreakdown.reduce(
+      (sum, p) => sum + (p.engagement ?? 0),
+      0
+    );
+    const totalImpressions = platformBreakdown.reduce(
+      (sum, p) => sum + (p.impressions ?? 0),
+      0
+    );
 
     return NextResponse.json({
       workspaceId,
       period: "overall",
       metrics: {
-        totalFollowers: 0,
+        totalFollowers,
         followersGrowth: { value: 0, percentage: 0, trend: "stable" as const },
-        totalEngagement: 0,
+        totalEngagement,
         engagementGrowth: { value: 0, percentage: 0, trend: "stable" as const },
-        totalImpressions: 0,
+        totalImpressions,
         impressionsGrowth: { value: 0, percentage: 0, trend: "stable" as const },
         totalPosts: Number(postCounts.total ?? 0),
         postsGrowth: {
