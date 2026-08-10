@@ -1,13 +1,25 @@
 import NextAuth from "next-auth";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { db } from "@/db";
+import { users, accounts, verificationTokens } from "@/db/schema";
 import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
 import TikTok from "next-auth/providers/tiktok";
 import Credentials from "next-auth/providers/credentials";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: DrizzleAdapter(db),
+  // Map the adapter to the app's plural tables (users/accounts/verification_tokens).
+  // sessionsTable omitted: JWT strategy never touches it, and the app's sessions
+  // table uses expiresAt (adapter expects expires).
+  adapter: DrizzleAdapter(db, {
+    usersTable: users,
+    // accounts columns are camelCase props (refreshToken/accessToken/…) — the
+    // adapter's TYPE expects snake_case props, but its runtime reads camelCase
+    // (accountsTable.providerAccountId) and spreads Auth.js's camelCase data,
+    // so the cast is type-only. accounts.id gets its value via $defaultFn.
+    accountsTable: accounts as any,
+    verificationTokensTable: verificationTokens,
+  }),
   session: { strategy: "jwt" },
   pages: {
     signIn: "/login",
