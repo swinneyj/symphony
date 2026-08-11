@@ -183,6 +183,43 @@ type ShopApiResponse = {
   };
 };
 
+/** Structured error so API routes can surface friendly guidance to the UI. */
+export class ShopApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "ShopApiError";
+  }
+}
+
+type ShopApiProduct = NonNullable<
+  NonNullable<ShopApiResponse["data"]>["products"]
+>[number];
+
+/** Map a raw Shop API product into the app's ShopProduct shape. */
+function mapShopProduct(p: ShopApiProduct): ShopProduct {
+  const imageUrl =
+    p.main_images?.[0]?.url ??
+    p.addition?.customized_main_images?.[0]?.url ??
+    null;
+  return {
+    id: String(p.id ?? ""),
+    name: p.title ?? "",
+    description: p.description,
+    price:
+      p.price?.original_price?.minimum_amount != null
+        ? String(p.price.original_price.minimum_amount)
+        : undefined,
+    currency: p.price?.original_price?.currency ?? "USD",
+    mainImageUrl: imageUrl ?? undefined,
+    status: p.status?.added_status ?? p.status?.inventory_status ?? undefined,
+    sellerName: p.shop?.name,
+    detailLink: p.detail_link,
+  };
+}
+
 /**
  * Fetch one page of the creator's SHOWCASE products.
  * GET /affiliate_creator/202405/showcases/products?origin=SHOWCASE
@@ -225,25 +262,7 @@ export async function fetchShopProductsPage(
 
   const items = json.data?.products ?? [];
   const products: ShopProduct[] = items
-    .map((p) => {
-      const imageUrl =
-        p.main_images?.[0]?.url ??
-        p.addition?.customized_main_images?.[0]?.url ??
-        null;
-      return {
-        id: String(p.id ?? ""),
-        name: p.title ?? "",
-        description: p.description,
-        price: p.price?.original_price?.minimum_amount != null
-          ? String(p.price.original_price.minimum_amount)
-          : undefined,
-        currency: p.price?.original_price?.currency ?? "USD",
-        mainImageUrl: imageUrl ?? undefined,
-        status: p.status?.added_status ?? p.status?.inventory_status ?? undefined,
-        sellerName: p.shop?.name,
-        detailLink: p.detail_link,
-      };
-    })
+    .map(mapShopProduct)
     .filter((p) => p.id && p.name);
 
   return { products, nextPageToken: json.data?.next_page_token ?? "" };
@@ -266,4 +285,69 @@ export async function fetchAllShopProducts(
     if (all.length > 10_000) break; // safety valve
   } while (token);
   return all;
+}
+
+export type ShopSearchParams = {
+  keyword?: string;
+  sortField?: "PRODUCT_ID" | "PRICE" | "SALE";
+  sortOrder?: "DESC" | "ASC";
+  pageToken?: string;
+  pageSize?: number;
+};
+
+/**
+ * Search the TikTok Shop product catalog available to affiliate creators.
+ * GET /affiliate_creator/202509/shop_products
+ * Requires scope: "Affiliate Information" (434372).
+ *
+ * `keyword` is a free-text title search; results sort by sales, price, or
+ * product id. Returns one page + the next page token for pagination.
+ */
+export async function searchShopProducts(
+  creds: ShopCredentials,
+  opts: ShopSearchParams = {}
+): Promise<{ products: ShopProduct[]; nextPageToken: string }> {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 100);
+
+  const params: Record<string, string> = {
+    app_key: creds.appKey,
+    timestamp,
+    page_size: String(pageSize),
+  };
+  if (opts.keyword?.trim()) params.keyword = opts.keyword.trim();
+  if (opts.sortField) params.sort_field = opts.sortField;
+  if (opts.sortOrder) params.sort_order = opts.sortOrder;
+  if (opts.pageToken) params.page_token = opts.pageToken;
+
+  const sortedQuery = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+    .join("&");
+  const sign = signRequest(creds.appSecret, sortedQuery);
+
+  const query = new URLSearchParams({ ...params, sign });
+  const res = await fetch(
+    `${SHOP_API}/affiliate_creator/202509/shop_products?${query.toString()}`,
+    {
+      headers: { "x-tts-access-token": creds.accessToken },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ShopApiError(res.status, text.slice(0, 300) || `HTTP ${res.status}`);
+  }
+  const json = (await res.json()) as ShopApiResponse;
+  if (json.code && json.code !== 0) {
+    throw new ShopApiError(Number(json.code), json.message ?? "unknown");
+  }
+
+  const items = json.data?.products ?? [];
+  const products: ShopProduct[] = items
+    .map(mapShopProduct)
+    .filter((p) => p.id && p.name);
+
+  return { products, nextPageToken: json.data?.next_page_token ?? "" };
 }
