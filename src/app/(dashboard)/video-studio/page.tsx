@@ -20,6 +20,7 @@ import {
   Star,
   Workflow,
   Send,
+  Search,
   Copy,
   Check,
   Share2,
@@ -153,6 +154,9 @@ export default function VideoStudioPage() {
           <TabsTrigger value="products" className="gap-1.5 shrink-0">
             <Package className="h-4 w-4" /> Products
           </TabsTrigger>
+          <TabsTrigger value="discover" className="gap-1.5 shrink-0">
+            <Search className="h-4 w-4" /> Discover
+          </TabsTrigger>
           <TabsTrigger value="formulas" className="gap-1.5 shrink-0">
             <Wand2 className="h-4 w-4" /> Formulas
           </TabsTrigger>
@@ -175,6 +179,13 @@ export default function VideoStudioPage() {
             workspaceId={workspaceId!}
             products={products}
             onChanged={() => loadProducts(workspaceId!)}
+          />
+        </TabsContent>
+
+        <TabsContent value="discover" className="mt-4">
+          <DiscoverTab
+            workspaceId={workspaceId!}
+            onAdded={() => loadProducts(workspaceId!)}
           />
         </TabsContent>
 
@@ -523,6 +534,287 @@ function ProductsTab({
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Discover tab ───────────────────────────────────────────────────────────
+
+type DiscoverProduct = {
+  id: string;
+  name: string;
+  description?: string | null;
+  price?: string | null;
+  currency?: string | null;
+  mainImageUrl?: string | null;
+  detailLink?: string | null;
+  addedStatus?: string | null;
+  sellerName?: string | null;
+};
+
+type DiscoverError = {
+  kind: "not_connected" | "app_blocked" | "token" | "other";
+  message: string;
+} | null;
+
+function DiscoverTab({
+  workspaceId,
+  onAdded,
+}: {
+  workspaceId: string;
+  onAdded: () => void;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const [sortField, setSortField] = useState<"SALE" | "PRICE" | "PRODUCT_ID">(
+    "SALE"
+  );
+  const [sortOrder, setSortOrder] = useState<"DESC" | "ASC">("DESC");
+  const [results, setResults] = useState<DiscoverProduct[]>([]);
+  const [pageToken, setPageToken] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<DiscoverError>(null);
+  const [searched, setSearched] = useState(false);
+
+  const runSearch = async (pageTokenArg?: string) => {
+    setSearching(!pageTokenArg);
+    setLoadingMore(!!pageTokenArg);
+    setError(null);
+    try {
+      const res = await fetch("/api/products/shop-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          keyword: keyword.trim() || undefined,
+          sortField,
+          sortOrder,
+          pageToken: pageTokenArg ?? undefined,
+          pageSize: 24,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const kind =
+          res.status === 501
+            ? "not_connected"
+            : res.status === 502 && /app|publish|approve/i.test(data.error ?? "")
+              ? "app_blocked"
+              : res.status === 502 && /token|reconnect/i.test(data.error ?? "")
+                ? "token"
+                : "other";
+        setError({ kind, message: data.error || "Search failed" });
+        if (res.status === 501 || res.status === 502) {
+          setResults([]);
+          setPageToken(null);
+        }
+        return;
+      }
+      const page = (data.products ?? []) as DiscoverProduct[];
+      setResults((prev) => (pageTokenArg ? [...prev, ...page] : page));
+      setPageToken(data.nextPageToken || null);
+      setSearched(true);
+    } catch (err) {
+      setError({
+        kind: "other",
+        message: err instanceof Error ? err.message : "Search failed",
+      });
+    } finally {
+      setSearching(false);
+      setLoadingMore(false);
+    }
+  };
+
+  const handleAdd = async (p: DiscoverProduct) => {
+    try {
+      const res = await fetch("/api/products/shop-add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          product: {
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            price: p.price,
+            currency: p.currency,
+            mainImageUrl: p.mainImageUrl,
+            detailLink: p.detailLink,
+            addedStatus: p.addedStatus,
+            sellerName: p.sellerName,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Add failed");
+      setAddedIds((prev) => new Set(prev).add(p.id));
+      toast.success(
+        data.alreadyExists
+          ? `"${p.name.slice(0, 40)}" is already in your products`
+          : `"${p.name.slice(0, 40)}" added to products`
+      );
+      onAdded();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Add failed");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          placeholder="Search TikTok Shop products… e.g. stadium chair, cooling towel"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && runSearch()}
+          className="min-h-[2.5rem] flex-1 min-w-[240px]"
+        />
+        <select
+          value={sortField}
+          onChange={(e) => setSortField(e.target.value as typeof sortField)}
+          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          title="Sort results"
+        >
+          <option value="SALE">Sort: Top sales</option>
+          <option value="PRICE">Sort: Price</option>
+          <option value="PRODUCT_ID">Sort: Newest</option>
+        </select>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => setSortOrder(sortOrder === "DESC" ? "ASC" : "DESC")}
+          title={sortOrder === "DESC" ? "Descending" : "Ascending"}
+          className="h-10 w-10 shrink-0"
+        >
+          <TrendingUp
+            className={`h-4 w-4 transition-transform ${
+              sortOrder === "ASC" ? "rotate-180" : ""
+            }`}
+          />
+        </Button>
+        <Button onClick={() => runSearch()} disabled={searching}>
+          {searching ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Search className="h-4 w-4" />
+          )}
+          Search
+        </Button>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <span className="flex-1">{error.message}</span>
+          {error.kind === "not_connected" && (
+            <Link
+              href="/settings"
+              className="shrink-0 font-medium underline underline-offset-2"
+            >
+              Open Settings
+            </Link>
+          )}
+        </div>
+      )}
+
+      {results.length === 0 && searched && !searching && !error && (
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          No products found{keyword ? ` for "${keyword}"` : ""} — try a
+          different keyword.
+        </p>
+      )}
+
+      {results.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+          {results.map((p) => {
+            const added = addedIds.has(p.id);
+            return (
+              <div
+                key={p.id}
+                className="flex flex-col overflow-hidden rounded-xl border bg-card"
+              >
+                <div className="aspect-square w-full overflow-hidden bg-zinc-100">
+                  {p.mainImageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={p.mainImageUrl}
+                      alt={p.name}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center">
+                      <Package className="h-8 w-8 text-muted-foreground/40" />
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-1 flex-col gap-1 p-2.5">
+                  <p className="line-clamp-2 text-sm font-medium leading-snug">
+                    {p.name}
+                  </p>
+                  <p className="text-sm font-semibold">
+                    {p.price ? `$${p.price}` : "—"}
+                    {p.sellerName ? (
+                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                        {p.sellerName}
+                      </span>
+                    ) : null}
+                  </p>
+                  <div className="mt-auto flex items-center gap-1.5 pt-1">
+                    {p.addedStatus ? (
+                      <Badge
+                        variant={
+                          p.addedStatus === "ADDABLE" ? "default" : "secondary"
+                        }
+                        className="text-[10px]"
+                      >
+                        {p.addedStatus}
+                      </Badge>
+                    ) : null}
+                    <div className="flex-1" />
+                    <Button
+                      size="sm"
+                      variant={added ? "secondary" : "default"}
+                      disabled={added}
+                      onClick={() => handleAdd(p)}
+                    >
+                      {added ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" /> Added
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3.5 w-3.5" /> Add
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {pageToken && (
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="outline"
+            onClick={() => runSearch(pageToken)}
+            disabled={loadingMore}
+          >
+            {loadingMore ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+            Load more
+          </Button>
         </div>
       )}
     </div>
