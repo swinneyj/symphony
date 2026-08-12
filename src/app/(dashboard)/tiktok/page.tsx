@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Loader2,
   Music2,
+  Plus,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -24,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 type Workspace = { id: string; name: string };
 type TikTokAccount = {
+  id: string;
   accountName: string;
   accountUsername?: string | null;
   avatarUrl?: string | null;
@@ -33,7 +35,7 @@ type AccountResponse = {
   environment: string;
   products: string[];
   scopes: string[];
-  account: TikTokAccount | null;
+  accounts: TikTokAccount[];
 };
 type CreatorInfo = {
   creator_avatar_url?: string;
@@ -69,6 +71,7 @@ const privacyLabels: Record<string, string> = {
 export default function TikTokPage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [accountData, setAccountData] = useState<AccountResponse | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [creator, setCreator] = useState<CreatorInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [creatorLoading, setCreatorLoading] = useState(false);
@@ -100,11 +103,13 @@ export default function TikTokPage() {
     return data as AccountResponse;
   }, []);
 
-  const loadCreator = useCallback(async (workspaceId: string) => {
+  const loadCreator = useCallback(async (workspaceId: string, accountId?: string) => {
     setCreatorLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/tiktok/creator?workspaceId=${encodeURIComponent(workspaceId)}`);
+      const query = new URLSearchParams({ workspaceId });
+      if (accountId) query.set("accountId", accountId);
+      const response = await fetch(`/api/tiktok/creator?${query.toString()}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load TikTok posting settings");
       setCreator(data);
@@ -125,8 +130,11 @@ export default function TikTokPage() {
         const active = resolveActiveWorkspace(workspaces);
         if (!active) return;
         setWorkspace(active);
-        const connected = await loadAccount(active.id);
-        if (connected.account) await loadCreator(active.id);
+        const data = await loadAccount(active.id);
+        if (data.accounts.length > 0) {
+          setSelectedAccountId(data.accounts[0].id);
+          await loadCreator(active.id, data.accounts[0].id);
+        }
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Could not load TikTok integration");
       } finally {
@@ -195,6 +203,7 @@ export default function TikTokPage() {
     try {
       const formData = new FormData();
       formData.set("workspaceId", workspace.id);
+      if (selectedAccountId) formData.set("accountId", selectedAccountId);
       formData.set("mode", mode);
       formData.set("caption", caption);
       formData.set("privacyLevel", privacyLevel);
@@ -244,7 +253,8 @@ export default function TikTokPage() {
     return <div className="flex min-h-[70vh] items-center justify-center"><Loader2 className="h-7 w-7 animate-spin" /></div>;
   }
 
-  const account = accountData?.account;
+  const accounts = accountData?.accounts ?? [];
+  const connected = accounts.length > 0;
   const disclosureReady = !contentDisclosure || ownBrand || brandedContent;
   const brandedPrivacyReady = !brandedContent || privacyLevel !== "SELF_ONLY";
   const durationReady = mode === "draft" || (
@@ -284,24 +294,28 @@ export default function TikTokPage() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between text-base">
                 Login Kit
-                <Badge variant={account ? "default" : "outline"}>{account ? "Connected" : "Not connected"}</Badge>
+                <Badge variant={connected ? "default" : "outline"}>{connected ? "Connected" : "Not connected"}</Badge>
               </CardTitle>
               <CardDescription>OAuth 2.0 authorization with `user.info.basic`.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {account ? (
+              {connected ? (
                 <>
-                  <div className="flex items-center gap-3 rounded-lg border p-4">
-                    <Avatar className="h-12 w-12">
-                      <AvatarImage src={account.avatarUrl || ""} />
-                      <AvatarFallback><Music2 className="h-5 w-5" /></AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium">{account.accountName}</p>
-                      <p className="text-xs text-muted-foreground">Profile loaded from TikTok via `user.info.basic`</p>
+                  {accounts.map((acc) => (
+                    <div key={acc.id} className="flex items-center gap-3 rounded-lg border p-4">
+                      <Avatar className="h-12 w-12">
+                        <AvatarImage src={acc.avatarUrl || ""} />
+                        <AvatarFallback><Music2 className="h-5 w-5" /></AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium">{acc.accountName}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {acc.accountUsername ? `@${acc.accountUsername} · ` : ""}Profile loaded from TikTok via `user.info.basic`
+                        </p>
+                      </div>
+                      <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                     </div>
-                    <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                  </div>
+                  ))}
                   <Button
                     variant="outline"
                     className="w-full"
@@ -309,7 +323,7 @@ export default function TikTokPage() {
                     asChild
                   >
                     <a href={workspace ? `/api/tiktok/connect?workspaceId=${workspace.id}` : "#"}>
-                      <RefreshCw className="mr-2 h-4 w-4" /> Reauthorize TikTok
+                      <Plus className="mr-2 h-4 w-4" /> Add another TikTok account
                     </a>
                   </Button>
                 </>
@@ -330,7 +344,7 @@ export default function TikTokPage() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               {[
-                ["Login Kit", "user.info.basic", !!account],
+                ["Login Kit", "user.info.basic", connected],
                 ["Upload to TikTok", "video.upload", result?.capability === "video.upload"],
                 ["Direct Post", "video.publish", result?.capability === "video.publish"],
               ].map(([product, scope, complete]) => (
@@ -351,12 +365,34 @@ export default function TikTokPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            {!account ? (
+            {!connected ? (
               <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                 Connect a TikTok account to enable posting.
               </div>
             ) : (
               <>
+                {accounts.length > 1 && (
+                  <div className="space-y-2">
+                    <Label htmlFor="tiktok-account">Posting as</Label>
+                    <select
+                      id="tiktok-account"
+                      value={selectedAccountId}
+                      onChange={(event) => {
+                        const nextId = event.target.value;
+                        setSelectedAccountId(nextId);
+                        setCreator(null);
+                        if (workspace) loadCreator(workspace.id, nextId);
+                      }}
+                      className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                    >
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.accountUsername ? `@${acc.accountUsername}` : acc.accountName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
                   <button
                     type="button"

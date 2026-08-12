@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { socialAccounts } from "@/db/schema";
 import {
   fetchTikTokCreatorInfo,
   getTikTokAccountForMember,
@@ -22,6 +25,7 @@ export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     const workspaceId = String(formData.get("workspaceId") || "");
+    const accountId = String(formData.get("accountId") || "");
     const mode = String(formData.get("mode") || "") as "draft" | "direct";
     const caption = String(formData.get("caption") || "").trim();
     const privacyLevel = String(formData.get("privacyLevel") || "");
@@ -77,8 +81,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Connect TikTok first" }, { status: 409 });
     }
 
+    // Multi-account: pick the requested connected account, else fall back to
+    // the first connected one (keeps old single-account behavior).
+    let account = result.account;
+    if (accountId) {
+      const [requested] = await db
+        .select()
+        .from(socialAccounts)
+        .where(
+          and(
+            eq(socialAccounts.workspaceId, workspaceId),
+            eq(socialAccounts.platform, "tiktok"),
+            eq(socialAccounts.id, accountId),
+            eq(socialAccounts.status, "connected")
+          )
+        )
+        .limit(1);
+      if (requested) account = requested;
+    }
+
     if (mode === "direct") {
-      const creator = await fetchTikTokCreatorInfo(result.account.accessToken);
+      const creator = await fetchTikTokCreatorInfo(account.accessToken);
       if (!creator.privacy_level_options.includes(privacyLevel)) {
         return NextResponse.json({ error: "That privacy option is no longer available" }, { status: 409 });
       }
@@ -97,7 +120,7 @@ export async function POST(request: Request) {
     }
 
     const initialized = await initializeTikTokUpload({
-      accessToken: result.account.accessToken,
+      accessToken: account.accessToken,
       mode,
       fileSize: video.size,
       caption,

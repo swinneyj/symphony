@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { socialAccounts } from "@/db/schema";
 import { fetchTikTokCreatorInfo, getTikTokAccountForMember } from "@/lib/tiktok";
 
 export async function GET(request: NextRequest) {
@@ -10,6 +13,7 @@ export async function GET(request: NextRequest) {
   }
 
   const workspaceId = request.nextUrl.searchParams.get("workspaceId");
+  const accountId = request.nextUrl.searchParams.get("accountId");
   if (!workspaceId) {
     return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
   }
@@ -23,7 +27,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Connect TikTok first" }, { status: 409 });
     }
 
-    const creator = await fetchTikTokCreatorInfo(result.account.accessToken);
+    // Multi-account: resolve the requested connected account, else fall back
+    // to the first connected one.
+    let account = result.account;
+    if (accountId) {
+      const [requested] = await db
+        .select()
+        .from(socialAccounts)
+        .where(
+          and(
+            eq(socialAccounts.workspaceId, workspaceId),
+            eq(socialAccounts.platform, "tiktok"),
+            eq(socialAccounts.id, accountId),
+            eq(socialAccounts.status, "connected")
+          )
+        )
+        .limit(1);
+      if (requested) account = requested;
+    }
+
+    const creator = await fetchTikTokCreatorInfo(account.accessToken);
     return NextResponse.json(creator);
   } catch (error) {
     console.error("TikTok creator info error:", error);
