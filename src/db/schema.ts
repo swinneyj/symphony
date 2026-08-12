@@ -439,6 +439,60 @@ export const videoBatchJobs = pgTable("video_batch_jobs", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+/**
+ * Steal This Ad (0008): viral ad reverse-engineering.
+ * A pasted TikTok/product URL is fetched + transcribed by the ads-worker
+ * (yt-dlp + faster-whisper), then LLM-remixed into original scripts that
+ * drop into the existing batch/render pipeline.
+ */
+export const adSources = pgTable("ad_sources", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  sourceUrl: text("source_url").notNull(),
+  platform: text("platform").notNull().default("tiktok"),
+  title: text("title"),
+  authorName: text("author_name"),
+  /** Segments: [{ start, end, text }] filled by the ads-worker. */
+  transcript: jsonb("transcript")
+    .$type<Array<{ start: number; end: number; text: string }>>()
+    .default([]),
+  rawText: text("raw_text"),
+  /** queued → downloading → transcribing → transcribed | failed */
+  status: text("status").notNull().default("queued"),
+  error: text("error"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const adRemixes = pgTable("ad_remixes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  adSourceId: uuid("ad_source_id")
+    .notNull()
+    .references(() => adSources.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  hook: text("hook").notNull(),
+  angle: text("angle"),
+  tone: text("tone").notNull().default("casual"),
+  script: text("script").notNull(),
+  /** draft → rendered (batch created) */
+  status: text("status").notNull().default("draft"),
+  batchId: uuid("batch_id").references(() => videoBatches.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 export const marketProducts = pgTable("market_products", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id")

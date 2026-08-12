@@ -9,6 +9,7 @@ export const config = {
     "/settings/:path*",
     "/ai-studio/:path*",
     "/video-studio/:path*",
+    "/steal-this-ad/:path*",
     "/analytics/:path*",
     "/calendar/:path*",
     "/composer/:path*",
