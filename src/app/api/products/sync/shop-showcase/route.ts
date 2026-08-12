@@ -53,28 +53,33 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // All connected TikTok Shop creator accounts for this workspace.
+    // TikTok accounts that have shop access (metadata.shop) — shop is a
+    // feature of the TikTok account, not a separate account type.
     const connected = await db
       .select({
         id: socialAccounts.id,
-        accessToken: socialAccounts.accessToken,
-        platformAccountId: socialAccounts.platformAccountId,
         accountName: socialAccounts.accountName,
+        metadata: socialAccounts.metadata,
       })
       .from(socialAccounts)
       .where(
         and(
           eq(socialAccounts.workspaceId, workspaceId),
-          eq(socialAccounts.platform, "tiktok_shop"),
+          eq(socialAccounts.platform, "tiktok"),
           eq(socialAccounts.status, "connected")
         )
       );
 
-    if (connected.length === 0) {
+    const shopAccounts = connected.filter((a) => {
+      const shop = (a.metadata ?? {}) as { shop?: { accessToken?: string } };
+      return !!shop.shop?.accessToken;
+    });
+
+    if (shopAccounts.length === 0) {
       return NextResponse.json(
         {
           error:
-            "No TikTok Shop creator connected — connect your creator account in Settings → Connected Accounts first",
+            "No TikTok account has Shop access connected — connect it in Settings → Connected Accounts first",
         },
         { status: 501 }
       );
@@ -115,10 +120,11 @@ export async function POST(request: Request) {
     let grandRemoved = 0;
     const allShopIds = new Map<string, Set<string>>(); // productId -> account ids that have it
 
-    for (const acct of connected) {
+    for (const acct of shopAccounts) {
+      const shop = ((acct.metadata ?? {}) as { shop?: { accessToken?: string } }).shop;
       let creds;
       try {
-        creds = getShopCredentials(acct.accessToken);
+        creds = getShopCredentials(shop?.accessToken);
       } catch (e) {
         accountResults.push({
           name: acct.accountName,
@@ -139,7 +145,7 @@ export async function POST(request: Request) {
         const prevAccountIds = new Set<string>(
           (prior?.metadata?.creatorAccountIds as string[] | undefined) ?? []
         );
-        prevAccountIds.add(acct.platformAccountId);
+        prevAccountIds.add(acct.id);
         const values = {
           name: sp.name.slice(0, 255),
           description: sp.description?.slice(0, 2000) ?? null,
@@ -169,7 +175,7 @@ export async function POST(request: Request) {
         }
 
         const entry = allShopIds.get(sp.id) ?? new Set<string>();
-        entry.add(acct.platformAccountId);
+        entry.add(acct.id);
         allShopIds.set(sp.id, entry);
       }
 
@@ -181,7 +187,7 @@ export async function POST(request: Request) {
         const ids = (e.metadata?.creatorAccountIds as string[] | undefined) ?? [];
         return (
           e.tiktokProductId &&
-          ids.includes(acct.platformAccountId) &&
+          ids.includes(acct.id) &&
           !thisAccountIds.has(e.tiktokProductId)
         );
       });
@@ -190,7 +196,7 @@ export async function POST(request: Request) {
         const ids = new Set<string>(
           (p.metadata?.creatorAccountIds as string[] | undefined) ?? []
         );
-        ids.delete(acct.platformAccountId);
+        ids.delete(acct.id);
         if (ids.size === 0) {
           await db.delete(products).where(eq(products.id, p.id));
         } else {
