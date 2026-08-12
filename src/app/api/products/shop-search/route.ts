@@ -56,29 +56,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    // TikTok accounts that have shop access (metadata.shop) — the search
+    // token comes from the TikTok account, not a separate shop account.
     const connected = await db
-      .select({ accessToken: socialAccounts.accessToken })
+      .select({ id: socialAccounts.id, metadata: socialAccounts.metadata })
       .from(socialAccounts)
       .where(
         and(
           eq(socialAccounts.workspaceId, body.workspaceId),
-          eq(socialAccounts.platform, "tiktok_shop"),
+          eq(socialAccounts.platform, "tiktok"),
           eq(socialAccounts.status, "connected")
         )
-      )
-      .limit(1);
+      );
 
-    if (connected.length === 0) {
+    const shopAccount = connected.find((a) => {
+      const shop = (a.metadata ?? {}) as { shop?: { accessToken?: string } };
+      return !!shop.shop?.accessToken;
+    });
+
+    if (!shopAccount) {
       return NextResponse.json(
         {
           error:
-            "No TikTok Shop creator connected — connect your creator account in Settings → Connected Accounts first",
+            "No TikTok account has Shop access connected — connect it in Settings → Connected Accounts first",
         },
         { status: 501 }
       );
     }
+    const shopToken = ((shopAccount.metadata ?? {}) as { shop?: { accessToken?: string } }).shop
+      ?.accessToken;
 
-    const creds = getShopCredentials(connected[0].accessToken);
+    const creds = getShopCredentials(shopToken);
     const { products, nextPageToken } = await searchShopProducts(creds, {
       keyword: body.keyword,
       sortField: body.sortField,

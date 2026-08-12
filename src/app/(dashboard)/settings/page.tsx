@@ -39,7 +39,7 @@ import { ApiKeysPanel } from "./api-keys-panel";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "x" | "linkedin" | "tiktok_shop";
+type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "x" | "linkedin";
 
 interface RealAccount {
   id: string;
@@ -48,12 +48,19 @@ interface RealAccount {
   accountUsername: string | null;
   avatarUrl: string | null;
   status: string;
+  metadata: Record<string, unknown> | null;
 }
 
-const ACCOUNT_PLATFORMS: Platform[] = ["facebook", "instagram", "tiktok", "youtube", "x", "linkedin", "tiktok_shop"];
+const ACCOUNT_PLATFORMS: Platform[] = ["facebook", "instagram", "tiktok", "youtube", "x", "linkedin"];
 
 function platformKey(p: string): Platform {
   return (p === "twitter" ? "x" : p) as Platform;
+}
+
+/** TikTok Shop access is a feature of a TikTok account (metadata.shop). */
+function shopConnected(account: RealAccount): boolean {
+  const shop = (account.metadata ?? {}) as { shop?: { accessToken?: string } };
+  return !!shop.shop?.accessToken;
 }
 
 /** OAuth entry point per platform: TikTok has its own flow, FB/IG share Meta. */
@@ -63,7 +70,6 @@ function connectHref(p: Platform, workspaceId?: string | null): string {
       ? `/api/tiktok/connect?workspaceId=${encodeURIComponent(workspaceId)}`
       : "/tiktok";
   }
-  if (p === "tiktok_shop") return "/api/auth/tiktok-shop/connect";
   if (p === "youtube") return "/api/auth/youtube/connect";
   if (p === "linkedin") return "/api/auth/linkedin/connect";
   return "/api/auth/meta/connect";
@@ -102,7 +108,6 @@ const platformIcons: Record<Platform, React.ElementType> = {
   facebook: MessageCircle,
   x: Globe,
   linkedin: Briefcase,
-  tiktok_shop: ShoppingBag,
 };
 
 const platformNames: Record<Platform, string> = {
@@ -112,7 +117,6 @@ const platformNames: Record<Platform, string> = {
   facebook: "Facebook",
   x: "X (Twitter)",
   linkedin: "LinkedIn",
-  tiktok_shop: "TikTok Shop",
 };
 
 const platformColors: Record<Platform, string> = {
@@ -122,7 +126,6 @@ const platformColors: Record<Platform, string> = {
   facebook: "bg-blue-600",
   x: "bg-neutral-900 dark:bg-neutral-100",
   linkedin: "bg-blue-700",
-  tiktok_shop: "bg-teal-600",
 };
 
 const NOTIFICATION_DEFS = [
@@ -196,8 +199,12 @@ export default function SettingsPage() {
     const params = new URLSearchParams(window.location.search);
     const err = params.get("error");
     const tiktokErr = params.get("tiktok_error");
+    const shopErr = params.get("tiktok_shop_error");
+    const shopConnected = params.get("tiktok_shop_connected");
     const connected = params.get("connected");
     if (tiktokErr) setNotice({ type: "error", text: tiktokErr });
+    else if (shopErr) setNotice({ type: "error", text: shopErr });
+    else if (shopConnected) setNotice({ type: "success", text: "TikTok Shop access connected" });
     else if (err) setNotice({ type: "error", text: META_ERRORS[err] || `Meta connection failed (${err})` });
     else if (connected === "tiktok") setNotice({ type: "success", text: "TikTok account connected" });
     else if (connected === "youtube") setNotice({ type: "success", text: "YouTube channel connected" });
@@ -536,7 +543,7 @@ export default function SettingsPage() {
                             <div className="h-2 w-2 rounded-full bg-destructive" />
                             <span className="text-xs text-muted-foreground">Disconnected</span>
                           </div>
-                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" || platform === "youtube" || platform === "linkedin" || platform === "tiktok_shop" ? (
+                          {platform === "facebook" || platform === "instagram" || platform === "tiktok" || platform === "youtube" || platform === "linkedin" ? (
                             <Button size="sm" asChild>
                               <a href={connectHref(platform, workspaceId)}>
                                 <Link className="h-3.5 w-3.5 mr-1" />
@@ -571,6 +578,27 @@ export default function SettingsPage() {
                                 {account.accountUsername ? `@${account.accountUsername} · ` : ""}
                                 {display}
                               </p>
+                              {platform === "tiktok" && (
+                                <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                                  {shopConnected(account) ? (
+                                    <span className="inline-flex items-center gap-1 font-medium text-emerald-600">
+                                      <ShoppingBag className="h-3.5 w-3.5" /> TikTok Shop connected
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <a
+                                        href={`/api/auth/tiktok-shop/connect?accountId=${account.id}`}
+                                        className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline"
+                                      >
+                                        <ShoppingBag className="h-3.5 w-3.5" /> Connect TikTok Shop
+                                      </a>
+                                      <span className="text-muted-foreground">
+                                        (shop access for this account)
+                                      </span>
+                                    </>
+                                  )}
+                                </p>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center justify-between gap-3 sm:justify-end">

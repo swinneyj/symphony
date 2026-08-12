@@ -2,14 +2,15 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { socialAccounts, workspaceMembers, workspaces } from "@/db/schema";
-import { and, desc, eq } from "drizzle-orm";
+import { socialAccounts } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { exchangeCreatorCode, getShopCredentials } from "@/lib/tiktok-shop";
 
 /**
  * GET /api/auth/tiktok-shop/callback?code=…&state=…
- * Exchanges the creator auth code for tokens and stores ONE social_accounts
- * row per creator open_id (append-only — multiple creators supported).
+ * Exchanges the creator auth code for tokens and stores them in the
+ * `metadata.shop` of the TikTok account row that started the flow
+ * (shop access is a feature OF a TikTok account, not a separate account).
  */
 export async function GET(request: Request) {
   const origin = new URL(request.url).origin;
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
 
     const cookieStore = await cookies();
     const storedRaw = cookieStore.get("tiktok_shop_oauth_state")?.value;
-    let stored: { state?: string } | null = null;
+    let stored: { state?: string; accountId?: string } | null = null;
     try {
       stored = storedRaw ? JSON.parse(storedRaw) : null;
     } catch {
@@ -47,16 +48,26 @@ export async function GET(request: Request) {
       );
     }
 
-    // First workspace the user belongs to (matches other connect routes).
-    const membership = await db
-      .select({ workspaceId: workspaceMembers.workspaceId })
-      .from(workspaceMembers)
-      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-      .where(eq(workspaceMembers.userId, session.user.id))
-      .orderBy(desc(workspaces.createdAt))
+    // The TikTok account row this shop access belongs to.
+    const accountId = stored.accountId;
+    if (!accountId) {
+      return NextResponse.redirect(
+        `${origin}/settings?tab=accounts&tiktok_shop_error=${encodeURIComponent(
+          "Missing account binding — start again from Settings → Accounts"
+        )}`
+      );
+    }
+    const [target] = await db
+      .select()
+      .from(socialAccounts)
+      .where(eq(socialAccounts.id, accountId))
       .limit(1);
-    if (!membership[0]) {
-      return NextResponse.json({ error: "No workspace for user" }, { status: 404 });
+    if (!target || target.platform !== "tiktok") {
+      return NextResponse.redirect(
+        `${origin}/settings?tab=accounts&tiktok_shop_error=${encodeURIComponent(
+          "TikTok account not found — reconnect the TikTok account first"
+        )}`
+      );
     }
 
     let creds;
@@ -76,51 +87,26 @@ export async function GET(request: Request) {
       code,
     });
 
-    const expiresAt = token.accessTokenExpireIn
-      ? new Date(token.accessTokenExpireIn * 1000)
-      : null;
-    const refreshExpiresAt = token.refreshTokenExpireIn
-      ? new Date(token.refreshTokenExpireIn * 1000)
-      : null;
-
-    const existing = await db
-      .select({ id: socialAccounts.id })
-      .from(socialAccounts)
-      .where(
-        and(
-          eq(socialAccounts.workspaceId, membership[0].workspaceId),
-          eq(socialAccounts.platform, "tiktok_shop"),
-          eq(socialAccounts.platformAccountId, token.openId)
-        )
-      )
-      .limit(1);
-
-    if (existing[0]) {
-      await db
-        .update(socialAccounts)
-        .set({
-          accountName: "TikTok Shop Creator",
-          accessToken: token.accessToken,
-          refreshToken: token.refreshToken,
-          tokenExpiresAt: expiresAt,
-          metadata: { refreshExpiresAt: refreshExpiresAt?.toISOString(), type: "tiktok_shop_creator" },
-          status: "connected",
-          updatedAt: new Date(),
-        })
-        .where(eq(socialAccounts.id, existing[0].id));
-    } else {
-      await db.insert(socialAccounts).values({
-        workspaceId: membership[0].workspaceId,
-        platform: "tiktok_shop",
-        platformAccountId: token.openId,
-        accountName: "TikTok Shop Creator",
-        accessToken: token.accessToken,
-        refreshToken: token.refreshToken,
-        tokenExpiresAt: expiresAt,
-        status: "connected",
-        metadata: { refreshExpiresAt: refreshExpiresAt?.toISOString(), type: "tiktok_shop_creator" },
-      });
-    }
+    // Fold shop tokens into the TikTok account's metadata — the account row
+    // keeps platform='tiktok' and the shop feature is visible via metadata.shop.
+    const existingMetadata = (target.metadata ?? {}) as Record<string, unknown>;
+    await db
+      .update(socialAccounts)
+      .set({
+        metadata: {
+          ...existingMetadata,
+          shop: {
+            accessToken: token.accessToken,
+            refreshToken: token.refreshToken,
+            openId: token.openId,
+            accessTokenExpireIn: token.accessTokenExpireIn,
+            refreshTokenExpireIn: token.refreshTokenExpireIn,
+            connectedAt: new Date().toISOString(),
+          },
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(socialAccounts.id, accountId));
 
     return NextResponse.redirect(
       `${origin}/settings?tab=accounts&tiktok_shop_connected=1`
