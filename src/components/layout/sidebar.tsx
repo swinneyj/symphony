@@ -28,6 +28,7 @@ import {
   Sparkles,
   Music2,
   Clapperboard,
+  Ghost,
   X,
 } from "lucide-react";
 
@@ -41,6 +42,7 @@ const navigation = [
   { name: "Media Library", href: "/media", icon: Image },
   { name: "AI Studio", href: "/ai-studio", icon: Sparkles },
   { name: "Video Studio", href: "/video-studio", icon: Clapperboard },
+  { name: "Steal This Ad", href: "/steal-this-ad", icon: Ghost },
   { name: "Workspaces", href: "/workspaces", icon: Users },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
