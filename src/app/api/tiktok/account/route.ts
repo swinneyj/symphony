@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { socialAccounts } from "@/db/schema";
 import { getTikTokAccountForMember, TIKTOK_SCOPES } from "@/lib/tiktok";
 
 export async function GET(request: NextRequest) {
@@ -19,22 +22,33 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const account = result.account
-    ? {
-        id: result.account.id,
-        accountName: result.account.accountName,
-        accountUsername: result.account.accountUsername,
-        avatarUrl: result.account.avatarUrl,
-        status: result.account.status,
-        metadata: result.account.metadata,
-        updatedAt: result.account.updatedAt,
-      }
-    : null;
+  // Every connected TikTok account for this workspace (multi-account).
+  const rows = await db
+    .select()
+    .from(socialAccounts)
+    .where(
+      and(
+        eq(socialAccounts.workspaceId, workspaceId),
+        eq(socialAccounts.platform, "tiktok"),
+        eq(socialAccounts.status, "connected")
+      )
+    )
+    .orderBy(socialAccounts.createdAt);
+
+  const accounts = rows.map((account) => ({
+    id: account.id,
+    accountName: account.accountName,
+    accountUsername: account.accountUsername,
+    avatarUrl: account.avatarUrl,
+    status: account.status,
+    metadata: account.metadata,
+    updatedAt: account.updatedAt,
+  }));
 
   return NextResponse.json({
     environment: "Production",
     products: ["Login Kit", "Content Posting API"],
     scopes: TIKTOK_SCOPES,
-    account,
+    accounts,
   });
 }
