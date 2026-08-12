@@ -587,7 +587,7 @@ export default function SettingsPage() {
                                   ) : (
                                     <>
                                       <a
-                                        href={`/api/auth/tiktok-shop/connect?accountId=${account.id}`}
+                                        href={`/api/auth/tiktok-shop/connect?accountId=${account.id}&workspaceId=${encodeURIComponent(workspaceId ?? "")}`}
                                         className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline"
                                       >
                                         <ShoppingBag className="h-3.5 w-3.5" /> Connect TikTok Shop

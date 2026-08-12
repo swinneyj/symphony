@@ -3,15 +3,18 @@ import { cookies } from "next/headers";
 import { randomUUID } from "crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { socialAccounts, workspaceMembers, workspaces } from "@/db/schema";
-import { and, desc, eq } from "drizzle-orm";
+import { socialAccounts, workspaceMembers } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { buildCreatorAuthUrl } from "@/lib/tiktok-shop";
 
 /**
- * GET /api/auth/tiktok-shop/connect?accountId=<tiktok social_accounts id>
+ * GET /api/auth/tiktok-shop/connect?accountId=<tiktok social_accounts id>&workspaceId=<ws>
  * Starts the TikTok Shop creator OAuth flow for ONE TikTok account (the
  * shop feature lives ON a TikTok account — no separate shop account rows).
- * Binds state + accountId via httpOnly cookie, redirects to creator auth.
+ * Binds state + accountId + workspaceId via httpOnly cookie, redirects to
+ * creator auth. workspaceId pins the account lookup (the settings page
+ * shows accounts for the ACTIVE workspace, which may not be the newest —
+ * guessing newest-first 404s, see workspace-resolution.md).
  */
 export async function GET(request: Request) {
   try {
@@ -22,24 +25,34 @@ export async function GET(request: Request) {
 
     const url = new URL(request.url);
     const accountId = url.searchParams.get("accountId");
+    const workspaceId = url.searchParams.get("workspaceId");
     if (!accountId) {
       return NextResponse.json(
         { error: "accountId is required — pick which TikTok account gets shop access" },
         { status: 400 }
       );
     }
+    if (!workspaceId) {
+      return NextResponse.json(
+        { error: "workspaceId is required — reload Settings → Accounts and try again" },
+        { status: 400 }
+      );
+    }
 
-    // The target row must be a connected tiktok account in a workspace the
-    // user belongs to (shop access attaches to the TikTok account).
-    const [membership] = await db
+    // The target row must be a connected tiktok account in THAT workspace
+    // (shop access attaches to the TikTok account the user is looking at).
+    const membership = await db
       .select({ workspaceId: workspaceMembers.workspaceId })
       .from(workspaceMembers)
-      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-      .where(eq(workspaceMembers.userId, session.user.id))
-      .orderBy(desc(workspaces.createdAt))
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, session.user.id)
+        )
+      )
       .limit(1);
-    if (!membership) {
-      return NextResponse.json({ error: "No workspace for user" }, { status: 404 });
+    if (!membership[0]) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const [target] = await db
       .select({ id: socialAccounts.id })
@@ -47,7 +60,7 @@ export async function GET(request: Request) {
       .where(
         and(
           eq(socialAccounts.id, accountId),
-          eq(socialAccounts.workspaceId, membership.workspaceId),
+          eq(socialAccounts.workspaceId, workspaceId),
           eq(socialAccounts.platform, "tiktok"),
           eq(socialAccounts.status, "connected")
         )
