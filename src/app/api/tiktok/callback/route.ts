@@ -79,7 +79,8 @@ export async function GET(request: NextRequest) {
       .where(
         and(
           eq(socialAccounts.workspaceId, oauthState.workspaceId),
-          eq(socialAccounts.platform, "tiktok")
+          eq(socialAccounts.platform, "tiktok"),
+          eq(socialAccounts.platformAccountId, user.open_id)
         )
       )
       .limit(1);
