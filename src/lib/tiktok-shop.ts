@@ -143,6 +143,7 @@ export type ShopProduct = {
   price?: string;
   currency?: string;
   mainImageUrl?: string;
+  mainVideoUrl?: string;
   status?: string;
   sellerName?: string;
   detailLink?: string;
@@ -167,6 +168,11 @@ type ShopApiResponse = {
           maximum_amount?: string | number;
           currency?: string;
         };
+      };
+      main_video?: {
+        url?: string;
+        duration?: number;
+        cover?: string;
       };
       status?: {
         inventory_status?: string;
@@ -214,6 +220,7 @@ function mapShopProduct(p: ShopApiProduct): ShopProduct {
         : undefined,
     currency: p.price?.original_price?.currency ?? "USD",
     mainImageUrl: imageUrl ?? undefined,
+    mainVideoUrl: p.main_video?.url ?? undefined,
     status: p.status?.added_status ?? p.status?.inventory_status ?? undefined,
     sellerName: p.shop?.name,
     detailLink: p.detail_link,

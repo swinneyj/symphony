@@ -457,6 +457,9 @@ export const adSources = pgTable("ad_sources", {
   platform: text("platform").notNull().default("tiktok"),
   title: text("title"),
   authorName: text("author_name"),
+  /** For product sources with a shop main video: the CDN URL the worker
+   * downloads directly (DC-IP safe). Null for video/upload/web sources. */
+  videoUrl: text("video_url"),
   /** Segments: [{ start, end, text }] filled by the ads-worker. */
   transcript: jsonb("transcript")
     .$type<Array<{ start: number; end: number; text: string }>>()

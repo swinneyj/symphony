@@ -5,6 +5,7 @@ import { adSources, adRemixes } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { restructureAd } from "@/lib/ads/restructure";
+import { resolveProductLink } from "@/lib/ads/product-link";
 
 /**
  * POST /api/ads/steal/[id]/remix — { variants?, tone? }
@@ -34,7 +35,7 @@ export async function POST(
     if (!(await hasWorkspaceAccess(source.workspaceId, session.user.id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const isProduct = source.platform === "product" || source.status === "fetched";
+    const isProduct = source.platform === "product";
     if (!source.rawText?.trim()) {
       return NextResponse.json(
         { error: "Source has no content to remix" },
@@ -47,19 +48,30 @@ export async function POST(
         { status: 409 }
       );
     }
-    if (isProduct && source.status !== "fetched") {
-      return NextResponse.json(
-        { error: "Product info is not resolved yet" },
-        { status: 409 }
-      );
-    }
 
     const body = await request.json().catch(() => null);
     const variants = body?.variants ?? 3;
     const tone = typeof body?.tone === "string" ? body.tone : undefined;
     const userId = session.user.id;
 
-    const remixes = await restructureAd(source.rawText, {
+    // Product sources: rebuild the product brief (fresh og tags from the
+    // product page) and append the shop video transcript when the worker
+    // transcribed one — remixes sell the product, informed by its own VO.
+    let input = source.rawText;
+    if (isProduct) {
+      const brief = await resolveProductLink(source.sourceUrl)
+        .then((p) => p?.brief ?? `Product: ${source.title ?? ""}`)
+        .catch(() => `Product: ${source.title ?? ""}`);
+      const parts = [brief];
+      if (source.status === "transcribed" && source.rawText?.trim()) {
+        parts.push(
+          `Shop video transcript:\n"""${source.rawText.trim().slice(0, 4000)}"""`
+        );
+      }
+      input = parts.join("\n\n");
+    }
+
+    const remixes = await restructureAd(input, {
       variants,
       tone,
       mode: isProduct ? "product" : "transcript",
