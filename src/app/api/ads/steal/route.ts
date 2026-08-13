@@ -4,6 +4,11 @@ import { db } from "@/db";
 import { adSources, adRemixes } from "@/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
+import { findProductMainVideo, resolveProductLink } from "@/lib/ads/product-link";
+
+// Product-link resolution does a few bounded external fetches (redirect,
+// product page, shop API) — allow up to a minute.
+export const maxDuration = 60;
 
 /**
  * Steal This Ad
@@ -51,94 +56,35 @@ export async function POST(request: Request) {
 
     // Product-link detection: TikTok share links (/t/<id>, vm.tiktok.com)
     // can 301 to a Shop PRODUCT page (/view/product/<pid>) instead of a
-    // video. Those have no video to download — resolve product info now and
-    // let the remix engine write scripts from product facts (status fetched).
-    const UA =
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-      "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+    // video. Resolve the product brief now; if the connected Shop account
+    // exposes the product's MAIN VIDEO, queue it for the worker (CDN
+    // download + transcription) so remixes combine facts + shop-video VO.
+    // Otherwise store brief-only (status fetched) — remix from facts alone.
     let sourceUrl = parsed.toString();
     let title: string | null = null;
     let rawText: string | null = null;
+    let videoUrl: string | null = null;
     let status = "queued";
 
-    if (isTikTok && platform !== "upload" && /\/t\/|\/view\/product\//.test(parsed.pathname)) {
-      try {
-        const redir = await fetch(sourceUrl, {
-          redirect: "manual",
-          headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9" },
-          signal: AbortSignal.timeout(10_000),
-        });
-        const location = redir.headers.get("location") ?? "";
-        const productMatch =
-          location.match(/\/view\/product\/(\d+)/) ??
-          parsed.pathname.match(/\/view\/product\/(\d+)/);
-        if (productMatch) {
-          const productId = productMatch[1];
-          sourceUrl = `https://www.tiktok.com/view/product/${productId}`;
-          // The 301 Location leaks og_info (title + image) — free metadata.
-          const ogInfo = (() => {
-            const m = location.match(/og_info=([^&]+)/);
-            if (!m) return {} as { title?: string; image?: string };
-            try {
-              const parsed = JSON.parse(decodeURIComponent(m[1])) as {
-                title?: string;
-                image?: string;
-              };
-              // og_info is form-encoded: "+" means space.
-              return {
-                title: parsed.title?.replace(/\+/g, " "),
-                image: parsed.image?.replace(/\+/g, " "),
-              };
-            } catch {
-              return {} as { title?: string; image?: string };
-            }
-          })();
-          // Try to enrich with og:title/description/image from the product
-          // page (datacenter IPs usually get it; fall back to redirect info).
-          let name = ogInfo.title ?? "";
-          let description = "";
-          let image = ogInfo.image ?? "";
-          try {
-            const page = await fetch(sourceUrl, {
-              headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9" },
-              signal: AbortSignal.timeout(15_000),
-            });
-            const html = await page.text();
-            const ogTag = (name: string) =>
-              html.match(
-                new RegExp(
-                  `<meta[^>]+(?:property|name)="og:${name}"[^>]+content="([^"]*)"`,
-                  "i"
-                )
-              )?.[1] ??
-              html.match(
-                new RegExp(
-                  `<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="og:${name}"`,
-                  "i"
-                )
-              )?.[1] ??
-              "";
-            name = ogTag("title") || name;
-            description = ogTag("description");
-            image = ogTag("image") || image;
-          } catch {
-            // product page optional — redirect og_info already gives us title+image
-          }
-          const cleanName = (name || "TikTok Shop product").trim();
-          title = cleanName.slice(0, 300);
-          rawText = [
-            `Product: ${cleanName}`,
-            description && `Description: ${description}`,
-            image && `Product image: ${image}`,
-          ]
-            .filter(Boolean)
-            .join("\n\n")
-            .slice(0, 4000);
+    if (isTikTok && platform !== "upload") {
+      const product = await resolveProductLink(sourceUrl).catch(() => null);
+      if (product) {
+        sourceUrl = product.sourceUrl;
+        title = product.title;
+        rawText = product.brief;
+        platform = "product";
+        const mainVideo = await findProductMainVideo(
+          workspaceId,
+          product.productId,
+          product.title
+        ).catch(() => null);
+        if (mainVideo) {
+          videoUrl = mainVideo;
+          rawText = null; // worker fills raw_text with the shop video transcript
+          status = "queued";
+        } else {
           status = "fetched";
-          platform = "product";
         }
-      } catch {
-        // resolution failure → fall through to the normal worker path
       }
     }
 
@@ -151,6 +97,7 @@ export async function POST(request: Request) {
         platform,
         title,
         rawText,
+        videoUrl,
         status,
       })
       .returning();

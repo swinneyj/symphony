@@ -80,7 +80,7 @@ def claim(cur, limit):
           LIMIT %s
           FOR UPDATE SKIP LOCKED
         )
-        RETURNING id, workspace_id, source_url, platform
+        RETURNING id, workspace_id, source_url, video_url, platform
         """,
         (limit,),
     )
@@ -196,6 +196,30 @@ def download_video(url, workdir, platform, blob_token):
                 fh.write(chunk)
         return video_path, None, None
 
+    if platform == "product":
+        # Shop main video: a direct CDN URL (ttcdn/v16…) resolved by the app
+        # at paste time. DC-IP safe — plain requests, no yt-dlp needed.
+        resp = requests.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                ),
+                "Referer": "https://www.tiktok.com/",
+            },
+            timeout=90,
+            stream=True,
+        )
+        resp.raise_for_status()
+        video_path = os.path.join(workdir, "video.mp4")
+        with open(video_path, "wb") as fh:
+            for chunk in resp.iter_content(chunk_size=1 << 16):
+                fh.write(chunk)
+        if os.path.getsize(video_path) == 0:
+            raise RuntimeError("downloaded product video is empty")
+        return video_path, None, None
+
     if platform == "tiktok":
         # yt-dlp's web extractor is bot-challenged from this VPS IP; the
         # direct page-parse path works (see download_tiktok_direct).
@@ -275,10 +299,13 @@ def transcribe(wav_path):
     return segs, " ".join(raw)
 
 
-def process_row(conn, cur, source_id, source_url, platform):
+def process_row(conn, cur, source_id, source_url, video_url, platform):
     workdir = tempfile.mkdtemp(prefix="ads-worker-")
     try:
-        video_path, title, author = download_video(source_url, workdir, platform, BLOB_TOKEN)
+        # Product sources carry the shop main video in video_url (a direct
+        # CDN URL, DC-IP safe); everything else downloads from source_url.
+        dl_url = video_url if (platform == "product" and video_url) else source_url
+        video_path, title, author = download_video(dl_url, workdir, platform, BLOB_TOKEN)
         mark_transcribing(cur, source_id)
         conn.commit()
         wav_path = extract_audio(video_path, workdir)
@@ -319,8 +346,8 @@ def tick():
             conn.commit()
         rows = claim(cur, CONCURRENCY)
         conn.commit()
-        for source_id, _ws, source_url, platform in rows:
-            process_row(conn, cur, source_id, source_url, platform)
+        for source_id, _ws, source_url, video_url, platform in rows:
+            process_row(conn, cur, source_id, source_url, video_url, platform)
     finally:
         conn.close()
 
