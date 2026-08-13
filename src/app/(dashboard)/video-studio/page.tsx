@@ -21,6 +21,7 @@ import {
   Workflow,
   Send,
   Search,
+  Waves,
   Copy,
   Check,
   Share2,
@@ -155,7 +156,7 @@ export default function VideoStudioPage() {
             <Package className="h-4 w-4" /> Products
           </TabsTrigger>
           <TabsTrigger value="discover" className="gap-1.5 shrink-0">
-            <Search className="h-4 w-4" /> Discover
+            <Waves className="h-4 w-4" /> Swell
           </TabsTrigger>
           <TabsTrigger value="formulas" className="gap-1.5 shrink-0">
             <Wand2 className="h-4 w-4" /> Formulas
@@ -559,6 +560,228 @@ type DiscoverError = {
   message: string;
 } | null;
 
+// ─── Swell meter ─────────────────────────────────────────────────────────────
+
+type SwellMover = {
+  sourceProductId: string;
+  name: string;
+  imageUrl?: string | null;
+  price?: string | null;
+  currency?: string | null;
+  rank: number | null;
+  prevRank: number | null;
+  delta: number | null;
+  watched: boolean;
+};
+
+function SwellMeter({
+  workspaceId,
+  onAdd,
+}: {
+  workspaceId: string;
+  onAdd: (p: DiscoverProduct) => Promise<void>;
+}) {
+  const [movers, setMovers] = useState<SwellMover[]>([]);
+  const [state, setState] = useState<"loading" | "warming" | "ready" | "error">(
+    "loading"
+  );
+  const [watching, setWatching] = useState<string | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/market/swell?workspaceId=${workspaceId}&limit=8`
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Swell meter failed");
+        if (cancelled) return;
+        setMovers((data.rows ?? []) as SwellMover[]);
+        setState(data.ready ? "ready" : "warming");
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  const toggleWatch = async (m: SwellMover) => {
+    setWatching(m.sourceProductId);
+    try {
+      if (m.watched) {
+        await fetch(
+          `/api/market/watchlist?workspaceId=${workspaceId}&source=tiktok_shop&sourceProductId=${m.sourceProductId}`,
+          { method: "DELETE" }
+        );
+      } else {
+        await fetch("/api/market/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            source: "tiktok_shop",
+            sourceProductId: m.sourceProductId,
+            name: m.name,
+            imageUrl: m.imageUrl,
+          }),
+        });
+      }
+      setMovers((prev) =>
+        prev.map((x) =>
+          x.sourceProductId === m.sourceProductId
+            ? { ...x, watched: !m.watched }
+            : x
+        )
+      );
+    } catch {
+      toast.error("Watch update failed");
+    } finally {
+      setWatching(null);
+    }
+  };
+
+  const handleAdd = async (m: SwellMover) => {
+    setAdding(m.sourceProductId);
+    try {
+      await onAdd({
+        id: m.sourceProductId,
+        name: m.name,
+        price: m.price,
+        currency: m.currency,
+        mainImageUrl: m.imageUrl,
+      });
+    } finally {
+      setAdding(null);
+    }
+  };
+
+  const fmtPrice = (m: SwellMover) => {
+    if (!m.price) return "—";
+    return m.currency === "USD" || !m.currency
+      ? `$${m.price}`
+      : `${m.price} ${m.currency}`;
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Waves className="h-4 w-4 text-sky-500" /> Swell meter
+        </CardTitle>
+        <CardDescription>
+          Biggest movers in the TikTok Shop SALE rankings — spot them before
+          they blow up.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {state === "loading" && (
+          <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Reading the swell…
+          </div>
+        )}
+        {state === "warming" && (
+          <p className="py-2 text-sm text-muted-foreground">
+            Swell is warming up — daily SALE-rank snapshots start the moment
+            your TikTok Shop account is connected, and movers appear after two
+            snapshots.
+          </p>
+        )}
+        {state === "error" && (
+          <p className="py-2 text-sm text-muted-foreground">
+            Swell meter is unavailable right now.
+          </p>
+        )}
+        {state === "ready" && movers.length === 0 && (
+          <p className="py-2 text-sm text-muted-foreground">
+            No movement detected in the latest snapshot — check back tomorrow.
+          </p>
+        )}
+        {state === "ready" && movers.length > 0 && (
+          <ul className="space-y-1.5">
+            {movers.map((m) => (
+              <li
+                key={m.sourceProductId}
+                className="flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2"
+              >
+                <div className="h-9 w-9 shrink-0 overflow-hidden rounded-md bg-zinc-100">
+                  {m.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={m.imageUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center">
+                      <Package className="h-4 w-4 text-muted-foreground/40" />
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{m.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {fmtPrice(m)}
+                    {m.rank != null ? ` · rank #${m.rank}` : ""}
+                  </p>
+                </div>
+                {m.delta != null && m.delta !== 0 ? (
+                  <Badge
+                    variant="outline"
+                    className={
+                      m.delta > 0
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-red-200 bg-red-50 text-red-700"
+                    }
+                  >
+                    {m.delta > 0 ? "▲" : "▼"} {Math.abs(m.delta)}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline">—</Badge>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={() => toggleWatch(m)}
+                  disabled={watching === m.sourceProductId}
+                  title={m.watched ? "Unwatch" : "Watch trajectory"}
+                >
+                  <Star
+                    className={`h-4 w-4 ${
+                      m.watched
+                        ? "fill-amber-400 text-amber-500"
+                        : "text-muted-foreground"
+                    }`}
+                  />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={() => handleAdd(m)}
+                  disabled={adding === m.sourceProductId}
+                  title="Add to products"
+                >
+                  {adding === m.sourceProductId ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function DiscoverTab({
   workspaceId,
   onAdded,
@@ -664,6 +887,18 @@ function DiscoverTab({
 
   return (
     <div className="space-y-4">
+      <div>
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <Waves className="h-5 w-5 text-sky-500" /> Swell
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Catch the wave before it breaks — find rising products, watch their
+          momentum, grab the best link.
+        </p>
+      </div>
+
+      <SwellMeter workspaceId={workspaceId} onAdd={handleAdd} />
+
       <div className="flex flex-wrap items-center gap-2">
         <Input
           placeholder="Search TikTok Shop products… e.g. stadium chair, cooling towel"
