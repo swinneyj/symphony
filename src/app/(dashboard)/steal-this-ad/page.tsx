@@ -100,6 +100,7 @@ export default function StealThisAdPage() {
   const [renderVoiceId, setRenderVoiceId] = useState("");
   const [renderFor, setRenderFor] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const renderCardRef = useRef<HTMLDivElement>(null);
 
   // Resolve the active workspace (same pattern as Video Studio).
   useEffect(() => {
@@ -262,19 +263,35 @@ export default function StealThisAdPage() {
   const openRender = async (remixId: string) => {
     if (!workspaceId) return;
     setRenderFor(remixId);
-    const [p, v] = await Promise.all([
-      fetch(`/api/products?workspaceId=${workspaceId}`),
-      fetch(`/api/voices?workspaceId=${workspaceId}`),
-    ]);
-    if (p.ok) {
-      const rows = (await p.json()) as Product[];
-      setProducts(rows.filter((r) => r.status === "ready"));
-      setRenderProductId(rows[0]?.id ?? "");
-    }
-    if (v.ok) {
-      const rows = (await v.json()) as Voice[];
-      setVoices(rows);
-      setRenderVoiceId(rows[0]?.id ?? "");
+    // The render card sits below the remix grid — bring it into view so the
+    // click gives visible feedback instead of looking like a no-op.
+    requestAnimationFrame(() =>
+      renderCardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+    );
+    try {
+      const [p, v] = await Promise.all([
+        fetch(`/api/products?workspaceId=${workspaceId}`),
+        fetch(`/api/voices?workspaceId=${workspaceId}`),
+      ]);
+      if (p.ok) {
+        const rows = (await p.json()) as Product[];
+        const ready = rows.filter((r) => r.status === "ready");
+        setProducts(ready);
+        // Default to the FIRST READY product — never an unfiltered row
+        // (a raw/processing product would silently queue a doomed batch).
+        setRenderProductId(ready[0]?.id ?? "");
+      }
+      if (v.ok) {
+        const rows = (await v.json()) as Voice[];
+        setVoices(rows);
+        setRenderVoiceId(rows[0]?.id ?? "");
+      }
+      if (!p.ok || !v.ok) {
+        toast.error("Could not load render options — try again");
+      }
+    } catch (error) {
+      console.error("openRender failed:", error);
+      toast.error("Could not load render options");
     }
   };
 
@@ -529,6 +546,7 @@ export default function StealThisAdPage() {
                 </div>
 
                 {renderFor && (
+                  <div ref={renderCardRef}>
                   <Card className="border-primary/40">
                     <CardContent className="space-y-3 p-4">
                       <h3 className="text-sm font-medium">Render this remix</h3>
@@ -581,6 +599,7 @@ export default function StealThisAdPage() {
                       </div>
                     </CardContent>
                   </Card>
+                  </div>
                 )}
               </>
             )}
