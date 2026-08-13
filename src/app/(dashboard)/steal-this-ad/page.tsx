@@ -296,7 +296,11 @@ export default function StealThisAdPage() {
   };
 
   const render = async () => {
-    if (!selectedId || !renderFor || !renderProductId) return;
+    if (!selectedId || !renderFor) return;
+    if (!renderProductId) {
+      toast.error("No ready product selected — add/finalize a product in Products first");
+      return;
+    }
     setRenderingId(renderFor);
     try {
       const res = await fetch(`/api/ads/steal/${selectedId}/remix/${renderFor}/render`, {
@@ -318,6 +322,10 @@ export default function StealThisAdPage() {
       await loadDetail(selectedId);
       toast.success("Rendering started — track it in Video Studio");
       window.open(`/video-studio?batch=${batchId}`, "_blank");
+    } catch (error) {
+      // Network-level failure (timeout, dropped connection) — never silent.
+      console.error("render failed:", error);
+      toast.error("Render request failed — try again");
     } finally {
       setRenderingId(null);
     }
@@ -586,7 +594,7 @@ export default function StealThisAdPage() {
                       <div className="flex gap-2">
                         <Button
                           onClick={render}
-                          disabled={renderingId === renderFor || !renderProductId}
+                          disabled={renderingId === renderFor}
                         >
                           {renderingId === renderFor && (
                             <Loader2 className="h-4 w-4 animate-spin" />
