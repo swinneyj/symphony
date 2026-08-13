@@ -24,6 +24,17 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
+/** Decode the HTML entities TikTok's og tags love to escape (&amp; etc.). */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
 export type ResolvedProductLink = {
   sourceUrl: string;
   productId: string;
@@ -59,8 +70,8 @@ async function fetchOgTags(pageUrl: string): Promise<{
       )?.[1] ??
       "";
     return {
-      title: ogTag("title"),
-      description: ogTag("description"),
+      title: decodeEntities(ogTag("title")),
+      description: decodeEntities(ogTag("description")),
       image: ogTag("image"),
     };
   } catch {

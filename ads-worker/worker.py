@@ -299,6 +299,56 @@ def transcribe(wav_path):
     return segs, " ".join(raw)
 
 
+def fetch_product_brief(url):
+    """Best-effort og:title/description/image brief for a TikTok Shop
+    product page — used when the shop main video can't be downloaded."""
+    try:
+        UA = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        )
+        resp = requests.get(
+            url,
+            headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        html = resp.text
+        og = lambda name: (  # noqa: E731
+            re.search(
+                rf'<meta[^>]+(?:property|name)="og:{name}"[^>]+content="([^"]*)"',
+                html, re.I,
+            )
+            or re.search(
+                rf'<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="og:{name}"',
+                html, re.I,
+            )
+        )
+        title_m = og("title")
+        title = (title_m.group(1) if title_m else "").strip()
+        desc_m = og("description")
+        description = desc_m.group(1) if desc_m else ""
+        img_m = og("image")
+        image = img_m.group(1) if img_m else ""
+        import html as _html
+
+        title = _html.unescape(title)
+        description = _html.unescape(description)
+        if not title:
+            return None
+        return "\n\n".join(
+            part
+            for part in [
+                f"Product: {title}",
+                f"Description: {description}" if description else "",
+                f"Product image: {image}" if image else "",
+            ]
+            if part
+        )[:4000]
+    except Exception:  # noqa: BLE001 — brief is best-effort
+        return None
+
+
 def process_row(conn, cur, source_id, source_url, video_url, platform):
     workdir = tempfile.mkdtemp(prefix="ads-worker-")
     try:
@@ -325,6 +375,24 @@ def process_row(conn, cur, source_id, source_url, video_url, platform):
         conn.commit()
         print(f"[ads-worker] transcribed source={source_id} segments={len(segs)} words={len(raw_text.split())}")
     except Exception as e:  # noqa: BLE001 — report any failure on the row
+        # Shop main video unavailable (no video on listing / CDN refused):
+        # fall back to a brief-only source so the row stays usable.
+        if platform == "product":
+            brief = fetch_product_brief(source_url)
+            if brief:
+                conn.rollback()
+                cur.execute(
+                    "UPDATE ad_sources SET status = 'fetched', raw_text = %s, "
+                    "error = NULL, updated_at = now() WHERE id = %s",
+                    (brief, source_id),
+                )
+                conn.commit()
+                print(
+                    f"[ads-worker] shop video unavailable, fell back to brief-only "
+                    f"source={source_id}: {e}",
+                    file=sys.stderr,
+                )
+                return
         conn.rollback()
         cur.execute(
             "UPDATE ad_sources SET status = 'failed', error = %s, updated_at = now() WHERE id = %s",
