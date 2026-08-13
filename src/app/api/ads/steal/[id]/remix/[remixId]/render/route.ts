@@ -79,6 +79,15 @@ export async function POST(
         { status: 404 }
       );
     }
+    // A raw/processing product has no footage — never queue a doomed batch.
+    if (product.status !== "ready") {
+      return NextResponse.json(
+        {
+          error: `Product "${product.name}" is not ready yet (status: ${product.status}) — finalize it in Products first`,
+        },
+        { status: 400 }
+      );
+    }
 
     // Voice (optional) must exist.
     if (voiceId) {
