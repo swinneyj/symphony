@@ -14,6 +14,7 @@ Status flow: queued → downloading → transcribing → transcribed | failed
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -100,6 +101,82 @@ def mark_transcribing(cur, source_id):
     )
 
 
+def download_tiktok_direct(url, workdir):
+    """TikTok video download that works from datacenter IPs.
+
+    yt-dlp's TikTok web extractor gets bot-challenged from this VPS IP
+    ("Unexpected response from webpage request" — TikTok serves a stripped
+    page to its request). A plain browser-like `requests` session, however,
+    receives the full page including the signed playAddr, and the video CDN
+    serves that same session the file (session cookies + Referer required).
+    No login/cookies needed (verified 2026-08 from an Oracle DC IP).
+
+    Returns (video_path, title, author).
+    """
+    UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    )
+    session = requests.Session()
+    session.headers.update({"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
+    resp = session.get(url, timeout=30)
+    resp.raise_for_status()
+    if "/view/product/" in resp.url:
+        raise RuntimeError(
+            "This is a TikTok Shop product link, not a video — product resolution "
+            "isn't wired up yet. Paste an ad video URL or upload the file."
+        )
+    m = re.search(r"/video/(\d+)", resp.url)
+    if not m:
+        raise RuntimeError(f"no TikTok video id found at {resp.url[:120]}")
+    page = resp.text
+    if m.group(1) not in page:  # short-link interstitial — refetch canonical page
+        page = session.get(resp.url, timeout=30).text
+    match = re.search(
+        r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">(.*?)</script>',
+        page,
+        re.S,
+    )
+    if not match:
+        raise RuntimeError("TikTok page returned no rehydration data (bot-walled?)")
+    data = json.loads(match.group(1))
+    item = (
+        data.get("__DEFAULT_SCOPE__", {})
+        .get("webapp.video-detail", {})
+        .get("itemInfo", {})
+        .get("itemStruct") or {}
+    )
+    video = item.get("video") or {}
+    play = video.get("playAddr")
+    if isinstance(play, str):
+        play_url = play
+    elif isinstance(play, dict):
+        play_url = (play.get("urlList") or play.get("url_list") or [None])[0]
+    else:
+        play_url = None
+    if not play_url:
+        raise RuntimeError("no playable video URL in page data")
+    r = session.get(
+        play_url,
+        headers={"Referer": "https://www.tiktok.com/"},
+        timeout=90,
+        stream=True,
+    )
+    r.raise_for_status()
+    video_path = os.path.join(workdir, "video.mp4")
+    with open(video_path, "wb") as fh:
+        for chunk in r.iter_content(chunk_size=1 << 16):
+            fh.write(chunk)
+    if os.path.getsize(video_path) == 0:
+        raise RuntimeError("downloaded video is empty")
+    title = (item.get("desc") or "").strip()[:300] or None
+    author = None
+    author_struct = item.get("author")
+    if isinstance(author_struct, dict) and author_struct.get("uniqueId"):
+        author = f"@{author_struct['uniqueId']}"[:200]
+    return video_path, title, author
+
+
 def download_video(url, workdir, platform, blob_token):
     """Returns (video_path, title, author) or raises.
 
@@ -118,6 +195,17 @@ def download_video(url, workdir, platform, blob_token):
             for chunk in resp.iter_content(chunk_size=1 << 16):
                 fh.write(chunk)
         return video_path, None, None
+
+    if platform == "tiktok":
+        # yt-dlp's web extractor is bot-challenged from this VPS IP; the
+        # direct page-parse path works (see download_tiktok_direct).
+        try:
+            return download_tiktok_direct(url, workdir)
+        except Exception as direct_err:  # noqa: BLE001 — fall back to yt-dlp
+            print(
+                f"[ads-worker] direct tiktok download failed, falling back to yt-dlp: {direct_err}",
+                file=sys.stderr,
+            )
 
     ydl_opts = {
         "outtmpl": os.path.join(workdir, "video.%(ext)s"),
