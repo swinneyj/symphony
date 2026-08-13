@@ -14,6 +14,8 @@ Durable work list (mirrors the session to-do). Status: `pending` | `done` | `dro
 | 6 | Add `BLOB_READ_WRITE_TOKEN` to Vercel env (symphony project) | Slippaz | **done** | Token live (resolver checks both `BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN` and `BLOB_READ_WRITE_TOKEN`). |
 | 7 | Real batch run with boomerang + overlay formula (credits ~$0.10–0.30) | Slippaz/Hermes | **done** | Aug 9: 2 real Sora 2 runs (Barebells). v1 exposed stale worker build (Aug 7 dist missing `extendMode`/`overlayTemplate` chaining) + `-shortest` truncating boomerang to VO length → rebuilt image, `-shortest` skipped on reverse-extend. v2 verified: 8.4s fwd+rev boomerang, CTA overlay burned, VO. TODO: Sora returns 4.3s for `durationSec=6` (provider duration param semantics). |
 | 8 | TikTok approval → enable direct publish path | — | waiting | External. |
+| 9 | V2V Video Clone (upload source → bg-change prompt → model picker → cloned video) | Hermes | pending | Spec: `docs/V2V-CLONE-SPEC.md`. Third leg after Steal-This-Ad + formula pipeline: pixel-level edit of an existing video. Primary: Sora 2 editing (no new vendor); fallback: Kling via fal.ai. Verdict on the nych.ai demo question: feature does NOT exist yet. Prompt scope now covers background + on-screen text change (parity with nych.ai demo). |
+| 10 | Add `GEMINI_API_KEY` to Vercel env (symphony project) | Slippaz | pending | LLM layer is now Gemini-primary (code merged: `src/lib/llm.ts`). remix/agent = `gemini-3.1-pro-preview`, fills = `gemini-3.6-flash` (IDs verified live 2026-08-13). Degrades to DeepSeek → OpenAI without it. Key exists in BWS (worker already uses Gemini for scene images + Veo). |
 
 ## Done (feature/video-studio, Aug 2026)
 
