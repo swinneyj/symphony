@@ -40,6 +40,15 @@ RULES (hard constraints):
 - Match TikTok Shop affiliate norms: casual, benefit-first, no fake medical claims.
 - Output ONLY a JSON array — no markdown, no commentary.`;
 
+const PRODUCT_SYSTEM_PROMPT = `You are a TikTok Shop affiliate ad scriptwriter for the e-commerce product described below. Write ORIGINAL scripts that make the product irresistible to TikTok shoppers.
+
+RULES (hard constraints):
+- Write ORIGINAL copy about the product. Only claim what the product info supports — no fake medical claims, no invented specs, no false scarcity.
+- Each script: a 1-2 sentence scroll-stopping HOOK, a short body (2-4 sentences) that sells the benefit, and a clear CTA ("link in bio", "grab it before it sells out", etc.).
+- Keep scripts 20-40 seconds of spoken VO (~50-110 words).
+- Match TikTok Shop affiliate norms: casual, benefit-first.
+- Output ONLY a JSON array — no markdown, no commentary.`;
+
 function buildUserPrompt(rawText: string, variants: number, tone?: string): string {
   const toneLine = tone ? ` All variants must use the tone: "${tone}".` : "";
   return `Source ad transcript:
@@ -50,19 +59,39 @@ Write ${variants} distinct remix scripts with different angles (e.g. problem/sol
 JSON array of objects, each: {"hook": string, "angle": string, "tone": string, "script": string} where script is the FULL VO script INCLUDING the hook as its first sentence.`;
 }
 
+function buildProductPrompt(rawText: string, variants: number, tone?: string): string {
+  const toneLine = tone ? ` All variants must use the tone: "${tone}".` : "";
+  return `Product info:
+"""${rawText.slice(0, 4000)}"""
+
+Write ${variants} distinct ad scripts with different angles (e.g. problem/solution, demo, social proof, urgency, before/after).${toneLine}
+
+JSON array of objects, each: {"hook": string, "angle": string, "tone": string, "script": string} where script is the FULL VO script INCLUDING the hook as its first sentence.`;
+}
+
 async function llmRemix(
   client: OpenAI,
   rawText: string,
   variants: number,
-  tone?: string
+  tone?: string,
+  mode: "transcript" | "product" = "transcript"
 ): Promise<RemixVariant[]> {
   const res = await client.chat.completions.create({
     model: "deepseek-chat",
     temperature: 0.9,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: buildUserPrompt(rawText, variants, tone) },
+      {
+        role: "system",
+        content: mode === "product" ? PRODUCT_SYSTEM_PROMPT : SYSTEM_PROMPT,
+      },
+      {
+        role: "user",
+        content:
+          mode === "product"
+            ? buildProductPrompt(rawText, variants, tone)
+            : buildUserPrompt(rawText, variants, tone),
+      },
     ],
   });
   const text = res.choices[0]?.message?.content ?? "";
@@ -119,7 +148,7 @@ function heuristicRemix(rawText: string, variants: number, tone?: string): Remix
 
 export async function restructureAd(
   rawText: string,
-  opts: { variants?: number; tone?: string } = {}
+  opts: { variants?: number; tone?: string; mode?: "transcript" | "product" } = {}
 ): Promise<RemixVariant[]> {
   const variants = Math.min(Math.max(opts.variants ?? 3, 1), 5);
   const client = getClient();
@@ -127,7 +156,7 @@ export async function restructureAd(
     return heuristicRemix(rawText, variants, opts.tone);
   }
   try {
-    const remixes = await llmRemix(client, rawText, variants, opts.tone);
+    const remixes = await llmRemix(client, rawText, variants, opts.tone, opts.mode);
     if (remixes.length > 0) return remixes;
   } catch (error) {
     console.error("[restructureAd] LLM failed, falling back to heuristic:", error);
