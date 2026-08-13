@@ -78,6 +78,7 @@ const STATUS_BADGE: Record<string, string> = {
   downloading: "bg-amber-500/15 text-amber-400",
   transcribing: "bg-amber-500/15 text-amber-400",
   transcribed: "bg-emerald-500/15 text-emerald-400",
+  fetched: "bg-teal-500/15 text-teal-400",
   failed: "bg-red-500/15 text-red-400",
 };
 
@@ -190,7 +191,11 @@ export default function StealThisAdPage() {
       setUrl("");
       await loadSources(workspaceId);
       await openSource(row.id);
-      toast.success("Ad queued — fetching + transcribing…");
+      toast.success(
+        row.platform === "product"
+          ? "Product resolved — ready to remix"
+          : "Ad queued — fetching + transcribing…"
+      );
     } finally {
       setSubmitting(false);
     }
@@ -441,8 +446,20 @@ export default function StealThisAdPage() {
               </Card>
             )}
 
+            {/* Product info (product-link sources resolve here, no video) */}
+            {detail.status === "fetched" && detail.rawText && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Product</CardTitle>
+                </CardHeader>
+                <CardContent className="max-h-64 overflow-y-auto whitespace-pre-line text-sm text-muted-foreground">
+                  {detail.rawText}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Remixes */}
-            {detail.status === "transcribed" && (
+            {(detail.status === "transcribed" || detail.status === "fetched") && (
               <>
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-medium">Remixes</h2>

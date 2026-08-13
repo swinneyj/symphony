@@ -8,8 +8,9 @@ import { restructureAd } from "@/lib/ads/restructure";
 
 /**
  * POST /api/ads/steal/[id]/remix — { variants?, tone? }
- * LLM rewrites the source transcript into N original scripts.
- * Requires the source to be transcribed (ads-worker done).
+ * LLM rewrites the source transcript (or, for product links, the product
+ * info) into N original scripts. Requires transcribed (video) or fetched
+ * (product link) sources.
  */
 export async function POST(
   request: Request,
@@ -33,9 +34,22 @@ export async function POST(
     if (!(await hasWorkspaceAccess(source.workspaceId, session.user.id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (source.status !== "transcribed" || !source.rawText?.trim()) {
+    const isProduct = source.platform === "product" || source.status === "fetched";
+    if (!source.rawText?.trim()) {
+      return NextResponse.json(
+        { error: "Source has no content to remix" },
+        { status: 409 }
+      );
+    }
+    if (!isProduct && source.status !== "transcribed") {
       return NextResponse.json(
         { error: "Source is not transcribed yet" },
+        { status: 409 }
+      );
+    }
+    if (isProduct && source.status !== "fetched") {
+      return NextResponse.json(
+        { error: "Product info is not resolved yet" },
         { status: 409 }
       );
     }
@@ -45,7 +59,11 @@ export async function POST(
     const tone = typeof body?.tone === "string" ? body.tone : undefined;
     const userId = session.user.id;
 
-    const remixes = await restructureAd(source.rawText, { variants, tone });
+    const remixes = await restructureAd(source.rawText, {
+      variants,
+      tone,
+      mode: isProduct ? "product" : "transcript",
+    });
     if (remixes.length === 0) {
       return NextResponse.json(
         { error: "Could not generate remixes" },
