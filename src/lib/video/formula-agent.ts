@@ -1,4 +1,4 @@
-import { getClient, llmModel } from "@/lib/llm";
+import { withLLM } from "@/lib/llm";
 
 /**
  * Formula Studio agent — rewires a formula node graph from a natural
@@ -123,23 +123,23 @@ export async function runFormulaAgent(
   currentGraph: unknown,
   userPrompt: string
 ): Promise<AgentResult> {
-  const client = getClient();
-  if (!client) {
+  const res = await withLLM("agent", (client, model) =>
+    client.chat.completions.create({
+      model,
+      temperature: 0.3,
+      max_tokens: 1800,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "You output strict JSON only." },
+        { role: "user", content: buildPrompt(currentGraph, userPrompt) },
+      ],
+    })
+  );
+  if (!res) {
     throw new Error(
-      "No AI provider configured (GEMINI_API_KEY, DEEPSEEK_API_KEY or OPENAI_API_KEY) — the agent can't run on this deployment"
+      "All AI providers are unavailable (quota exceeded or no keys configured) — try again in a moment"
     );
   }
-
-  const res = await client.chat.completions.create({
-    model: llmModel("agent"),
-    temperature: 0.3,
-    max_tokens: 1800,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: "You output strict JSON only." },
-      { role: "user", content: buildPrompt(currentGraph, userPrompt) },
-    ],
-  });
 
   const text = res.choices[0]?.message?.content ?? "";
   let parsed: unknown = null;

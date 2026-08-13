@@ -1,5 +1,4 @@
-import type OpenAI from "openai";
-import { getClient, llmModel } from "@/lib/llm";
+import { withLLM } from "@/lib/llm";
 
 /**
  * Steal This Ad — remix engine.
@@ -58,30 +57,32 @@ JSON array of objects, each: {"hook": string, "angle": string, "tone": string, "
 }
 
 async function llmRemix(
-  client: OpenAI,
   rawText: string,
   variants: number,
   tone?: string,
   mode: "transcript" | "product" = "transcript"
-): Promise<RemixVariant[]> {
-  const res = await client.chat.completions.create({
-    model: llmModel("remix"),
-    temperature: 0.9,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: mode === "product" ? PRODUCT_SYSTEM_PROMPT : SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content:
-          mode === "product"
-            ? buildProductPrompt(rawText, variants, tone)
-            : buildUserPrompt(rawText, variants, tone),
-      },
-    ],
-  });
+): Promise<RemixVariant[] | null> {
+  const res = await withLLM("remix", (client, model) =>
+    client.chat.completions.create({
+      model,
+      temperature: 0.9,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: mode === "product" ? PRODUCT_SYSTEM_PROMPT : SYSTEM_PROMPT,
+        },
+        {
+          role: "user",
+          content:
+            mode === "product"
+              ? buildProductPrompt(rawText, variants, tone)
+              : buildUserPrompt(rawText, variants, tone),
+        },
+      ],
+    })
+  );
+  if (!res) return null;
   const text = res.choices[0]?.message?.content ?? "";
   const parsed = JSON.parse(text) as { remixes?: RemixVariant[] } | RemixVariant[];
   const arr = Array.isArray(parsed) ? parsed : parsed.remixes ?? [];
@@ -139,13 +140,9 @@ export async function restructureAd(
   opts: { variants?: number; tone?: string; mode?: "transcript" | "product" } = {}
 ): Promise<RemixVariant[]> {
   const variants = Math.min(Math.max(opts.variants ?? 3, 1), 5);
-  const client = getClient();
-  if (!client) {
-    return heuristicRemix(rawText, variants, opts.tone);
-  }
   try {
-    const remixes = await llmRemix(client, rawText, variants, opts.tone, opts.mode);
-    if (remixes.length > 0) return remixes;
+    const remixes = await llmRemix(rawText, variants, opts.tone, opts.mode);
+    if (remixes && remixes.length > 0) return remixes;
   } catch (error) {
     console.error("[restructureAd] LLM failed, falling back to heuristic:", error);
   }

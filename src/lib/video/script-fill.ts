@@ -1,5 +1,4 @@
-import type OpenAI from "openai";
-import { getClient, llmModel } from "@/lib/llm";
+import { withLLM } from "@/lib/llm";
 import { guessCategory } from "./presets";
 
 /**
@@ -25,12 +24,9 @@ export type RenderedScript = {
 };
 
 async function llmFeatures(product: ScriptProduct): Promise<string[] | null> {
-  const client = getClient();
-  if (!client) return null;
-
-  try {
-    const res = await client.chat.completions.create({
-      model: llmModel("fill"),
+  const res = await withLLM("fill", (client, model) =>
+    client.chat.completions.create({
+      model,
       max_tokens: 120,
       temperature: 0.7,
       messages: [
@@ -44,9 +40,11 @@ async function llmFeatures(product: ScriptProduct): Promise<string[] | null> {
           content: `Product: ${product.name}\nDescription: ${product.description ?? "(none)"}`,
         },
       ],
-    });
+    })
+  );
+  if (!res) return null;
 
-    const text = res.choices[0]?.message?.content?.trim();
+  const text = res.choices[0]?.message?.content?.trim();
     if (!text) return null;
     const parsed = JSON.parse(text.replace(/^```(json)?|```$/g, "").trim());
     if (Array.isArray(parsed)) {
@@ -57,10 +55,6 @@ async function llmFeatures(product: ScriptProduct): Promise<string[] | null> {
       return features.length > 0 ? features : null;
     }
     return null;
-  } catch (error) {
-    console.error("LLM feature fill failed, falling back:", error);
-    return null;
-  }
 }
 
 function heuristicFeatures(product: ScriptProduct): string[] {
