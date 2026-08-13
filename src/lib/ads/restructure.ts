@@ -1,4 +1,5 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
+import { getClient, llmModel } from "@/lib/llm";
 
 /**
  * Steal This Ad — remix engine.
@@ -17,19 +18,6 @@ export type RemixVariant = {
 };
 
 const TONES = ["casual", "urgent", "excited", "deadpan", "storytelling"];
-
-function getClient(): OpenAI | null {
-  if (process.env.DEEPSEEK_API_KEY) {
-    return new OpenAI({
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      baseURL: "https://api.deepseek.com",
-    });
-  }
-  if (process.env.OPENAI_API_KEY) {
-    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  return null;
-}
 
 const SYSTEM_PROMPT = `You are a TikTok Shop affiliate ad scriptwriter. You reverse-engineer what makes a viral ad work and write NEW original scripts for the same product.
 
@@ -77,7 +65,7 @@ async function llmRemix(
   mode: "transcript" | "product" = "transcript"
 ): Promise<RemixVariant[]> {
   const res = await client.chat.completions.create({
-    model: "deepseek-chat",
+    model: llmModel("remix"),
     temperature: 0.9,
     response_format: { type: "json_object" },
     messages: [

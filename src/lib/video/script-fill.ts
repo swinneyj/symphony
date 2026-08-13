@@ -1,13 +1,15 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
+import { getClient, llmModel } from "@/lib/llm";
 import { guessCategory } from "./presets";
 
 /**
  * Script fill engine: renders a formula's scriptTemplate with product data.
  *
  * {features} is the only LLM-dependent slot. If an LLM key is present
- * (DEEPSEEK_API_KEY or OPENAI_API_KEY) we ask for 2-3 short selling points
- * constrained to the description; otherwise we fall back to heuristic
- * extraction (sentences <= 8 words) so the builder works with zero keys.
+ * (GEMINI_API_KEY, DEEPSEEK_API_KEY or OPENAI_API_KEY — see lib/llm.ts) we
+ * ask for 2-3 short selling points constrained to the description; otherwise
+ * we fall back to heuristic extraction (sentences <= 8 words) so the builder
+ * works with zero keys.
  */
 
 export type ScriptProduct = {
@@ -22,26 +24,13 @@ export type RenderedScript = {
   llm: boolean;
 };
 
-function getClient(): OpenAI | null {
-  if (process.env.DEEPSEEK_API_KEY) {
-    return new OpenAI({
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      baseURL: "https://api.deepseek.com",
-    });
-  }
-  if (process.env.OPENAI_API_KEY) {
-    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  return null;
-}
-
 async function llmFeatures(product: ScriptProduct): Promise<string[] | null> {
   const client = getClient();
   if (!client) return null;
 
   try {
     const res = await client.chat.completions.create({
-      model: process.env.DEEPSEEK_API_KEY ? "deepseek-chat" : "gpt-4o-mini",
+      model: llmModel("fill"),
       max_tokens: 120,
       temperature: 0.7,
       messages: [

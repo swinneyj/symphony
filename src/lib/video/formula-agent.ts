@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getClient, llmModel } from "@/lib/llm";
 
 /**
  * Formula Studio agent — rewires a formula node graph from a natural
@@ -32,19 +32,6 @@ export type AgentResult = {
   edges: AgentGraph["edges"];
   summary: string;
 };
-
-function getClient(): OpenAI | null {
-  if (process.env.DEEPSEEK_API_KEY) {
-    return new OpenAI({
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      baseURL: "https://api.deepseek.com",
-    });
-  }
-  if (process.env.OPENAI_API_KEY) {
-    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  return null;
-}
 
 function buildPrompt(currentGraph: unknown, userPrompt: string): string {
   return `You are the Formula Studio agent for Symphony, a TikTok Shop video formula builder.
@@ -139,12 +126,12 @@ export async function runFormulaAgent(
   const client = getClient();
   if (!client) {
     throw new Error(
-      "No AI provider configured (DEEPSEEK_API_KEY or OPENAI_API_KEY) — the agent can't run on this deployment"
+      "No AI provider configured (GEMINI_API_KEY, DEEPSEEK_API_KEY or OPENAI_API_KEY) — the agent can't run on this deployment"
     );
   }
 
   const res = await client.chat.completions.create({
-    model: process.env.DEEPSEEK_API_KEY ? "deepseek-chat" : "gpt-4o-mini",
+    model: llmModel("agent"),
     temperature: 0.3,
     max_tokens: 1800,
     response_format: { type: "json_object" },
