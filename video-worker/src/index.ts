@@ -5,6 +5,7 @@ import { handleProductProcess } from "./processors/product-process.js";
 import { handleSceneRender } from "./processors/scene-render.js";
 import { handleFootage } from "./processors/footage.js";
 import { handleAssemble } from "./processors/assemble.js";
+import { handleV2VEdit } from "./processors/v2v-edit.js";
 
 // ─── Config (env) ────────────────────────────────────────────────────────────
 
@@ -52,6 +53,9 @@ async function processJob(job: JobRow) {
     case "batch_video":
       await handleAssemble(job, MAX_RETRIES);
       break;
+    case "v2v_edit":
+      await handleV2VEdit(job, MAX_RETRIES);
+      break;
     default:
       // overlay / slideshow arrive in later phases.
       await sql`
@@ -72,7 +76,7 @@ async function tick() {
       console.log(`[video-worker] requeued ${reclaimed} stale running job(s)`);
     }
 
-    const jobs = await claimJobs(CONCURRENCY, ["scene_render", "footage", "batch_video", "overlay", "slideshow"]);
+    const jobs = await claimJobs(CONCURRENCY, ["scene_render", "footage", "batch_video", "overlay", "slideshow", "v2v_edit"]);
     if (jobs.length === 0) return;
 
     console.log(`[video-worker] claiming ${jobs.length} job(s)`);

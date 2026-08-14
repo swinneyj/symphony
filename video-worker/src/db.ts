@@ -10,7 +10,7 @@ export type JobRow = {
   workspace_id: string;
   product_id: string | null;
   formula_id: string | null;
-  job_type: "product_process" | "footage" | "overlay" | "slideshow" | "batch_video" | "scene_render";
+  job_type: "product_process" | "footage" | "overlay" | "slideshow" | "batch_video" | "scene_render" | "v2v_edit";
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   retries: number;
   metadata: Record<string, unknown> | null;

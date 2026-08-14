@@ -185,6 +185,7 @@ async function falSubmit(queueId: string, key: string, body: unknown): Promise<s
   if (!submit.ok) throw new Error(`fal submit failed: ${submit.status} ${await submit.text()}`);
   const { status_url, request_id } = (await submit.json()) as { status_url?: string; request_id?: string };
   const pollUrl = status_url ?? `https://queue.fal.run/fal-ai/requests/${request_id}/status`;
+  console.log(`[video-worker] fal ${queueId} submitted → ${request_id}`);
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 5000));
     const poll = await fetch(pollUrl, { headers: { authorization: `Key ${key}` } });
@@ -224,6 +225,61 @@ async function generateKling(req: FootageRequest): Promise<string> {
   });
 }
 
+// ─── Video Clone (v2v_edit) — Pipeline A: frame edit → re-animate ──────────
+// Verified live 2026-08-13: fal has NO Kling video-edit model; the clone flow
+// is keyframe extraction → image edit (nano-banana-pro/edit) → Kling 3.0 Pro
+// image-to-video (start_image_url). See docs/V2V-CLONE-SPEC.md §4c/4d.
+
+/** Image edit on a keyframe: background swap + on-screen text change. */
+export async function generateCloneFrameEdit(
+  imageUrl: string,
+  prompt: string
+): Promise<string> {
+  const key = process.env.FAL_KEY;
+  if (!key) throw new MissingKeyError("kling", "FAL_KEY");
+  // Both edit models want image_urls (array) — verified via pydantic error.
+  const body = { image_urls: [imageUrl], prompt };
+  try {
+    return await falImageSubmit("/fal-ai/nano-banana-pro/edit", key, body);
+  } catch (primaryError) {
+    console.warn(
+      `[video-worker] nano-banana-pro edit failed, falling back to gpt-image-2: ${(primaryError as Error).message}`
+    );
+    // Provider-owned models (openai/...) sit at the queue ROOT, no fal-ai prefix.
+    return falImageSubmit("/openai/gpt-image-2/edit", key, body);
+  }
+}
+
+/** Animates the edited frame into a video with Kling 3.0 Pro. */
+export async function generateCloneVideo(
+  startImageUrl: string,
+  prompt: string,
+  durationSec: number
+): Promise<string> {
+  const key = process.env.FAL_KEY;
+  if (!key) throw new MissingKeyError("kling", "FAL_KEY");
+  return falSubmit("/fal-ai/kling-video/v3/pro/image-to-video", key, {
+    start_image_url: startImageUrl,
+    prompt,
+    duration: String(Math.min(Math.max(durationSec, 5), 10)),
+  });
+}
+
+/** True V2V attempt: Kling 3.0 i2v accepts a source video URL (verified param). */
+export async function generateCloneVideoDirect(
+  videoUrl: string,
+  prompt: string,
+  durationSec: number
+): Promise<string> {
+  const key = process.env.FAL_KEY;
+  if (!key) throw new MissingKeyError("kling", "FAL_KEY");
+  return falSubmit("/fal-ai/kling-video/v3/pro/image-to-video", key, {
+    video_url: videoUrl,
+    prompt,
+    duration: String(Math.min(Math.max(durationSec, 5), 10)),
+  });
+}
+
 // ─── Scene image (AI re-render) ──────────────────────────────────────────────
 
 export interface SceneRenderRequest {
@@ -258,9 +314,10 @@ async function falImageSubmit(queueId: string, key: string, body: unknown): Prom
   if (!submit.ok) throw new Error(`fal image submit failed: ${submit.status} ${await submit.text()}`);
   const { status_url, request_id } = (await submit.json()) as { status_url?: string; request_id?: string };
   const pollUrl = status_url ?? `https://queue.fal.run/fal-ai/requests/${request_id}/status`;
+  console.log(`[video-worker] fal-image ${queueId} submitted → ${request_id}`);
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 5000));
-    const poll = await fetch(pollUrl, { headers: { authorization: `Bearer ${key}` } });
+    const poll = await fetch(pollUrl, { headers: { authorization: `Key ${key}` } });
     if (!poll.ok) throw new Error(`fal image poll failed: ${poll.status}`);
     const state = (await poll.json()) as { status?: string; response_url?: string; error?: unknown };
     if (state.status === "COMPLETED" && state.response_url) {

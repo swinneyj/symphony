@@ -26,7 +26,7 @@ export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approve
 export const productSourceEnum = pgEnum("product_source", ["manual", "link", "tiktok_showcase"]);
 export const productStatusEnum = pgEnum("product_status", ["raw", "processing", "ready", "failed"]);
 export const videoProviderEnum = pgEnum("video_provider", ["sora", "seedance", "kling", "openai_tts", "elevenlabs", "kokoro"]);
-export const videoJobTypeEnum = pgEnum("video_job_type", ["product_process", "footage", "overlay", "slideshow", "batch_video", "scene_render"]);
+export const videoJobTypeEnum = pgEnum("video_job_type", ["product_process", "footage", "overlay", "slideshow", "batch_video", "scene_render", "v2v_edit"]);
 export const videoJobStatusEnum = pgEnum("video_job_status", ["queued", "running", "done", "failed", "cancelled"]);
 export const videoBatchStatusEnum = pgEnum("video_batch_status", ["queued", "running", "done", "partial", "failed"]);
 
