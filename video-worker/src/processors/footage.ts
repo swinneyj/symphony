@@ -80,7 +80,14 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
       imageUrl: firstFrame,
       prompt: scenePrompt,
       durationSec: meta.durationSec ?? formula?.duration_sec ?? 6,
-      resolution: (meta.quality ?? formula?.quality ?? "standard") === "pro" ? "1080p" : "720p",
+      // Cost mapping (fal Seedance 2.5: 480p ≈ $0.22/s, 720p ≈ $0.47/s, 1080p ≈ $0.9+/s):
+      //   fast → 480p, standard → 720p, pro → 1080p (Seedance clamps to 720p anyway)
+      resolution:
+        (meta.quality ?? formula?.quality ?? "standard") === "fast"
+          ? "480p"
+          : (meta.quality ?? formula?.quality ?? "standard") === "pro"
+            ? "1080p"
+            : "720p",
     });
 
     await markDone(job.id, { footage_url: result.url });

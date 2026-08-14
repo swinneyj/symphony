@@ -180,8 +180,9 @@ export default function FormulaRunPage() {
     setRunning(true);
     setDone(false);
     try {
-      // Mode/resolution → quality (BatchBot Fast=480p, Quality=720p).
-      const quality = mode === "quality" || resolution === "720p" ? "pro" : "standard";
+      // Mode/resolution → quality. BatchBot: Fast=480p, Quality=720p.
+      // 480p ≈ $0.22/s vs 720p ≈ $0.47/s on fal — fast must stay 480p.
+      const quality = mode === "fast" && resolution === "480p" ? "fast" : "standard";
       const res = await fetch("/api/batches", {
         method: "POST",
         headers: { "content-type": "application/json" },

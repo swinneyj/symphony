@@ -387,6 +387,8 @@ export const videoFormulas = pgTable("video_formulas", {
   /** Formula Studio node graph (@xyflow/react serialization). When set, the
    *  batch executor flattens it per product; when null, flat fields apply. */
   nodeGraph: jsonb("node_graph").$type<unknown>(),
+  /** BatchBot-style card cover image (generated from the scene prompt). */
+  coverImageUrl: text("cover_image_url"),
   isSystem: boolean("is_system").default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
