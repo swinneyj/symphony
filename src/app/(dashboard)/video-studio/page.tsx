@@ -62,6 +62,7 @@ interface Formula {
   isSystem: boolean;
   boomerang: boolean;
   overlayTemplate: string | null;
+  coverImageUrl: string | null;
 }
 
 interface Voice {
@@ -1288,78 +1289,77 @@ function FormulasTab({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
         {formulas.map((formula) => (
-          <Card key={formula.id} className="transition-shadow hover:shadow-md">
-            <CardHeader className="pb-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <Link href={`/video-studio/formulas/${formula.id}`} className="hover:underline">
-                    <CardTitle className="text-base">{formula.name}</CardTitle>
-                  </Link>
-                  <CardDescription className="capitalize">
-                    {formula.category} · {formula.durationSec}s · {formula.quality}
-                    {formula.boomerang && " · ↺ boomerang"}
-                    {formula.overlayTemplate && " · TXT overlay"}
-                  </CardDescription>
-                </div>
-                {formula.isSystem ? (
-                  <Badge variant="secondary">system</Badge>
+          <Card
+            key={formula.id}
+            className="group overflow-hidden transition-shadow hover:shadow-md"
+          >
+            <Link href={`/video-studio/formulas/${formula.id}`} className="block">
+              <div className="relative aspect-[9/16] w-full overflow-hidden bg-muted">
+                {formula.coverImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={formula.coverImageUrl}
+                    alt={formula.name}
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                  />
                 ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-red-600"
-                    onClick={() => handleDelete(formula)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-100 to-zinc-200 p-4 text-center">
+                    <Clapperboard className="h-8 w-8 text-zinc-400" />
+                    <span className="line-clamp-2 text-xs font-medium text-zinc-500">
+                      {formula.name}
+                    </span>
+                  </div>
                 )}
+                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-2">
+                  <Badge className="bg-blue-600 text-white">
+                    {formula.isSystem ? "OFFICIAL" : "FORMULA"}
+                  </Badge>
+                  <span className="rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                    {formula.durationSec}s · {formula.quality}
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-1 p-2.5">
+                <p className="line-clamp-1 text-sm font-semibold">{formula.name}</p>
+                <p className="line-clamp-1 text-xs text-muted-foreground capitalize">
+                  {formula.category ?? "formula"}
+                  {formula.boomerang ? " · ↺" : ""}
+                  {formula.overlayTemplate ? " · TXT" : ""}
+                </p>
+              </div>
+            </Link>
+            <div className="flex items-center gap-1 px-2.5 pb-2.5">
+              {formula.isSystem ? (
+                <span className="text-[11px] text-muted-foreground">Built-in</span>
+              ) : (
                 <Button
                   size="sm"
                   variant="ghost"
-                  title="Copy share link"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(`${window.location.origin}/f/${formula.id}`);
-                      toast.success("Share link copied");
-                    } catch {
-                      toast.error("Copy failed");
-                    }
-                  }}
+                  className="h-7 px-2 text-xs text-red-600"
+                  onClick={() => handleDelete(formula)}
                 >
-                  <Share2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3 w-3" /> Delete
                 </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="line-clamp-3 rounded-md bg-muted p-3 text-sm text-muted-foreground">
-                {formula.scriptTemplate}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => {
-                    window.location.href = `/video-studio/formulas/${formula.id}`;
-                  }}
-                >
-                  <Play className="h-3.5 w-3.5" /> Open formula
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => {
-                    setPreviewFormula(formula);
-                    setPreviewProductId(products[0]?.id ?? "");
-                    setPreview(null);
-                  }}
-                >
-                  <Wand2 className="h-3.5 w-3.5" /> Preview script
-                </Button>
-              </div>
-            </CardContent>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto h-7 px-2 text-xs"
+                title="Copy share link"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(`${window.location.origin}/f/${formula.id}`);
+                    toast.success("Share link copied");
+                  } catch {
+                    toast.error("Copy failed");
+                  }
+                }}
+              >
+                <Share2 className="h-3 w-3" />
+              </Button>
+            </div>
           </Card>
         ))}
       </div>
@@ -2684,6 +2684,7 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
   const [textChange, setTextChange] = useState("");
   const [motionPrompt, setMotionPrompt] = useState("");
   const [durationSec, setDurationSec] = useState("5");
+  const [model, setModel] = useState("kling-pro");
   const [busy, setBusy] = useState(false);
 
   const canSubmit = (sourceFile || sourceUrl.trim()) && editPrompt.trim() && !busy;
@@ -2700,6 +2701,7 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
       if (textChange.trim()) fd.append("textChange", textChange.trim());
       if (motionPrompt.trim()) fd.append("motionPrompt", motionPrompt.trim());
       fd.append("durationSec", durationSec);
+      fd.append("model", model);
       const res = await fetch("/api/video-clone", { method: "POST", body: fd });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || "Clone failed");
@@ -2771,6 +2773,19 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
           </div>
         </div>
         <div className="flex items-end gap-4">
+          <div className="space-y-1.5">
+            <Label>Model</Label>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="flex h-9 w-48 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="kling-pro">Kling 3.0 Pro (~$0.30)</option>
+              <option value="kling-standard">Kling 3.0 Standard (~$0.15)</option>
+              <option value="sora">Sora 2 (OpenAI credits)</option>
+              <option value="veo" disabled>Veo 3.1 (needs Gemini prepay)</option>
+            </select>
+          </div>
           <div className="space-y-1.5">
             <Label>Duration</Label>
             <select

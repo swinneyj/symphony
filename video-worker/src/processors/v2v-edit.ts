@@ -6,6 +6,7 @@ import { sql, markDone, failWithRetry, type JobRow } from "../db.js";
 import {
   generateCloneFrameEdit,
   generateCloneVideo,
+  type CloneModel,
 } from "../providers.js";
 
 const execFileP = promisify(execFile);
@@ -32,8 +33,8 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
       textChange?: string;
       motionPrompt?: string;
       durationSec?: number;
-      /** True V2V: feed the source video straight to Kling (needs public URL). */
-      useVideoUrlDirect?: boolean;
+      /** Re-animate engine: kling-pro (default) | kling-standard | sora | veo. */
+      model?: CloneModel;
     };
     const { sourceVideoUrl, editPrompt } = meta;
     if (!sourceVideoUrl || !editPrompt) {
@@ -79,15 +80,22 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
       `${editPrompt}.${textLine} Keep the subject, pose, and framing identical.`
     );
 
-    // 4. Re-animate the edited frame (Kling 3.0 Pro image-to-video).
+    // 4. Re-animate the edited frame (model picker: kling-pro/standard, sora, veo).
     const motion = meta.motionPrompt ?? "subtle natural motion, same camera angle";
     const videoUrl = await generateCloneVideo(
       editedFrame,
       `${motion}. ${editPrompt}`,
-      meta.durationSec ?? 5
+      meta.durationSec ?? 5,
+      meta.model ?? "kling-pro"
     );
 
-    // 5. Download result → private Blob → mark job done.
+    // 5. Normalize result: Sora's generateFootage already lands on Blob;
+    //    fal/Gemini URLs need a download → private Blob → mark job done.
+    if (videoUrl.includes("blob.vercel-storage.com")) {
+      await markDone(job.id, { final_url: videoUrl });
+      console.log(`[video-worker] v2v_edit(${meta.model ?? "kling-pro"}) ${job.id} done → ${videoUrl}`);
+      return;
+    }
     const vidRes = await fetch(videoUrl);
     if (!vidRes.ok) throw new Error(`clone result fetch failed: ${vidRes.status}`);
     const { put } = await import("@vercel/blob");

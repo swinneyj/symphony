@@ -143,18 +143,29 @@ async function generateSora(req: FootageRequest): Promise<string> {
 
 async function generateVeo(req: FootageRequest): Promise<string> {
   const key = requireKey("veo");
-  // TODO_VERIFY: model id + first-frame image parameter for Veo via Gemini API.
-  const model = "veo-3.1-generate-preview"; // TODO_VERIFY
+  // Veo 3.1 via the Gemini Developer API. Verified live 2026-08-14:
+  //   - supported RPC is :predictLongRunning (Vertex-style instances/parameters);
+  //     generateContent / longRunningGenerateContent both 404 for this model.
+  //   - image-to-video rides as instance.image.image_bytes.data.
+  //   - BILLING-GATED: the project's prepay credits are depleted → 429
+  //     RESOURCE_EXHAUSTED until the user tops up at ai.studio/projects.
+  const model = "veo-3.1-generate-preview";
+  let image: { image_bytes: { data: string } } | undefined;
+  if (req.imageUrl?.startsWith("data:")) {
+    image = { image_bytes: { data: req.imageUrl.split(",")[1] } };
+  }
   const submit = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${key}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: req.prompt }] }],
-        generationConfig: {
-          durationSeconds: req.durationSec,
+        instances: [{ prompt: req.prompt, ...(image ? { image } : {}) }],
+        parameters: {
+          // Veo 3.1 caps at 8s per request; clamp below that.
+          durationSeconds: Math.min(req.durationSec, 8),
           resolution: req.resolution,
+          aspectRatio: "9:16",
         },
       }),
     }
@@ -181,6 +192,7 @@ async function falSubmit(queueId: string, key: string, body: unknown): Promise<s
     method: "POST",
     headers: { authorization: `Key ${key}`, "content-type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!submit.ok) throw new Error(`fal submit failed: ${submit.status} ${await submit.text()}`);
   const { status_url, request_id } = (await submit.json()) as { status_url?: string; request_id?: string };
@@ -188,11 +200,11 @@ async function falSubmit(queueId: string, key: string, body: unknown): Promise<s
   console.log(`[video-worker] fal ${queueId} submitted → ${request_id}`);
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 5000));
-    const poll = await fetch(pollUrl, { headers: { authorization: `Key ${key}` } });
+    const poll = await fetch(pollUrl, { headers: { authorization: `Key ${key}` }, signal: AbortSignal.timeout(30_000) });
     if (!poll.ok) throw new Error(`fal poll failed: ${poll.status}`);
     const state = (await poll.json()) as { status?: string; response_url?: string; error?: unknown };
     if (state.status === "COMPLETED" && state.response_url) {
-      const res = await fetch(state.response_url, { headers: { authorization: `Key ${key}` } });
+      const res = await fetch(state.response_url, { headers: { authorization: `Key ${key}` }, signal: AbortSignal.timeout(60_000) });
       const data = (await res.json()) as { video?: { url?: string } | string; detail?: unknown };
       // Fast-fail on validation/not-found bodies (e.g. {"detail": [...]}) — a
       // completed job with an error body will never produce a video.
@@ -210,6 +222,10 @@ async function falSubmit(queueId: string, key: string, body: unknown): Promise<s
 }
 
 async function generateSeedance(req: FootageRequest): Promise<string> {
+  // PAUSED 2026-08-14 (user): Seedance 2.5 is too expensive and fal.ai
+  // credits are depleted. Hard gate so no job can spend after a top-up.
+  // Re-enable by removing this throw (engine + fal path are verified).
+  throw new Error("seedance 2.5 paused: fal.ai credits depleted (2026-08-14). Use kling or sora.");
   const key = requireKey("seedance");
   // Verified live 2026-08-14: fal moved Seedance off the old
   // /fal-ai/byte-dance/seedance/v1.5-alpha path (404 "Application not
@@ -261,15 +277,43 @@ export async function generateCloneFrameEdit(
   }
 }
 
-/** Animates the edited frame into a video with Kling 3.0 Pro. */
+/** Models selectable for the clone's re-animate step. */
+export type CloneModel = "kling-pro" | "kling-standard" | "sora" | "veo";
+
 export async function generateCloneVideo(
   startImageUrl: string,
   prompt: string,
-  durationSec: number
+  durationSec: number,
+  model: CloneModel = "kling-pro"
 ): Promise<string> {
   const key = process.env.FAL_KEY;
   if (!key) throw new MissingKeyError("kling", "FAL_KEY");
-  return falSubmit("/fal-ai/kling-video/v3/pro/image-to-video", key, {
+
+  if (model === "sora") {
+    const r = await generateFootage({
+      engine: "sora",
+      imageUrl: startImageUrl,
+      prompt,
+      durationSec,
+      resolution: "720p",
+    });
+    return r.url;
+  }
+  if (model === "veo") {
+    const r = await generateFootage({
+      engine: "veo",
+      imageUrl: startImageUrl,
+      prompt,
+      durationSec,
+      resolution: "720p",
+    });
+    return r.url;
+  }
+  const queueId =
+    model === "kling-standard"
+      ? "/fal-ai/kling-video/v3/standard/image-to-video"
+      : "/fal-ai/kling-video/v3/pro/image-to-video";
+  return falSubmit(queueId, key, {
     start_image_url: startImageUrl,
     prompt,
     duration: String(Math.min(Math.max(durationSec, 5), 10)),
@@ -304,8 +348,9 @@ export interface SceneRenderResult {
 async function falImageSubmit(queueId: string, key: string, body: unknown): Promise<string> {
   const submit = await fetch(`https://queue.fal.run${queueId}`, {
     method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    headers: { authorization: `Key ${key}`, "content-type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!submit.ok) throw new Error(`fal image submit failed: ${submit.status} ${await submit.text()}`);
   const { status_url, request_id } = (await submit.json()) as { status_url?: string; request_id?: string };
@@ -313,12 +358,16 @@ async function falImageSubmit(queueId: string, key: string, body: unknown): Prom
   console.log(`[video-worker] fal-image ${queueId} submitted → ${request_id}`);
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 5000));
-    const poll = await fetch(pollUrl, { headers: { authorization: `Key ${key}` } });
+    const poll = await fetch(pollUrl, { headers: { authorization: `Key ${key}` }, signal: AbortSignal.timeout(30_000) });
     if (!poll.ok) throw new Error(`fal image poll failed: ${poll.status}`);
     const state = (await poll.json()) as { status?: string; response_url?: string; error?: unknown };
     if (state.status === "COMPLETED" && state.response_url) {
-      const res = await fetch(state.response_url, { headers: { authorization: `Bearer ${key}` } });
-      const data = (await res.json()) as { images?: Array<{ url?: string } | string>; image?: { url?: string } | string };
+      const res = await fetch(state.response_url, { headers: { authorization: `Key ${key}` }, signal: AbortSignal.timeout(60_000) });
+      const data = (await res.json()) as { images?: Array<{ url?: string } | string>; image?: { url?: string } | string; detail?: unknown };
+      // Fast-fail on error bodies — a completed job with {"detail": [...]} is dead.
+      if (data.detail) {
+        throw new Error(`fal image generation failed: ${JSON.stringify(data.detail).slice(0, 400)}`);
+      }
       const images = data.images ?? [];
       const first = typeof images[0] === "string" ? images[0] : images[0]?.url;
       const url = first ?? (typeof data.image === "string" ? data.image : data.image?.url);

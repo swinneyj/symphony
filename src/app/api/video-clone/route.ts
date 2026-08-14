@@ -32,6 +32,10 @@ export async function POST(request: Request) {
     const textChange = (form.get("textChange") as string | null)?.trim() || undefined;
     const motionPrompt = (form.get("motionPrompt") as string | null)?.trim() || undefined;
     const durationSec = Math.min(Math.max(Number(form.get("durationSec") ?? 5) || 5, 5), 10);
+    const model = (form.get("model") as string) || "kling-pro";
+    if (!["kling-pro", "kling-standard", "sora", "veo"].includes(model)) {
+      return NextResponse.json({ error: "invalid model" }, { status: 400 });
+    }
     const file = form.get("source") as File | null;
     const sourceVideoUrl = (form.get("sourceVideoUrl") as string | null)?.trim() ?? "";
 
@@ -98,6 +102,7 @@ export async function POST(request: Request) {
           ...(textChange ? { textChange } : {}),
           ...(motionPrompt ? { motionPrompt } : {}),
           durationSec,
+          model,
         },
       })
       .returning();
