@@ -101,8 +101,9 @@ fal.ai queue accepts **any** `fal-ai/<path>` submission and fails at run time wi
 3. Animate the edited frame — `fal-ai/kling-video/v3/pro/image-to-video` (`start_image_url` + motion prompt)
 - Cost floor: ~$0.02–0.05 image edit + ~$0.10–0.40 Kling 5s (verify at first run) ≈ **$0.15–0.50/clone** — vs nych.ai's $39/mo credit packs. No new keys.
 - **VERIFIED LIVE 2026-08-13** end-to-end in the worker (`v2v_edit` jobType): testsrc source → neon-nightclub scene with "BUY NOW" on-screen text change, 5s clip, ~$0.30-ish, job landed on Blob. Production worker rebuilt + claims v2v_edit.
+- **QA PASSED on a REAL video 2026-08-13:** a Sora product render (Barebells can in a kitchen) → "neon-lit nightclub counter, purple/pink lighting" — product label preserved, scene swapped cleanly, ~$0.30. The Clone tab + `/api/video-clone` are live in the repo (needs Vercel redeploy to surface).
+- **True-V2V tested and REJECTED:** Kling 3.0 `video_url` param passes validation echo but fails at run time (`start_image_url` required) — frame-edit is the only path; the dead direct branch was removed from the worker. falSubmit now fails fast on `{"detail":…}` bodies instead of polling a doomed job to timeout.
 - Schema gotchas (pydantic-verified): image edit wants **`image_urls` (array)**; provider-owned models (openai/…) sit at the **queue root** (`queue.fal.run/openai/...`, no `fal-ai/` prefix); Kling i2v wants **`start_image_url`**.
-- 🎯 **Kling 3.0 i2v also accepts `video_url`** (param echoed as valid in validation) → **true V2V may be possible without frame-edit** — `generateCloneVideoDirect()` is in the worker; test on a real video in QA before settling on frame-edit.
 
 **Pipeline B — Sora edit/remix (BONUS, for our own renders).** Store the Sora `video_` id on batch/job rows at render time → `POST /videos/edits {video:{id},prompt}` or `/videos/{id}/remix` for bg/angle changes on Steal-This-Ad outputs. Zero upload cost.
 
