@@ -211,12 +211,18 @@ async function falSubmit(queueId: string, key: string, body: unknown): Promise<s
 
 async function generateSeedance(req: FootageRequest): Promise<string> {
   const key = requireKey("seedance");
-  // TODO_VERIFY: exact fal queue id for Seedance image-to-video.
-  return falSubmit("/fal-ai/byte-dance/seedance/v1.5-alpha/image-to-video", key, {
+  // Verified live 2026-08-14: fal moved Seedance off the old
+  // /fal-ai/byte-dance/seedance/v1.5-alpha path (404 "Application not
+  // found") to provider-owned /bytedance/seedance-2.5/image-to-video
+  // (queue root, no fal-ai prefix — same convention as openai/*).
+  // Seedance 2.5 caps resolution at 720p (480p/720p enum) — clamp "pro"
+  // formulas down so they don't 422.
+  const resolution = req.resolution === "1080p" ? "720p" : req.resolution;
+  return falSubmit("/bytedance/seedance-2.5/image-to-video", key, {
     image_url: req.imageUrl,
     prompt: req.prompt,
     duration: req.durationSec,
-    resolution: req.resolution,
+    resolution,
   });
 }
 
