@@ -8,12 +8,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Play, Loader2, Package, Film, Type, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Play, Loader2, Package, Film, Type, CheckCircle2, Plus, X, Search } from "lucide-react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 interface Formula {
   id: string;
@@ -58,7 +60,9 @@ export default function FormulaRunPage() {
   const [loading, setLoading] = useState(true);
 
   // Run settings (BatchBot view=run controls).
-  const [productId, setProductId] = useState("");
+  const [productIds, setProductIds] = useState<string[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState("");
   const [mode, setMode] = useState<"fast" | "quality">("fast"); // Fast | Quality
   const [resolution, setResolution] = useState<"480p" | "720p">("480p");
   const [overlayText, setOverlayText] = useState("");
@@ -141,7 +145,7 @@ export default function FormulaRunPage() {
     if (res.ok) {
       const rows: Product[] = await res.json();
       setProducts(rows);
-      if (rows.length > 0) setProductId(rows[0].id);
+      if (rows.length > 0) setProductIds((cur) => (cur.length > 0 ? cur : [rows[0].id]));
     }
   }, []);
 
@@ -169,8 +173,8 @@ export default function FormulaRunPage() {
 
   const run = async () => {
     if (!workspaceId || !formula) return;
-    if (!productId) {
-      toast.error("Select a product first");
+    if (productIds.length === 0) {
+      toast.error("Select at least one product first");
       return;
     }
     setRunning(true);
@@ -183,18 +187,18 @@ export default function FormulaRunPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           workspaceId,
-          name: `${formula.name} — ${products.find((p) => p.id === productId)?.name ?? "product"}`,
+          name: `${formula.name} — ${productIds.length} product(s)`,
           formulaId: formula.id,
           voiceId: voiceId || null,
           quality,
           provider: engine,
-          productIds: [productId],
+          productIds,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to run");
       setDone(true);
-      toast.success(`Queued — video rendering now`);
+      toast.success(`Queued — ${productIds.length} video(s) rendering now`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to run");
     } finally {
@@ -245,22 +249,118 @@ export default function FormulaRunPage() {
         </div>
       </div>
 
-      {/* Product input */}
+      {/* Product input — BatchBot showcase-style picker */}
       <section className="rounded-lg border p-4">
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Product input</p>
         <p className="mb-2 text-xs text-muted-foreground">Choose the product used in the formula.</p>
-        <select
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-          value={productId}
-          onChange={(e) => setProductId(e.target.value)}
-        >
-          {products.length === 0 && <option value="">No products yet</option>}
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        {productIds.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {productIds.map((id) => {
+              const p = products.find((x) => x.id === id);
+              if (!p) return null;
+              return (
+                <div
+                  key={id}
+                  className="flex items-center gap-2 rounded-md border bg-muted/40 py-1 pl-1 pr-2 text-sm"
+                >
+                  {p.originalImageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={p.originalImageUrl}
+                      alt=""
+                      className="h-8 w-8 rounded object-cover"
+                    />
+                  )}
+                  <span className="max-w-40 truncate">{p.name}</span>
+                  <button
+                    onClick={() => setProductIds((cur) => cur.filter((x) => x !== id))}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove ${p.name}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+            <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>
+              <Plus className="h-3.5 w-3.5" /> Add products
+            </Button>
+          </div>
+        ) : (
+          <Button variant="outline" className="w-full justify-start" onClick={() => setPickerOpen(true)}>
+            <Package className="h-4 w-4" /> Select products
+          </Button>
+        )}
+
+        <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Select products</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  placeholder="Search your products…"
+                  className="pl-8"
+                />
+              </div>
+              <div className="max-h-72 space-y-1 overflow-y-auto">
+                {products.length === 0 && (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    No products yet — add them from the Products tab first.
+                  </p>
+                )}
+                {products
+                  .filter((p) => p.name.toLowerCase().includes(productSearch.toLowerCase()))
+                  .map((p) => {
+                    const checked = productIds.includes(p.id);
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() =>
+                          setProductIds((cur) =>
+                            checked ? cur.filter((x) => x !== p.id) : [...cur, p.id]
+                          )
+                        }
+                        className={`flex w-full items-center gap-3 rounded-md border p-2 text-left text-sm transition-colors ${
+                          checked ? "border-blue-500 bg-blue-50" : "hover:bg-muted/50"
+                        }`}
+                      >
+                        {p.originalImageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={p.originalImageUrl}
+                            alt=""
+                            className="h-10 w-10 shrink-0 rounded object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted">
+                            <Package className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        )}
+                        <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                        {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600" />}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                onClick={() => {
+                  setPickerOpen(false);
+                  setProductSearch("");
+                }}
+                disabled={productIds.length === 0}
+              >
+                {productIds.length > 0 ? `Add ${productIds.length} product(s)` : "No products selected"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {products.length === 0 && (
           <Link href="/video-studio" className="mt-2 inline-block text-xs text-blue-600 hover:underline">
             Add a product first
@@ -360,7 +460,7 @@ export default function FormulaRunPage() {
           Run the workflow to generate your finished video. {formula.durationSec ?? 6}s clip
           {formula.boomerang ? " · ↺ boomerang (doubles length)" : ""} · {mode === "quality" || resolution === "720p" ? "720p" : "480p"}
         </p>
-        <Button onClick={run} disabled={running || !productId} className="w-full">
+        <Button onClick={run} disabled={running || productIds.length === 0} className="w-full">
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
           {running ? "Running…" : "Run"}
         </Button>
