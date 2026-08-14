@@ -103,6 +103,13 @@ export async function POST(request: Request) {
       provider,
       productIds,
       tiktokAccountId,
+      // Run-view overrides (BatchBot view=run): explicit user choices beat
+      // formula defaults for this batch only.
+      durationSec: runDurationSec,
+      boomerang: runBoomerang,
+      overlayTemplate: runOverlayTemplate,
+      overlayFontSize,
+      imageResolution,
     }: {
       workspaceId?: string;
       name?: string;
@@ -112,6 +119,11 @@ export async function POST(request: Request) {
       provider?: string;
       productIds?: string[];
       tiktokAccountId?: string | null;
+      durationSec?: number | null;
+      boomerang?: boolean | null;
+      overlayTemplate?: string | null;
+      overlayFontSize?: number | null;
+      imageResolution?: string | null;
     } = body;
 
     if (!workspaceId || !name?.trim() || !formulaId || !Array.isArray(productIds) || productIds.length === 0) {
@@ -205,15 +217,20 @@ export async function POST(request: Request) {
         script: rendered.script,
         metadata: {
           // Boomerang + CTA overlay flow from the formula to the final assembly.
-          extendMode: boomerang ? "reverse" : "none",
-          overlayTemplate: overlayTemplate ?? null,
+          // Run-view overrides win when the user touched them in view=run.
+          extendMode: (runBoomerang ?? boomerang) ? "reverse" : "none",
+          overlayTemplate: runOverlayTemplate ?? overlayTemplate ?? null,
+          ...(overlayFontSize ? { overlayFontSize } : {}),
           // Which TikTok account this batch publishes to (multi-account).
           ...(tiktokAccountId ? { tiktokAccountId } : {}),
           // Graph-authored scene/motion/duration/quality override the formula row.
           ...(gScenePrompt ? { scenePromptTemplate: gScenePrompt } : {}),
           ...(gMotionPreset ? { motionPreset: gMotionPreset } : {}),
-          ...(gDurationSec ? { durationSec: gDurationSec } : {}),
-          ...(gQuality ? { quality: gQuality } : {}),
+          // Run-view length beats graph beats formula flat.
+          ...(runDurationSec ? { durationSec: runDurationSec } : gDurationSec ? { durationSec: gDurationSec } : {}),
+          // Run-view quality beats graph beats formula flat.
+          ...(quality && quality !== "standard" ? { quality } : gQuality ? { quality: gQuality } : {}),
+          ...(imageResolution ? { imageResolution } : {}),
         },
       });
     }

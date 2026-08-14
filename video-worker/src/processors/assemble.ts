@@ -97,9 +97,11 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
         const textFile = `${workdir}/overlay.txt`;
         const { writeFile } = await import("node:fs/promises");
         await writeFile(textFile, text, "utf8");
+        // BatchBot view=run sends overlayFontSize (their default style is 62).
+        const fontSize = Number(job.metadata?.overlayFontSize ?? 44);
         overlayArgs = [
           "-vf",
-          `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=44:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=18:x=(w-text_w)/2:y=h*0.82`,
+          `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=18:x=(w-text_w)/2:y=h*0.82`,
         ];
         console.log(`[video-worker] assemble overlay job=${job.id}: "${text.slice(0, 60)}"`);
       } else {

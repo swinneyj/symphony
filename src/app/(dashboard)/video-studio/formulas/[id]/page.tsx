@@ -1,14 +1,31 @@
 "use client";
 
-// Formula run view — BatchBot-style flow page for one formula.
-// Mirrors batchbot.io/app/formulas/<id>?view=run:
-//   Product input → Video settings (mode/resolution) → Text overlay → Output (Run).
-// Runs a batch through POST /api/batches (same path as the New batch form).
+// Formula run view — mirrors batchbot.io/app/formulas/<id>?view=run exactly:
+//   Product input
+//   Video settings (Mode / Resolution / Length)
+//   Image settings (Resolution applied to AI images)
+//   Final video settings (Reverse playback toggle + Text Overlay with Style)
+//   Output (Run)
+// Runs a batch through POST /api/batches; run-view overrides (duration,
+// boomerang, overlay text/style, image resolution) beat formula defaults.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Play, Loader2, Package, Film, Type, CheckCircle2, Plus, X, Search } from "lucide-react";
+import {
+  ArrowLeft,
+  Play,
+  Loader2,
+  Package,
+  CheckCircle2,
+  Plus,
+  X,
+  Search,
+  Repeat,
+  Type,
+  Image as ImageIcon,
+  Film,
+} from "lucide-react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -48,6 +65,8 @@ interface Voice {
 }
 
 const ENGINES = ["sora", "seedance", "veo", "kling"];
+const LENGTH_OPTIONS = [4, 5, 6, 8, 10, 15];
+const IMAGE_RES_OPTIONS = ["480p", "720p", "1080p"];
 
 export default function FormulaRunPage() {
   const params = useParams<{ id: string }>();
@@ -59,13 +78,21 @@ export default function FormulaRunPage() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Run settings (BatchBot view=run controls).
+  // ── Run settings (BatchBot view=run controls) ────────────────────────────
   const [productIds, setProductIds] = useState<string[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [productSearch, setProductSearch] = useState("");
+  // Video settings
   const [mode, setMode] = useState<"fast" | "quality">("fast"); // Fast | Quality
   const [resolution, setResolution] = useState<"480p" | "720p">("480p");
+  const [lengthSec, setLengthSec] = useState(4);
+  // Image settings
+  const [imageResolution, setImageResolution] = useState("720p");
+  // Final video settings
+  const [reversePlayback, setReversePlayback] = useState(false);
   const [overlayText, setOverlayText] = useState("");
+  const [overlayStyle, setOverlayStyle] = useState(62); // BatchBot default style
+  // Voice / engine (Symphony-specific, kept below the mirrored sections)
   const [voiceId, setVoiceId] = useState("");
   const [engine, setEngine] = useState("seedance");
   const [running, setRunning] = useState(false);
@@ -125,7 +152,7 @@ export default function FormulaRunPage() {
     text: "💬 Text",
   };
 
-  const loadFormula = useCallback(async (wsId: string) => {
+  const loadFormula = useCallback(async () => {
     const res = await fetch(`/api/formulas/${formulaId}`);
     if (!res.ok) {
       toast.error("Formula not found");
@@ -136,8 +163,9 @@ export default function FormulaRunPage() {
     // Prefill run settings from the formula's own flow.
     setMode(f.quality === "pro" ? "quality" : "fast");
     setResolution(f.quality === "pro" ? "720p" : "480p");
+    setLengthSec(f.durationSec ?? 4);
     setOverlayText(f.overlayTemplate ?? "");
-    if (f.boomerang) setMode("quality");
+    setReversePlayback(f.boomerang);
   }, [formulaId]);
 
   const loadProducts = useCallback(async (wsId: string) => {
@@ -166,7 +194,7 @@ export default function FormulaRunPage() {
       const active = resolveActiveWorkspace(workspaces);
       if (!active) return;
       setWorkspaceId(active.id);
-      await Promise.all([loadFormula(active.id), loadProducts(active.id), loadVoices(active.id)]);
+      await Promise.all([loadFormula(), loadProducts(active.id), loadVoices(active.id)]);
       setLoading(false);
     })();
   }, [loadFormula, loadProducts, loadVoices]);
@@ -194,6 +222,12 @@ export default function FormulaRunPage() {
           quality,
           provider: engine,
           productIds,
+          // Run-view overrides (BatchBot view=run controls)
+          durationSec: lengthSec,
+          boomerang: reversePlayback,
+          overlayTemplate: overlayText.trim() || null,
+          overlayFontSize: overlayStyle,
+          imageResolution,
         }),
       });
       const data = await res.json();
@@ -226,6 +260,11 @@ export default function FormulaRunPage() {
     );
   }
 
+  const toggle = (on: boolean, set: (v: boolean) => void) =>
+    `flex items-center gap-2 rounded-md border p-2 text-sm transition-colors ${
+      on ? "border-blue-500 bg-blue-50" : "hover:bg-muted/50"
+    }`;
+
   return (
     <main className="mx-auto w-full max-w-2xl space-y-6 px-4 py-8">
       {/* Header */}
@@ -250,7 +289,7 @@ export default function FormulaRunPage() {
         </div>
       </div>
 
-      {/* Product input — BatchBot showcase-style picker */}
+      {/* Product input */}
       <section className="rounded-lg border p-4">
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Product input</p>
         <p className="mb-2 text-xs text-muted-foreground">Choose the product used in the formula.</p>
@@ -369,11 +408,13 @@ export default function FormulaRunPage() {
         )}
       </section>
 
-      {/* Video settings */}
+      {/* Video settings — AI Video */}
       <section className="rounded-lg border p-4">
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Video settings</p>
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <Film className="mr-1 inline h-3.5 w-3.5" /> Video settings
+        </p>
         <p className="mb-3 text-xs text-muted-foreground">Select the video settings you want.</p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label>Mode</Label>
             <div className="flex gap-1 rounded-md border p-0.5">
@@ -406,8 +447,102 @@ export default function FormulaRunPage() {
               ))}
             </div>
           </div>
+          <div className="space-y-1.5">
+            <Label>Length</Label>
+            <div className="flex flex-wrap gap-1 rounded-md border p-0.5">
+              {LENGTH_OPTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setLengthSec(s)}
+                  className={`flex-1 rounded px-2 py-1.5 text-sm ${
+                    lengthSec === s ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                  }`}
+                >
+                  {s}s
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+      </section>
+
+      {/* Image settings */}
+      <section className="rounded-lg border p-4">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <ImageIcon className="mr-1 inline h-3.5 w-3.5" /> Image settings
+        </p>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Quality applied to every generated AI Image.
+        </p>
+        <div className="space-y-1.5">
+          <Label>Resolution</Label>
+          <div className="flex gap-1 rounded-md border p-0.5">
+            {IMAGE_RES_OPTIONS.map((r) => (
+              <button
+                key={r}
+                onClick={() => setImageResolution(r)}
+                className={`flex-1 rounded px-3 py-1.5 text-sm ${
+                  imageResolution === r ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Final video settings — Composition */}
+      <section className="rounded-lg border p-4">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <Repeat className="mr-1 inline h-3.5 w-3.5" /> Final video settings
+        </p>
+        <p className="mb-3 text-xs text-muted-foreground">Options applied to your finished video.</p>
+
+        {/* Reverse playback */}
+        <button onClick={() => setReversePlayback((v) => !v)} className={`w-full ${toggle(reversePlayback, setReversePlayback)}`}>
+          <Repeat className={`h-4 w-4 ${reversePlayback ? "text-blue-600" : "text-muted-foreground"}`} />
+          <span className="flex-1 text-left">
+            <span className="block font-medium">Reverse playback</span>
+            <span className="block text-xs text-muted-foreground">
+              Plays your video forward, then in reverse back to the start. Doubles the length at no
+              extra credit cost.
+            </span>
+          </span>
+          {reversePlayback && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600" />}
+        </button>
+
+        {/* Text overlay */}
+        <div className="mt-3 space-y-2">
+          <p className="text-sm font-medium">Text Overlay</p>
+          <p className="text-xs text-muted-foreground">
+            The text shown on top of the video. Leave it blank to add no overlay text.
+          </p>
+          <textarea
+            className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+            value={overlayText}
+            onChange={(e) => setOverlayText(e.target.value)}
+            placeholder="e.g. @product is back! Tap the orange cart to see if you have coupons at checkout!"
+          />
+          <div className="flex items-center gap-3">
+            <Label>Style</Label>
+            <Input
+              type="number"
+              min={20}
+              max={120}
+              value={overlayStyle}
+              onChange={(e) => setOverlayStyle(Number(e.target.value) || 62)}
+              className="h-8 w-20"
+            />
+            <span className="text-xs text-muted-foreground">font size</span>
+          </div>
+        </div>
+      </section>
+
+      {/* Voice / engine (Symphony extras below the mirrored sections) */}
+      <section className="rounded-lg border p-4">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Voice &amp; engine</p>
+        <div className="mt-2 grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Voiceover</Label>
             <select
@@ -440,26 +575,13 @@ export default function FormulaRunPage() {
         </div>
       </section>
 
-      {/* Text overlay */}
-      <section className="rounded-lg border p-4">
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Text overlay</p>
-        <p className="mb-2 text-xs text-muted-foreground">
-          The text shown on top of the video. Leave it blank to add no overlay text. Variables: {"{product}"} {"{price}"}
-        </p>
-        <textarea
-          className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-          value={overlayText}
-          onChange={(e) => setOverlayText(e.target.value)}
-          placeholder="e.g. if u were gonna buy the {product}... tap the orange cart before they change the price 😭"
-        />
-      </section>
-
       {/* Output */}
       <section className="rounded-lg border p-4">
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Output</p>
         <p className="mb-3 text-xs text-muted-foreground">
-          Run the workflow to generate your finished video. {formula.durationSec ?? 6}s clip
-          {formula.boomerang ? " · ↺ boomerang (doubles length)" : ""} · {mode === "quality" || resolution === "720p" ? "720p" : "480p"}
+          Run the workflow to generate your finished video. {lengthSec}s clip
+          {reversePlayback ? " · ↺ reverse playback (doubles length)" : ""} ·{" "}
+          {mode === "quality" || resolution === "720p" ? "720p" : "480p"}
         </p>
         <Button onClick={run} disabled={running || productIds.length === 0} className="w-full">
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
