@@ -6,10 +6,45 @@ import { eq } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 
 /**
+ * GET /api/formulas/[id] — fetch one formula (system or workspace-owned).
  * PATCH /api/formulas/[id] — update a workspace's own formula.
  * DELETE /api/formulas/[id] — delete a workspace's own formula.
- * System formulas (workspaceId null) are read-only: 403.
+ * System formulas (workspaceId null) are read-only: 403 on write.
  */
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { id } = await params;
+    const [formula] = await db
+      .select()
+      .from(videoFormulas)
+      .where(eq(videoFormulas.id, id))
+      .limit(1);
+    if (!formula) {
+      return NextResponse.json({ error: "Formula not found" }, { status: 404 });
+    }
+
+    // System formulas (workspaceId null) are visible to any authed user.
+    // Workspace formulas require membership.
+    if (formula.workspaceId !== null) {
+      if (!(await hasWorkspaceAccess(formula.workspaceId, session.user.id))) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+
+    return NextResponse.json(formula);
+  } catch (error) {
+    console.error("Error fetching formula:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
 async function loadOwnedFormula(id: string, userId: string) {
   const [formula] = await db
     .select()
