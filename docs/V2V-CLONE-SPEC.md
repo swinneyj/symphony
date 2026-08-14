@@ -25,7 +25,7 @@ Deliberately NOT: script remixing (that's Steal This Ad), text-to-video from scr
 
 | Priority | Engine | Why | Access | Est. cost |
 |---|---|---|---|---|
-| **Primary** | **Sora 2 editing (OpenAI API)** | Already our render provider (`provider: "sora"` in batches, openai SDK in package.json). Sora's editing API accepts a source video + text edit. Zero new vendor, one key. | `OPENAI_API_KEY` (exists) | credit-based per video-second; verify current rate before committing |
+| **Primary** | **Sora 2 (OpenAI API)** | Already our render provider (`provider: "sora"` in batches, openai SDK in package.json). **Surface verified live 2026-08-13** (see below). | `OPENAI_API_KEY` (exists) | credit-based per video-second; verify current rate before committing |
 | **Secondary** | **Kling video editing (via fal.ai)** | The strongest V2V bg-swap/character-edit capability on the market (likely what the demo tool wraps). fal adapter pattern already exists for image workers. | `FAL_KEY` (new) | ~$0.10–0.60 per 5s by tier; verify |
 | **Evaluated** | **Veo 2 edits (Gemini API)** | Video-to-video editing via `veo` edit endpoint. Only if Sora/Kling under-deliver; adds third key. | `GEMINI_API_KEY` | similar per-second class; verify |
 | **Do NOT** | Runway/Act-Two | High quality but premium pricing + no existing integration. Revisit only if quality gap matters to Slippaz. | — | $0.50+/5s class |
@@ -58,6 +58,52 @@ Vercel (UI + API)                        VPS video-worker (existing container)
 3. Result lands in Post Queue with preview/download/share (`/f/[id]`) like every other render.
 4. Model picker switches provider/tier per job; failed jobs surface the provider error, not a silent stall.
 5. Cost per job logged on the batch row (provider, seconds, est. $) — no surprise spend.
+
+## 4b. Sora editing surface — VERIFIED live 2026-08-13
+
+Probed against the live API with the production key. The SDK (`openai@6.48`) is **stale on video editing** — the master OpenAPI spec + live endpoints disagree with it. Ground truth:
+
+| Endpoint | Method | Body | Status |
+|---|---|---|---|
+| `/v1/videos/characters` | POST | multipart `{ name, video: <mp4, must be `video/mp4` mimetype> }` → character id (async ingest, minutes) | ✅ live (mimetype-validated; `application/octet-stream` rejected) |
+| `/v1/videos/edits` | POST | JSON `{ video: { id }, prompt }` — id = completed video | ✅ live (JSON form); multipart `video` field **rejected** (`Unknown parameter: 'video'`) |
+| `/v1/videos/{id}/remix` | POST | JSON `{ prompt }` — remix a completed video | ✅ live |
+| `/v1/videos` | POST | JSON/multipart `{ prompt, input_reference: { image_url | file_id }, seconds, size }` | ⚠️ `input_reference` **rejects raw file uploads** (expects object); image refs only |
+| `/v1/files` | POST | upload mp4 | ❌ rejected — mp4 not in accepted formats for vision/assistants purposes |
+
+**Implications for the build:**
+- **Uploaded source videos enter Sora via `createCharacter`** (the only mp4 upload path) → returned id feeds `/videos/edits` (or remix). The character is ALSO the "model picker" asset: upload once, reuse across jobs. Name it from the source (e.g. `steal-<adSourceId>`).
+- **Fast path for our own renders:** Steal-This-Ad/Sora outputs already have video ids → `edits`/`remix` directly, no upload round-trip.
+- Files API is a dead end for video; do NOT design around it.
+- SDK mismatch: the worker already calls raw `fetch` for Sora — keep that pattern (do not use `client.videos.edit`, it sends the wrong field).
+
+## 4c. Kling/fal surface — VERIFIED live 2026-08-13 (and a landmine)
+
+fal.ai queue accepts **any** `fal-ai/<path>` submission and fails at run time with `Path ... not found` — so "submitted OK" means nothing. Real ids were harvested from fal's explore page ("Copy" buttons) + validation-error probing:
+
+| fal model id | Status | Notes |
+|---|---|---|
+| `fal-ai/kling-video/v3/pro/image-to-video` | ✅ REAL | schema: `start_image_url` (required) + `prompt` + ... — validated via pydantic error |
+| `fal-ai/kling-video/v3/standard/image-to-video` | ✅ REAL | |
+| `fal-ai/kling-video/v3/pro/text-to-video`, `/standard/text-to-video` | ✅ REAL | |
+| `fal-ai/kling-video/v2.5-turbo/pro/image-to-video` | ✅ REAL | |
+| `fal-ai/kling-video/v2.5/image-to-video` (worker's configured path) | ❌ **FAKE** | `Path not found` — **the worker's Kling engine has never actually run** |
+| `fal-ai/byte-dance/seedance/v1.5-alpha/image-to-video` (worker's path) | ❌ **FAKE** | `Application "byte-dance" not found` — same |
+| `fal-ai/kling-video/v3/*/video-edit|editing|v2v` | ❌ FAKE | **No Kling video-edit model on fal** |
+
+**Landmine:** the video-worker's `seedance`/`kling` engines are dead config — every non-Sora batch must have silently failed or been routed elsewhere. Audit + fix (or remove) in a separate pass; do NOT rely on them.
+
+## 4d. PIPELINE DECISION (Hermes, per delegated provider authority)
+
+**Pipeline A — Frame-Edit → Re-Animate (PRIMARY, zero new vendor).** This is what the nych.ai demo actually does under the hood, and it's fully buildable on current keys:
+1. ffmpeg → extract key frame from source video
+2. Image edit on the frame — `fal-ai/nano-banana-pro/edit` (typography-capable) or `openai/gpt-image-2/edit`: "change background to X, replace on-screen text with Y, keep the subject"
+3. Animate the edited frame — `fal-ai/kling-video/v3/pro/image-to-video` (`start_image_url` + motion prompt)
+- Cost floor: ~$0.02–0.05 image edit + ~$0.10–0.40 Kling 5s (verify at first run) ≈ **$0.15–0.50/clone** — vs nych.ai's $39/mo credit packs. No new keys.
+
+**Pipeline B — Sora edit/remix (BONUS, for our own renders).** Store the Sora `video_` id on batch/job rows at render time → `POST /videos/edits {video:{id},prompt}` or `/videos/{id}/remix` for bg/angle changes on Steal-This-Ad outputs. Zero upload cost.
+
+**Pipeline C — Kling native editing API (EVALUATED).** True V2V (temporal consistency) via api.klingai.com `/v1/videos/edits`. Needs `KLING_API_KEY` (new vendor). Revisit ONLY if Slippaz finds A's motion fidelity lacking.
 
 ## 5. Open questions (parked until kickoff)
 
