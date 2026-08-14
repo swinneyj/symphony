@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { adSources, adRemixes } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { adSources, adRemixes, llmUsage } from "@/db/schema";
+import { eq, and, desc } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { restructureAd } from "@/lib/ads/restructure";
 import { resolveProductLink } from "@/lib/ads/product-link";
@@ -75,6 +75,13 @@ export async function POST(
       variants,
       tone,
       mode: isProduct ? "product" : "transcript",
+      usageCtx: {
+        workspaceId: source.workspaceId,
+        createdById: userId,
+        surface: "remix",
+        entityType: "ad_source",
+        entityId: id,
+      },
     });
     if (remixes.length === 0) {
       return NextResponse.json(
@@ -98,7 +105,29 @@ export async function POST(
       )
       .returning();
 
-    return NextResponse.json(rows, { status: 201 });
+    // Actual LLM usage for this remix run (recorded by the usage tracker).
+    const [usage] = await db
+      .select({
+        model: llmUsage.model,
+        provider: llmUsage.provider,
+        inputTokens: llmUsage.inputTokens,
+        outputTokens: llmUsage.outputTokens,
+        cacheReadTokens: llmUsage.cacheReadTokens,
+        costUsd: llmUsage.costUsd,
+        estimatedCostUsd: llmUsage.estimatedCostUsd,
+      })
+      .from(llmUsage)
+      .where(
+        and(
+          eq(llmUsage.entityType, "ad_source"),
+          eq(llmUsage.entityId, id),
+          eq(llmUsage.surface, "remix")
+        )
+      )
+      .orderBy(desc(llmUsage.createdAt))
+      .limit(1);
+
+    return NextResponse.json({ remixes: rows, usage }, { status: 201 });
   } catch (error) {
     console.error("Error generating remixes:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

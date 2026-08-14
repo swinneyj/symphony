@@ -37,6 +37,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { MOTION_PRESETS } from "@/lib/video/presets";
+import { formatUsd } from "@/lib/usage-core";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -1603,6 +1604,9 @@ interface BatchSummary {
   jobsTotal: number;
   jobsDone: number;
   jobsFailed: number;
+  aiCostUsd?: number;
+  aiLlmCostUsd?: number;
+  aiLlmCalls?: number;
 }
 
 interface BatchDetailJob {
@@ -1915,6 +1919,11 @@ function BatchStudioTab({
                     {batch.quality} · {batch.provider} ·{" "}
                     {batch.jobsDone}/{batch.jobsTotal} done
                     {batch.jobsFailed > 0 && ` · ${batch.jobsFailed} failed`}
+                    {typeof batch.aiCostUsd === "number" && batch.aiCostUsd > 0 && (
+                      <span className="ml-1 text-emerald-600">
+                        · AI spend {formatUsd(batch.aiCostUsd)}
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">

@@ -26,6 +26,13 @@ import {
 import "@xyflow/react/dist/style.css";
 import { toast } from "sonner";
 import { Share2 } from "lucide-react";
+import {
+  estimateChatCost,
+  formatUsd,
+  formatTokens,
+  type CostEstimate,
+} from "@/lib/usage-core";
+import { buildPrompt } from "@/lib/video/agent-prompt";
 
 type NodeType =
   | "product"
@@ -158,6 +165,14 @@ function StudioInner() {
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentSummary, setAgentSummary] = useState<string | null>(null);
+  // Usage tracking: estimate before send, actual (from the ledger) after.
+  const [agentEstimate, setAgentEstimate] = useState<CostEstimate | null>(null);
+  const [agentUsage, setAgentUsage] = useState<{
+    model: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: string | null;
+  } | null>(null);
   const { fitView } = useReactFlow();
 
   // Load workspace + optional formula to edit.
@@ -287,6 +302,20 @@ function StudioInner() {
         })),
         edges,
       };
+      // Pre-flight estimate: the EXACT prompt the agent will see (shared
+      // builder) + the 1,800-token output cap.
+      const est = estimateChatCost(
+        "agent",
+        [
+          { role: "system", content: "You output strict JSON only." },
+          {
+            role: "user",
+            content: buildPrompt(currentGraph, agentPrompt.trim()),
+          },
+        ],
+        { maxOutputTokens: 1800 }
+      );
+      setAgentEstimate(est);
       const res = await fetch("/api/formulas/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -294,6 +323,7 @@ function StudioInner() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Agent failed");
+      setAgentUsage(data.usage ?? null);
       const newNodes = (data.nodes as Array<{ id: string; type: string; position: { x: number; y: number }; data: Record<string, unknown> }>).map(
         (n) => ({ id: n.id, type: "studio" as const, position: n.position, data: { type: n.type, ...n.data } })
       );
@@ -541,7 +571,7 @@ function StudioInner() {
       </div>
 
       {/* Agent bar — LLM rewires the graph from a prompt */}
-      <div className="flex items-center gap-2 rounded-lg border bg-white p-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2">
         <span className="text-base">🤖</span>
         <input
           value={agentPrompt}
@@ -552,6 +582,19 @@ function StudioInner() {
           placeholder='Ask the agent: "add a boomerang before output and a sale CTA overlay"'
           className="h-9 flex-1 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus:border-blue-500"
         />
+        {agentUsage && (
+          <span className="max-w-64 truncate text-xs text-emerald-700" title="Actual AI cost of the last agent call">
+            ~{formatUsd(Number(agentUsage.costUsd ?? 0))} ·{" "}
+            {formatTokens((agentUsage.inputTokens ?? 0) + (agentUsage.outputTokens ?? 0))} tokens
+            {agentUsage.model ? ` · ${agentUsage.model}` : ""}
+          </span>
+        )}
+        {agentEstimate && !agentUsage && !agentBusy && (
+          <span className="text-xs text-muted-foreground" title="Estimated AI cost of the next agent call">
+            est ~{formatUsd(agentEstimate.costUsd)} ·{" "}
+            {formatTokens(agentEstimate.inputTokens + agentEstimate.outputTokens)} tokens
+          </span>
+        )}
         {agentSummary && (
           <span className="max-w-72 truncate text-xs text-emerald-700">{agentSummary}</span>
         )}

@@ -525,6 +525,35 @@ export const adRemixes = pgTable("ad_remixes", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+/**
+ * LLM usage ledger (0011): one row per real LLM API call, recorded from the
+ * response's `usage` object so spend figures are actuals, not guesses.
+ * `surface` = which product feature made the call ("fill" | "agent" | "remix");
+ * `entityType`/`entityId` attach it to an ad_source / formula / batch for rollups.
+ */
+export const llmUsage = pgTable("llm_usage", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  surface: text("surface").notNull(), // "fill" | "agent" | "remix"
+  entityType: text("entity_type"), // "ad_source" | "formula" | "batch"
+  entityId: uuid("entity_id"),
+  model: text("model").notNull(),
+  provider: text("provider"), // gemini | deepseek | openai
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+  costUsd: numeric("cost_usd", { precision: 12, scale: 6 }),
+  estimatedInputTokens: integer("estimated_input_tokens"),
+  estimatedOutputTokens: integer("estimated_output_tokens"),
+  estimatedCostUsd: numeric("estimated_cost_usd", { precision: 12, scale: 6 }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 export const marketProducts = pgTable("market_products", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id")
@@ -659,6 +688,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   inboxReplies: many(inboxReplies),
   products: many(products),
   videoBatches: many(videoBatches),
+  llmUsage: many(llmUsage),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
@@ -675,6 +705,7 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
   videoFormulas: many(videoFormulas),
   videoBatches: many(videoBatches),
   videoBatchJobs: many(videoBatchJobs),
+  llmUsage: many(llmUsage),
 }));
 
 export const socialAccountsRelations = relations(socialAccounts, ({ one, many }) => ({

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { products, videoFormulas } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { products, videoFormulas, llmUsage } from "@/db/schema";
+import { eq, and, desc } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { renderScript } from "@/lib/video/script-fill";
 
@@ -57,13 +57,46 @@ export async function POST(request: Request) {
         description: product.description,
         price: product.price,
       },
-      { llm }
+      {
+        llm,
+        usageCtx: {
+          workspaceId,
+          createdById: session.user.id,
+          surface: "fill",
+          entityType: "formula",
+          entityId: formula.id,
+        },
+      }
     );
+
+    // Actual LLM usage for this render (recorded by the usage tracker).
+    const [usage] = await db
+      .select({
+        model: llmUsage.model,
+        provider: llmUsage.provider,
+        inputTokens: llmUsage.inputTokens,
+        outputTokens: llmUsage.outputTokens,
+        cacheReadTokens: llmUsage.cacheReadTokens,
+        costUsd: llmUsage.costUsd,
+        estimatedCostUsd: llmUsage.estimatedCostUsd,
+      })
+      .from(llmUsage)
+      .where(
+        and(
+          eq(llmUsage.surface, "fill"),
+          eq(llmUsage.entityType, "formula"),
+          eq(llmUsage.entityId, formula.id),
+          eq(llmUsage.createdById, session.user.id)
+        )
+      )
+      .orderBy(desc(llmUsage.createdAt))
+      .limit(1);
 
     return NextResponse.json({
       formulaId: formula.id,
       productId: product.id,
       ...rendered,
+      usage,
     });
   } catch (error) {
     console.error("Error rendering script:", error);

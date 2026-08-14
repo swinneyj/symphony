@@ -1,5 +1,6 @@
 import { withLLM } from "@/lib/llm";
 import { guessCategory } from "./presets";
+import { estimateChatCost, recordLlmUsage, type UsageContext } from "@/lib/usage";
 
 /**
  * Script fill engine: renders a formula's scriptTemplate with product data.
@@ -23,26 +24,34 @@ export type RenderedScript = {
   llm: boolean;
 };
 
-async function llmFeatures(product: ScriptProduct): Promise<string[] | null> {
-  const res = await withLLM("fill", (client, model) =>
-    client.chat.completions.create({
+async function llmFeatures(
+  product: ScriptProduct,
+  usageCtx?: UsageContext
+): Promise<string[] | null> {
+  const messages: Array<{ role: "system" | "user"; content: string }> = [
+    {
+      role: "system",
+      content:
+        "You write TikTok Shop video scripts. From the product description, extract 2-3 short selling points. Each selling point must be ≤8 words, must come ONLY from the given description (never invent claims), and must be ready to speak aloud. Return a JSON array of strings, nothing else.",
+    },
+    {
+      role: "user",
+      content: `Product: ${product.name}\nDescription: ${product.description ?? "(none)"}`,
+    },
+  ];
+  const estimate = estimateChatCost("fill", messages, { maxOutputTokens: 120 });
+  let usedModel = estimate.model;
+  const res = await withLLM("fill", (client, model) => {
+    usedModel = model; // actual model that served (chain may have fallen back)
+    return client.chat.completions.create({
       model,
       max_tokens: 120,
       temperature: 0.7,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You write TikTok Shop video scripts. From the product description, extract 2-3 short selling points. Each selling point must be ≤8 words, must come ONLY from the given description (never invent claims), and must be ready to speak aloud. Return a JSON array of strings, nothing else.",
-        },
-        {
-          role: "user",
-          content: `Product: ${product.name}\nDescription: ${product.description ?? "(none)"}`,
-        },
-      ],
-    })
-  );
+      messages,
+    });
+  });
   if (!res) return null;
+  if (usageCtx) await recordLlmUsage(usageCtx, usedModel, res.usage, estimate);
 
   const text = res.choices[0]?.message?.content?.trim();
     if (!text) return null;
@@ -73,13 +82,13 @@ function heuristicFeatures(product: ScriptProduct): string[] {
 export async function renderScript(
   template: string,
   product: ScriptProduct,
-  opts: { llm?: boolean } = {}
+  opts: { llm?: boolean; usageCtx?: UsageContext } = {}
 ): Promise<RenderedScript> {
   let features: string[];
   let llm = false;
 
   if (opts.llm !== false) {
-    const fromLlm = await llmFeatures(product);
+    const fromLlm = await llmFeatures(product, opts.usageCtx);
     if (fromLlm) {
       features = fromLlm;
       llm = true;

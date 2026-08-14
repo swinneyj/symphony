@@ -27,6 +27,7 @@ import {
   Film,
 } from "lucide-react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
+import { estimateMediaCost, formatUsd, formatTokens, type MediaCostBreakdown } from "@/lib/usage-core";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -97,6 +98,49 @@ export default function FormulaRunPage() {
   const [engine, setEngine] = useState("seedance");
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
+  // Usage tracking: estimate before Run, actuals after (from the usage ledger).
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [actual, setActual] = useState<{
+    llm: { inputTokens: number; outputTokens: number; costUsd: number; estimatedCostUsd: number; calls: number };
+    media: MediaCostBreakdown;
+  } | null>(null);
+
+  /** Live pre-flight estimate of the AI spend for this run. */
+  const estimate = useMemo(() => {
+    const quality = mode === "fast" && resolution === "480p" ? "fast" : "standard";
+    const voice = voices.find((v) => v.id === voiceId);
+    return estimateMediaCost({
+      productCount: productIds.length,
+      quality,
+      durationSec: lengthSec,
+      engine,
+      voiceProvider: voice?.provider ?? null,
+    });
+  }, [productIds.length, mode, resolution, lengthSec, engine, voices, voiceId]);
+
+  // Poll the batch while it renders so the "actual spend" panel stays real.
+  useEffect(() => {
+    if (!done || !batchId) return;
+    let stopped = false;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/batches/${batchId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!stopped && data.usage) setActual(data.usage);
+      } catch {
+        // transient — keep polling
+      }
+    };
+    load();
+    const t = setInterval(load, 20_000);
+    const stop = setTimeout(() => clearInterval(t), 4 * 60 * 1000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+      clearTimeout(stop);
+    };
+  }, [done, batchId]);
 
   // Flow chain for display (from nodeGraph when present, else flat fields).
   const chain = useMemo(() => {
@@ -232,6 +276,7 @@ export default function FormulaRunPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to run");
+      setBatchId(data.id ?? null);
       setDone(true);
       toast.success(`Queued — ${productIds.length} video(s) rendering now`);
     } catch (error) {
@@ -583,6 +628,49 @@ export default function FormulaRunPage() {
           {reversePlayback ? " · ↺ reverse playback (doubles length)" : ""} ·{" "}
           {mode === "quality" || resolution === "720p" ? "720p" : "480p"}
         </p>
+
+        {/* Estimated AI cost — before Run */}
+        <div className="mb-3 rounded-md border border-dashed p-3 text-sm">
+          <p className="flex items-center justify-between">
+            <span className="font-medium">Estimated AI cost</span>
+            <span className="font-semibold">
+              {productIds.length === 0 ? "—" : formatUsd(estimate.totalUsd)}
+            </span>
+          </p>
+          {productIds.length > 0 && (
+            <ul className="mt-1.5 space-y-0.5 text-xs text-muted-foreground">
+              <li className="flex justify-between">
+                <span>Scene renders ({productIds.length} × ${0.04.toFixed(2)})</span>
+                <span>{formatUsd(estimate.sceneImagesUsd)}</span>
+              </li>
+              <li className="flex justify-between">
+                <span>
+                  Footage ({productIds.length} × {lengthSec}s @{" "}
+                  {mode === "quality" || resolution === "720p" ? "720p" : "480p"} · {engine})
+                </span>
+                {estimate.footageCreditBased ? (
+                  <span className="text-amber-500">credit-based</span>
+                ) : (
+                  <span>{formatUsd(estimate.footageUsd)}</span>
+                )}
+              </li>
+              {voiceId && (
+                <li className="flex justify-between">
+                  <span>Voiceover TTS</span>
+                  <span>{formatUsd(estimate.ttsUsd)}</span>
+                </li>
+              )}
+              <li className="flex justify-between">
+                <span>AI tokens (script fill)</span>
+                <span>$0.00 — runs locally</span>
+              </li>
+            </ul>
+          )}
+          <p className="mt-1.5 text-[11px] text-muted-foreground/70">
+            List prices (fal/Gemini/OpenAI), Aug 2026. Actuals shown after Run.
+          </p>
+        </div>
+
         <Button onClick={run} disabled={running || productIds.length === 0} className="w-full">
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
           {running ? "Running…" : "Run"}
@@ -594,6 +682,51 @@ export default function FormulaRunPage() {
               View batches
             </Link>
           </p>
+        )}
+
+        {/* Actual spend — after Run (updates as jobs finish) */}
+        {done && actual && (
+          <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-50/40 p-3 text-sm">
+            <p className="flex items-center justify-between">
+              <span className="font-medium">Actual AI spend</span>
+              <span className="font-semibold">
+                {formatUsd(Number(actual.llm.costUsd) + Number(actual.media.totalUsd))}
+              </span>
+            </p>
+            <ul className="mt-1.5 space-y-0.5 text-xs text-muted-foreground">
+              {actual.llm.calls > 0 && (
+                <li className="flex justify-between">
+                  <span>
+                    LLM tokens ({actual.llm.calls} call{actual.llm.calls > 1 ? "s" : ""} ·{" "}
+                    {formatTokens(actual.llm.inputTokens)} in /{" "}
+                    {formatTokens(actual.llm.outputTokens)} out)
+                  </span>
+                  <span>{formatUsd(Number(actual.llm.costUsd))}</span>
+                </li>
+              )}
+              <li className="flex justify-between">
+                <span>Scene renders</span>
+                <span>{formatUsd(actual.media.sceneImagesUsd)}</span>
+              </li>
+              <li className="flex justify-between">
+                <span>Footage</span>
+                {actual.media.footageCreditBased ? (
+                  <span className="text-amber-500">credit-based</span>
+                ) : (
+                  <span>{formatUsd(actual.media.footageUsd)}</span>
+                )}
+              </li>
+              {actual.media.ttsUsd > 0 && (
+                <li className="flex justify-between">
+                  <span>Voiceover</span>
+                  <span>{formatUsd(actual.media.ttsUsd)}</span>
+                </li>
+              )}
+              <li className="text-[11px] text-muted-foreground/70">
+                Updates while videos render (≤4 min). Media billed at list prices.
+              </li>
+            </ul>
+          </div>
         )}
       </section>
     </main>

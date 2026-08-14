@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
+import {
+  estimateChatCost,
+  formatUsd,
+  formatTokens,
+  type CostEstimate,
+} from "@/lib/usage-core";
+import { SYSTEM_PROMPT, PRODUCT_SYSTEM_PROMPT, buildUserPrompt, buildProductPrompt } from "@/lib/ads/remix-prompts";
 import { toast } from "sonner";
 import Link from "next/link";
 import {
@@ -93,6 +100,34 @@ export default function StealThisAdPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SourceDetail | null>(null);
   const [remixing, setRemixing] = useState(false);
+  // Usage tracking: estimate before Generate, actual (from the ledger) after.
+  const [remixUsage, setRemixUsage] = useState<{
+    model: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: string | null;
+  } | null>(null);
+
+  /**
+   * Pre-flight estimate of the remix LLM call (client-safe; priced at the
+   * first model in the chain — the actual may fall back cheaper).
+   */
+  const remixEstimate: CostEstimate | null = useMemo(() => {
+    if (!detail?.rawText?.trim()) return null;
+    const isProduct = detail.platform === "product";
+    const system = isProduct ? PRODUCT_SYSTEM_PROMPT : SYSTEM_PROMPT;
+    const user = isProduct
+      ? buildProductPrompt(detail.rawText.trim(), 3)
+      : buildUserPrompt(detail.rawText.trim(), 3);
+    return estimateChatCost(
+      "remix",
+      [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      { maxOutputTokens: 1400 + 3 * 900 }
+    );
+  }, [detail?.rawText, detail?.platform]);
   const [renderingId, setRenderingId] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [voices, setVoices] = useState<Voice[]>([]);
@@ -171,6 +206,7 @@ export default function StealThisAdPage() {
 
   const openSource = async (id: string) => {
     setSelectedId(id);
+    setRemixUsage(null);
     await loadDetail(id);
   };
 
@@ -248,11 +284,12 @@ export default function StealThisAdPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ variants: 3 }),
       });
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        toast.error(body?.error ?? "Failed to generate remixes");
+        toast.error(data?.error ?? "Failed to generate remixes");
         return;
       }
+      setRemixUsage(data?.usage ?? null);
       await loadDetail(selectedId);
       toast.success("Remixes ready");
     } finally {
@@ -488,24 +525,44 @@ export default function StealThisAdPage() {
               <>
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-medium">Remixes</h2>
-                  <Button
-                    size="sm"
-                    onClick={generateRemixes}
-                    disabled={remixing || detail.remixes.length > 0}
-                  >
-                    {remixing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Wand2 className="h-4 w-4" />
+                  <div className="flex items-center gap-2">
+                    {detail.remixes.length === 0 && remixEstimate && (
+                      <span className="text-xs text-muted-foreground">
+                        ~{formatTokens(remixEstimate.inputTokens + remixEstimate.outputTokens)}{" "}
+                        tokens · est {formatUsd(remixEstimate.costUsd)}
+                      </span>
                     )}
-                    {detail.remixes.length > 0 ? "Remixes Generated" : "Generate 3 Remixes"}
-                  </Button>
+                    <Button
+                      size="sm"
+                      onClick={generateRemixes}
+                      disabled={remixing || detail.remixes.length > 0}
+                    >
+                      {remixing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Wand2 className="h-4 w-4" />
+                      )}
+                      {detail.remixes.length > 0 ? "Remixes Generated" : "Generate 3 Remixes"}
+                    </Button>
+                  </div>
                 </div>
 
                 {detail.remixes.length === 0 && !remixing && (
                   <p className="text-sm text-muted-foreground">
                     Generate remixes to turn this ad's structure into original
                     scripts for your products.
+                    {remixEstimate &&
+                      ` Priced at ${remixEstimate.model} — actual depends on which model serves.`}
+                  </p>
+                )}
+
+                {remixUsage && detail.remixes.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Actual: {formatTokens((remixUsage.inputTokens ?? 0) + (remixUsage.outputTokens ?? 0))}{" "}
+                    tokens ({formatTokens(remixUsage.inputTokens ?? 0)} in /{" "}
+                    {formatTokens(remixUsage.outputTokens ?? 0)} out) ·{" "}
+                    {formatUsd(Number(remixUsage.costUsd ?? 0))}
+                    {remixUsage.model ? ` · ${remixUsage.model}` : ""}
                   </p>
                 )}
 

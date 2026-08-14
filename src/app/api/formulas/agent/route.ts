@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { db } from "@/db";
+import { llmUsage } from "@/db/schema";
+import { eq, desc, and } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { runFormulaAgent } from "@/lib/video/formula-agent";
 
@@ -28,8 +31,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const result = await runFormulaAgent(nodeGraph ?? { nodes: [], edges: [] }, prompt.trim());
-    return NextResponse.json(result);
+    const result = await runFormulaAgent(nodeGraph ?? { nodes: [], edges: [] }, prompt.trim(), {
+      workspaceId,
+      createdById: session.user.id,
+      surface: "agent",
+    });
+
+    // Actual LLM usage for this agent call (recorded by the usage tracker).
+    const [usage] = await db
+      .select({
+        model: llmUsage.model,
+        provider: llmUsage.provider,
+        inputTokens: llmUsage.inputTokens,
+        outputTokens: llmUsage.outputTokens,
+        cacheReadTokens: llmUsage.cacheReadTokens,
+        costUsd: llmUsage.costUsd,
+        estimatedCostUsd: llmUsage.estimatedCostUsd,
+      })
+      .from(llmUsage)
+      .where(
+        and(
+          eq(llmUsage.surface, "agent"),
+          eq(llmUsage.workspaceId, workspaceId),
+          eq(llmUsage.createdById, session.user.id)
+        )
+      )
+      .orderBy(desc(llmUsage.createdAt))
+      .limit(1);
+
+    return NextResponse.json({ ...result, usage });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Agent failed";
     console.error("Formula agent error:", message);

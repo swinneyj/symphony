@@ -1,15 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import {
-  videoBatches,
-  videoBatchJobs,
-  videoFormulas,
-  products,
-  voices,
-} from "@/db/schema";
-import { eq, inArray, and, desc } from "drizzle-orm";
+import { videoBatches, videoBatchJobs, videoFormulas, products, voices, llmUsage } from "@/db/schema";
+import { eq, desc, inArray, and } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
+import { actualMediaCost } from "@/lib/usage";
 import { renderScript } from "@/lib/video/script-fill";
 
 /**
@@ -65,17 +60,68 @@ export async function GET(request: Request) {
       .orderBy(desc(videoBatches.createdAt));
 
     const jobs = await db
-      .select({ batchId: videoBatchJobs.batchId, status: videoBatchJobs.status })
+      .select({
+        id: videoBatchJobs.id,
+        batchId: videoBatchJobs.batchId,
+        status: videoBatchJobs.status,
+        jobType: videoBatchJobs.jobType,
+        sceneImageUrl: videoBatchJobs.sceneImageUrl,
+        footageUrl: videoBatchJobs.footageUrl,
+        voiceoverUrl: videoBatchJobs.voiceoverUrl,
+        script: videoBatchJobs.script,
+        metadata: videoBatchJobs.metadata,
+      })
       .from(videoBatchJobs)
       .where(eq(videoBatchJobs.workspaceId, workspaceId));
 
+    // LLM ledger + voice providers for per-batch spend rollups.
+    const llmRows = await db
+      .select()
+      .from(llmUsage)
+      .where(eq(llmUsage.workspaceId, workspaceId));
+    const voiceRows = await db
+      .select({ id: voices.id, provider: voices.provider })
+      .from(voices)
+      .where(eq(voices.workspaceId, workspaceId));
+    const voiceProviderBy = new Map(voiceRows.map((v) => [v.id, v.provider]));
+
     const withProgress = batches.map((batch) => {
       const batchJobs = jobs.filter((j) => j.batchId === batch.id);
+      const jobIdSet = new Set(batchJobs.map((j) => j.id));
+      let llmCostUsd = 0;
+      let calls = 0;
+      for (const r of llmRows) {
+        const attached =
+          (r.entityType === "batch" && r.entityId === batch.id) ||
+          (r.entityType === "job" && r.entityId !== null && jobIdSet.has(r.entityId));
+        if (attached) {
+          llmCostUsd += Number(r.costUsd ?? 0);
+          calls += 1;
+        }
+      }
+      const media = actualMediaCost({
+        jobs: batchJobs.map((j) => ({
+          jobType: j.jobType,
+          status: j.status,
+          sceneImageUrl: j.sceneImageUrl,
+          footageUrl: j.footageUrl,
+          voiceoverUrl: j.voiceoverUrl,
+          script: j.script,
+          durationSec: Number((j.metadata as Record<string, unknown>)?.durationSec ?? 6),
+        })),
+        quality: batch.quality,
+        durationSec: 6,
+        engine: batch.provider ?? "sora",
+        voiceProvider: batch.voiceId ? (voiceProviderBy.get(batch.voiceId) ?? null) : null,
+      });
       return {
         ...batch,
         jobsTotal: batchJobs.length,
         jobsDone: batchJobs.filter((j) => j.status === "done").length,
         jobsFailed: batchJobs.filter((j) => j.status === "failed").length,
+        aiCostUsd: llmCostUsd + media.totalUsd,
+        aiLlmCostUsd: llmCostUsd,
+        aiLlmCalls: calls,
       };
     });
 
