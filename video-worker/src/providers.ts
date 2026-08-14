@@ -264,16 +264,26 @@ export async function generateCloneFrameEdit(
 ): Promise<string> {
   const key = process.env.FAL_KEY;
   if (!key) throw new MissingKeyError("kling", "FAL_KEY");
-  // Both edit models want image_urls (array) — verified via pydantic error.
+  // Both fal edit models want image_urls (array) — verified via pydantic error.
   const body = { image_urls: [imageUrl], prompt };
   try {
     return await falImageSubmit("/fal-ai/nano-banana-pro/edit", key, body);
   } catch (primaryError) {
     console.warn(
-      `[video-worker] nano-banana-pro edit failed, falling back to gpt-image-2: ${(primaryError as Error).message}`
+      `[video-worker] nano-banana-pro edit failed, falling back to OpenAI-direct gpt-image-1: ${(primaryError as Error).message}`
     );
-    // Provider-owned models (openai/...) sit at the queue ROOT, no fal-ai prefix.
-    return falImageSubmit("/openai/gpt-image-2/edit", key, body);
+    // FAL-FREE FALLBACK (added 2026-08-14): api.openai.com/v1/images/edits runs
+    // on OpenAI billing — clones survive a fal lockout (Sora animation + this
+    // edit = zero fal). gpt-image-1 caps at 2:3; openaiImageEdit pads to 9:16.
+    try {
+      return await openaiImageEdit(imageUrl, prompt);
+    } catch (openaiError) {
+      console.warn(
+        `[video-worker] openai-direct edit failed, falling back to fal gpt-image-2: ${(openaiError as Error).message}`
+      );
+      // Provider-owned models (openai/...) sit at the queue ROOT, no fal-ai prefix.
+      return falImageSubmit("/openai/gpt-image-2/edit", key, body);
+    }
   }
 }
 
