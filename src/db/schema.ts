@@ -474,6 +474,33 @@ export const adSources = pgTable("ad_sources", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+/**
+ * Media Downloader (backlog row 12): paste a TikTok/YT/IG link → the ads-worker
+ * downloads the video (+ optional MP3), stores both on private Blob. Status:
+ * queued → downloading → done | failed.
+ */
+export const mediaDownloads = pgTable("media_downloads", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  sourceUrl: text("source_url").notNull(),
+  platform: text("platform").notNull().default("tiktok"),
+  wantAudio: boolean("want_audio").notNull().default(false),
+  status: text("status").notNull().default("queued"),
+  title: text("title"),
+  authorName: text("author_name"),
+  videoUrl: text("video_url"),
+  audioUrl: text("audio_url"),
+  error: text("error"),
+  retries: integer("retries").default(0),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 export const adRemixes = pgTable("ad_remixes", {
   id: uuid("id").defaultRandom().primaryKey(),
   adSourceId: uuid("ad_source_id")

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlencode
 import http.server
 import threading
 
@@ -404,6 +405,122 @@ def process_row(conn, cur, source_id, source_url, video_url, platform):
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+
+def blob_put(pathname, data, content_type):
+    """Private Vercel Blob upload (same REST endpoint the JS SDK uses).
+
+    Verified live 2026-08-14: x-vercel-blob-store-id + x-api-version are
+    REQUIRED (without them the API 400s "Invalid pathname"). Store id is
+    the 4th underscore segment of the read-write token.
+    """
+    if not BLOB_TOKEN:
+        raise RuntimeError("BLOB_READ_WRITE_TOKEN is not set")
+    store_id = BLOB_TOKEN.split("_")[3] if BLOB_TOKEN.startswith("vercel_blob_rw_") else ""
+    resp = requests.put(
+        f"https://vercel.com/api/blob/?{urlencode({'pathname': pathname})}",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {BLOB_TOKEN}",
+            "x-vercel-blob-access": "private",
+            "x-content-type": content_type,
+            "x-vercel-blob-store-id": store_id,
+            "x-api-version": "12",
+        },
+        timeout=180,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"blob put failed: {resp.status_code} {resp.text[:300]}")
+    return resp.json()["url"]
+
+
+def extract_mp3(video_path, workdir):
+    """ffmpeg: video → MP3 (libmp3lame)."""
+    mp3_path = os.path.join(workdir, "audio.mp3")
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", video_path, "-vn",
+         "-acodec", "libmp3lame", "-q:a", "2", mp3_path],
+        check=True, timeout=300,
+    )
+    return mp3_path
+
+
+def detect_platform(url):
+    if "tiktok.com" in url:
+        return "tiktok"
+    if "youtube.com" in url or "youtu.be" in url:
+        return "youtube"
+    if "instagram.com" in url:
+        return "instagram"
+    return "other"
+
+
+def claim_downloads(cur, limit):
+    cur.execute(
+        """
+        UPDATE media_downloads
+        SET status = 'downloading', updated_at = now()
+        WHERE id IN (
+          SELECT id FROM media_downloads
+          WHERE status = 'queued'
+          ORDER BY created_at ASC
+          LIMIT %s
+          FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, workspace_id, source_url, platform, want_audio
+        """,
+        (limit,),
+    )
+    return cur.fetchall()
+
+
+def requeue_stale_downloads(cur):
+    cur.execute(
+        """
+        UPDATE media_downloads
+        SET status = 'queued', updated_at = now()
+        WHERE status = 'downloading'
+          AND updated_at < now() - make_interval(mins => %s)
+        RETURNING id
+        """,
+        (STALE_MINUTES,),
+    )
+    return cur.rowcount
+
+
+def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio):
+    workdir = tempfile.mkdtemp(prefix="dl-worker-")
+    try:
+        # TikTok → DC-safe direct path; other platforms → yt-dlp impersonation.
+        video_path, title, author = download_video(source_url, workdir, platform, BLOB_TOKEN)
+        video_url = blob_put(f"downloads/{dl_id}.mp4", open(video_path, "rb").read(), "video/mp4")
+        audio_url = None
+        if want_audio:
+            mp3_path = extract_mp3(video_path, workdir)
+            audio_url = blob_put(f"downloads/{dl_id}.mp3", open(mp3_path, "rb").read(), "audio/mpeg")
+        cur.execute(
+            """
+            UPDATE media_downloads
+            SET status = 'done', title = COALESCE(title, %s),
+                author_name = COALESCE(author_name, %s),
+                video_url = %s, audio_url = %s, error = NULL, updated_at = now()
+            WHERE id = %s
+            """,
+            (title, author, video_url, audio_url, dl_id),
+        )
+        conn.commit()
+        print(f"[ads-worker] download {dl_id} done → {video_url}" + (" + mp3" if audio_url else ""))
+    except Exception as e:  # noqa: BLE001 — report any failure on the row
+        conn.rollback()
+        cur.execute(
+            "UPDATE media_downloads SET status = 'failed', error = %s, updated_at = now() WHERE id = %s",
+            (str(e)[:2000], dl_id),
+        )
+        conn.commit()
+        print(f"[ads-worker] FAILED download {dl_id}: {e}", file=sys.stderr)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 def tick():
     conn = connect()
     try:
@@ -416,6 +533,16 @@ def tick():
         conn.commit()
         for source_id, _ws, source_url, video_url, platform in rows:
             process_row(conn, cur, source_id, source_url, video_url, platform)
+
+        # Media Downloader loop (TikTok-first MVP): video (+ optional MP3) → Blob.
+        reclaimed = requeue_stale_downloads(cur)
+        if reclaimed > 0:
+            print(f"[ads-worker] requeued {reclaimed} stale download(s)")
+            conn.commit()
+        dl_rows = claim_downloads(cur, CONCURRENCY)
+        conn.commit()
+        for dl_id, ws, url, platform, want_audio in dl_rows:
+            process_download(conn, cur, dl_id, ws, url, platform, want_audio)
     finally:
         conn.close()
 
