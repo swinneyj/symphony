@@ -25,6 +25,7 @@ import {
   Copy,
   Check,
   Share2,
+  Download,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -174,6 +175,9 @@ export default function VideoStudioPage() {
           <TabsTrigger value="clone" className="gap-1.5 shrink-0">
             <Copy className="h-4 w-4" /> Clone
           </TabsTrigger>
+          <TabsTrigger value="downloader" className="gap-1.5 shrink-0">
+            <Download className="h-4 w-4" /> Downloader
+          </TabsTrigger>
           <TabsTrigger value="queue" className="gap-1.5 shrink-0">
             <Send className="h-4 w-4" /> Post Queue
           </TabsTrigger>
@@ -232,6 +236,10 @@ export default function VideoStudioPage() {
 
         <TabsContent value="clone" className="mt-4">
           <CloneTab workspaceId={workspaceId!} />
+        </TabsContent>
+
+        <TabsContent value="downloader" className="mt-4">
+          <DownloaderTab workspaceId={workspaceId!} />
         </TabsContent>
 
         <TabsContent value="queue" className="mt-4">
@@ -1300,7 +1308,7 @@ function FormulasTab({
                 {formula.coverImageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={formula.coverImageUrl}
+                    src={`/api/formula-covers/${formula.id}`}
                     alt={formula.name}
                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                   />
@@ -2801,6 +2809,154 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
             Clone it
           </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Downloader tab (backlog row 12: TikTok-first media downloader) ──────────
+interface DownloadRow {
+  id: string;
+  sourceUrl: string;
+  platform: string;
+  wantAudio: boolean;
+  status: string;
+  title: string | null;
+  authorName: string | null;
+  videoUrl: string | null;
+  audioUrl: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+function DownloaderTab({ workspaceId }: { workspaceId: string }) {
+  const [url, setUrl] = useState("");
+  const [wantAudio, setWantAudio] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rows, setRows] = useState<DownloadRow[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/media-download?workspaceId=${workspaceId}`);
+      if (!res.ok) return;
+      setRows(await res.json());
+    } catch {
+      /* list is best-effort */
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const onSubmit = async () => {
+    if (!url.trim() || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/media-download", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, sourceUrl: url.trim(), wantAudio }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "Download failed");
+      toast.success("Queued — grabs the video in seconds");
+      setUrl("");
+      load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Download failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Media Downloader</CardTitle>
+        <CardDescription>
+          Paste a TikTok / YouTube / Instagram link — get the video (and MP3).
+          TikTok works instantly from this box; YT is often bot-walled here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="flex-1 space-y-1.5">
+            <Label>Link</Label>
+            <Input
+              placeholder="https://www.tiktok.com/@user/video/…"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onSubmit()}
+            />
+          </div>
+          <label className="flex h-9 cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={wantAudio}
+              onChange={(e) => setWantAudio(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Also grab MP3
+          </label>
+          <Button onClick={onSubmit} disabled={!url.trim() || busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Download
+          </Button>
+        </div>
+
+        <div className="space-y-2">
+          {rows.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No downloads yet — paste a link above.
+            </p>
+          )}
+          {rows.map((row) => (
+            <div key={row.id} className="flex flex-wrap items-center gap-3 rounded-md border p-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">
+                  {row.title || row.sourceUrl}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {row.platform}
+                  {row.authorName ? ` · ${row.authorName}` : ""} ·{" "}
+                  {new Date(row.createdAt).toLocaleString()}
+                </p>
+                {row.error && <p className="mt-0.5 text-xs text-destructive">{row.error.slice(0, 160)}</p>}
+              </div>
+              {row.status === "done" && (
+                <div className="flex items-center gap-2">
+                  {row.videoUrl && (
+                    <>
+                      <a
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium"
+                        href={`/api/media-download/${row.id}/file?kind=video`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Download className="h-3.5 w-3.5" /> MP4
+                      </a>
+                      <video src={`/api/media-download/${row.id}/file?kind=video`} controls className="h-20 w-14 rounded border object-cover" />
+                    </>
+                  )}
+                  {row.audioUrl && (
+                    <a
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium"
+                      href={`/api/media-download/${row.id}/file?kind=audio`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Download className="h-3.5 w-3.5" /> MP3
+                    </a>
+                  )}
+                </div>
+              )}
+              <Badge variant={row.status === "done" ? "default" : row.status === "failed" ? "destructive" : "secondary"}>
+                {row.status}
+              </Badge>
+            </div>
+          ))}
         </div>
       </CardContent>
     </Card>

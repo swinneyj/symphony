@@ -1,11 +1,12 @@
 // Generate BatchBot-style cover images for all system formulas.
-// Uses OpenAI gpt-image-2 (fal + Gemini prepay are depleted as of 2026-08-14),
+// Uses OpenAI gpt-image-1-mini (cheapest verified 2026-08-14: ~$0.01-0.03/img),
 // uploads to Vercel Blob, stores URL in video_formulas.cover_image_url.
-// Idempotent: skips rows with covers. 36 × ~$0.05-0.08 ≈ $2-3 one-time.
+// Idempotent: skips rows with covers. 42 × ~$0.01-0.03 ≈ $0.50-1.30 one-time.
 //
 // Usage: OPENAI_API_KEY=... BLOB_READ_WRITE_TOKEN=... DATABASE_URL=... node scripts/gen-formula-covers.mjs
 
 import { neon } from "@neondatabase/serverless";
+import { put } from "@vercel/blob";
 import { readFileSync } from "fs";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -25,23 +26,19 @@ async function generateCover(prompt) {
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "gpt-image-2", prompt, size: "1024x1792", n: 1 }),
+    body: JSON.stringify({ model: "gpt-image-1-mini", prompt, size: "1024x1536", n: 1 }),
   });
   const data = await res.json();
   if (!res.ok || !data?.data?.[0]?.b64_json) {
     throw new Error(`openai ${res.status}: ${JSON.stringify(data).slice(0, 200)}`);
   }
   const buf = Buffer.from(data.data[0].b64_json, "base64");
-  const upload = await fetch("https://api.vercel.com/v2/blob/upload", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${BLOB_TOKEN}`, "Content-Type": "application/octet-stream" },
-    body: buf,
+  const { url } = await put(`formula-covers/${Date.now()}.png`, buf, {
+    access: "private",
+    token: BLOB_TOKEN,
+    contentType: "image/png",
   });
-  const up = await upload.json();
-  if (!upload.ok || !up?.url) {
-    throw new Error(`blob ${upload.status}: ${JSON.stringify(up).slice(0, 200)}`);
-  }
-  return up.url;
+  return url;
 }
 
 const rows = await sql`
