@@ -193,7 +193,12 @@ async function falSubmit(queueId: string, key: string, body: unknown): Promise<s
     const state = (await poll.json()) as { status?: string; response_url?: string; error?: unknown };
     if (state.status === "COMPLETED" && state.response_url) {
       const res = await fetch(state.response_url, { headers: { authorization: `Key ${key}` } });
-      const data = (await res.json()) as { video?: { url?: string } | string };
+      const data = (await res.json()) as { video?: { url?: string } | string; detail?: unknown };
+      // Fast-fail on validation/not-found bodies (e.g. {"detail": [...]}) — a
+      // completed job with an error body will never produce a video.
+      if (data.detail) {
+        throw new Error(`fal generation failed: ${JSON.stringify(data.detail).slice(0, 400)}`);
+      }
       const url = typeof data.video === "string" ? data.video : data.video?.url;
       if (url) return url;
     }
@@ -260,21 +265,6 @@ export async function generateCloneVideo(
   if (!key) throw new MissingKeyError("kling", "FAL_KEY");
   return falSubmit("/fal-ai/kling-video/v3/pro/image-to-video", key, {
     start_image_url: startImageUrl,
-    prompt,
-    duration: String(Math.min(Math.max(durationSec, 5), 10)),
-  });
-}
-
-/** True V2V attempt: Kling 3.0 i2v accepts a source video URL (verified param). */
-export async function generateCloneVideoDirect(
-  videoUrl: string,
-  prompt: string,
-  durationSec: number
-): Promise<string> {
-  const key = process.env.FAL_KEY;
-  if (!key) throw new MissingKeyError("kling", "FAL_KEY");
-  return falSubmit("/fal-ai/kling-video/v3/pro/image-to-video", key, {
-    video_url: videoUrl,
     prompt,
     duration: String(Math.min(Math.max(durationSec, 5), 10)),
   });

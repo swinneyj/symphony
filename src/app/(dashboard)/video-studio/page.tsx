@@ -170,6 +170,9 @@ export default function VideoStudioPage() {
           <TabsTrigger value="market" className="gap-1.5 shrink-0">
             <TrendingUp className="h-4 w-4" /> Market Research
           </TabsTrigger>
+          <TabsTrigger value="clone" className="gap-1.5 shrink-0">
+            <Copy className="h-4 w-4" /> Clone
+          </TabsTrigger>
           <TabsTrigger value="queue" className="gap-1.5 shrink-0">
             <Send className="h-4 w-4" /> Post Queue
           </TabsTrigger>
@@ -224,6 +227,10 @@ export default function VideoStudioPage() {
             workspaceId={workspaceId!}
             onAdopted={() => loadProducts(workspaceId!)}
           />
+        </TabsContent>
+
+        <TabsContent value="clone" className="mt-4">
+          <CloneTab workspaceId={workspaceId!} />
         </TabsContent>
 
         <TabsContent value="queue" className="mt-4">
@@ -2653,5 +2660,121 @@ function PostQueueTab({ workspaceId }: { workspaceId: string }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// ─── Clone tab (V2V, backlog row 9) ──────────────────────────────────────────
+function CloneTab({ workspaceId }: { workspaceId: string }) {
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
+  const [textChange, setTextChange] = useState("");
+  const [motionPrompt, setMotionPrompt] = useState("");
+  const [durationSec, setDurationSec] = useState("5");
+  const [busy, setBusy] = useState(false);
+
+  const canSubmit = (sourceFile || sourceUrl.trim()) && editPrompt.trim() && !busy;
+
+  const onSubmit = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("workspaceId", workspaceId);
+      fd.append("editPrompt", editPrompt.trim());
+      if (sourceFile) fd.append("source", sourceFile);
+      else fd.append("sourceVideoUrl", sourceUrl.trim());
+      if (textChange.trim()) fd.append("textChange", textChange.trim());
+      if (motionPrompt.trim()) fd.append("motionPrompt", motionPrompt.trim());
+      fd.append("durationSec", durationSec);
+      const res = await fetch("/api/video-clone", { method: "POST", body: fd });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "Clone failed");
+      toast.success("Clone queued — watch it in Batch Studio");
+      setSourceFile(null);
+      setSourceUrl("");
+      setEditPrompt("");
+      setTextChange("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Clone failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Video Clone</CardTitle>
+        <CardDescription>
+          Upload a video (or paste a direct mp4 URL) and describe the change —
+          new background, on-screen text swap — Kling re-animates it. ~$0.15–0.50 per clone.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <Label>Source video</Label>
+          <Input
+            type="file"
+            accept="video/*"
+            onChange={(e) => setSourceFile(e.target.files?.[0] ?? null)}
+          />
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            or direct URL
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <Input
+            placeholder="https://… (direct mp4 URL)"
+            value={sourceUrl}
+            onChange={(e) => setSourceUrl(e.target.value)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>Edit prompt</Label>
+          <Textarea
+            rows={3}
+            placeholder="Change the background to a neon nightclub at night…"
+            value={editPrompt}
+            onChange={(e) => setEditPrompt(e.target.value)}
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>On-screen text (optional)</Label>
+            <Input
+              placeholder="BUY NOW — link in bio"
+              value={textChange}
+              onChange={(e) => setTextChange(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Motion (optional)</Label>
+            <Input
+              placeholder="gentle camera push-in"
+              value={motionPrompt}
+              onChange={(e) => setMotionPrompt(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="flex items-end gap-4">
+          <div className="space-y-1.5">
+            <Label>Duration</Label>
+            <select
+              value={durationSec}
+              onChange={(e) => setDurationSec(e.target.value)}
+              className="flex h-9 w-24 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="5">5s</option>
+              <option value="10">10s</option>
+            </select>
+          </div>
+          <Button onClick={onSubmit} disabled={!canSubmit} className="ml-auto">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+            Clone it
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

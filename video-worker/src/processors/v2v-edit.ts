@@ -6,7 +6,6 @@ import { sql, markDone, failWithRetry, type JobRow } from "../db.js";
 import {
   generateCloneFrameEdit,
   generateCloneVideo,
-  generateCloneVideoDirect,
 } from "../providers.js";
 
 const execFileP = promisify(execFile);
@@ -75,37 +74,13 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
     const textLine = meta.textChange
       ? ` Replace the on-screen text (captions/watermarks) with: "${meta.textChange}".`
       : "";
-    const motion = meta.motionPrompt ?? "subtle natural motion, same camera angle";
-
-    // TRUE V2V mode (Kling 3.0 `video_url` param — verified): feed the source
-    // video straight to Kling, no frame-edit. Requires a PUBLIC source URL
-    // (fal can't auth to our private Blob).
-    if (meta.useVideoUrlDirect) {
-      const videoUrl = await generateCloneVideoDirect(
-        sourceVideoUrl,
-        `${motion}. ${editPrompt}.${textLine}`,
-        meta.durationSec ?? 5
-      );
-      const vidRes = await fetch(videoUrl);
-      if (!vidRes.ok) throw new Error(`clone result fetch failed: ${vidRes.status}`);
-      const { put } = await import("@vercel/blob");
-      if (!blobToken()) throw new Error("BLOB_READ_WRITE_TOKEN required to store clone result");
-      const { url } = await put(`v2v/${job.id}.mp4`, Buffer.from(await vidRes.arrayBuffer()), {
-        access: "private",
-        contentType: "video/mp4",
-        token: blobToken(),
-      });
-      await markDone(job.id, { final_url: url });
-      console.log(`[video-worker] v2v_edit(direct) ${job.id} done → ${url}`);
-      return;
-    }
-
     const editedFrame = await generateCloneFrameEdit(
       frameData,
       `${editPrompt}.${textLine} Keep the subject, pose, and framing identical.`
     );
 
     // 4. Re-animate the edited frame (Kling 3.0 Pro image-to-video).
+    const motion = meta.motionPrompt ?? "subtle natural motion, same camera angle";
     const videoUrl = await generateCloneVideo(
       editedFrame,
       `${motion}. ${editPrompt}`,
