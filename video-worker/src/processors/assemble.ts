@@ -90,6 +90,8 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
         SELECT name, price FROM products WHERE id = ${job.product_id}
       `;
       const text = overlayTemplate
+        .replaceAll("@product", product?.name ?? "this")
+        .replaceAll("@price", product?.price != null ? String(product.price) : "")
         .replaceAll("{product}", product?.name ?? "this")
         .replaceAll("{price}", product?.price != null ? String(product.price) : "");
       const font = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "/usr/share/fonts/truetype/freefont/FreeSans.ttf"].find((p) => existsSync(p));
@@ -98,10 +100,14 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
         const { writeFile } = await import("node:fs/promises");
         await writeFile(textFile, text, "utf8");
         // BatchBot view=run sends overlayFontSize (their default style is 62).
+        // Multi-line overlay (Text 1/2/3 from the run view) renders as stacked
+        // centered lines via the textfile's embedded newlines.
         const fontSize = Number(job.metadata?.overlayFontSize ?? 44);
         overlayArgs = [
           "-vf",
-          `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=18:x=(w-text_w)/2:y=h*0.82`,
+          // BatchBot text overlay default: position "top", centered. Multi-line
+          // text stacks downward from the top of the frame.
+          `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=18:x=(w-text_w)/2:y=h*0.12:line_spacing=12`,
         ];
         console.log(`[video-worker] assemble overlay job=${job.id}: "${text.slice(0, 60)}"`);
       } else {
