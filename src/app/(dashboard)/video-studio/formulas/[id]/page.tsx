@@ -44,6 +44,7 @@ interface OverlayBox {
   fontColor?: string; // hex #RRGGBB — default white
   bgColor?: string; // hex #RRGGBB — default black
   bgOpacity?: number; // 0..1 — 0 = transparent (no box)
+  fontSize?: number; // px at output resolution — undefined = global Style size
 }
 
 const defaultOverlayBox = (y: number): OverlayBox => ({
@@ -137,6 +138,11 @@ export default function FormulaRunPage() {
   const [overlayLines, setOverlayLines] = useState<string[]>([""]);
   const [overlayBoxes, setOverlayBoxes] = useState<OverlayBox[]>([defaultOverlayBox(0.12)]);
   const dragIndex = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  // Resize (bottom-right handle): drag distance from the box anchor scales
+  // the per-box font size (the "size" of a text box in the final burn).
+  const resizeIndex = useRef<number | null>(null);
+  const resizeStart = useRef<{ dist: number; size: number } | null>(null);
   const [overlayStyle, setOverlayStyle] = useState(62); // BatchBot default style
   // Voice / engine (Symphony-specific, kept below the mirrored sections)
   const [voiceId, setVoiceId] = useState("");
@@ -255,9 +261,10 @@ export default function FormulaRunPage() {
     setLengthSec(f.durationSec ?? 4);
     const lines = f.overlayTemplate ? f.overlayTemplate.split("\n") : [""];
     setOverlayLines(lines);
-    // Boxes: user-dragged layout + styles (localStorage, per formula) beat the
-    // formula's saved layout beats the default stacked-top. Legacy saved
-    // layouts may be plain {x,y} — style keys fall back to defaults.
+    // Editor state (lines + boxes + style) auto-saves to localStorage on every
+    // edit, so navigating away never loses work. New shape = {lines, boxes,
+    // style}; legacy saves are a bare array of {x,y} boxes — style keys and
+    // font size fall back to defaults.
     const normalize = (rows: unknown[]): OverlayBox[] =>
       rows.map((r) => {
         const p = (r ?? {}) as Record<string, unknown>;
@@ -267,14 +274,22 @@ export default function FormulaRunPage() {
           fontColor: typeof p.fontColor === "string" ? p.fontColor : "#ffffff",
           bgColor: typeof p.bgColor === "string" ? p.bgColor : "#000000",
           bgOpacity: p.bgOpacity != null ? Math.min(1, Math.max(0, Number(p.bgOpacity) || 0)) : 0.55,
+          fontSize: typeof p.fontSize === "number" ? p.fontSize : undefined,
         };
       });
     let boxes: OverlayBox[] | null = null;
+    let savedStyle: number | null = null;
     try {
       const saved = localStorage.getItem(`vs-overlay-pos:${formulaId}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length === lines.length) boxes = normalize(parsed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          if (Array.isArray(parsed.lines) && parsed.lines.length > 0) setOverlayLines(parsed.lines);
+          if (Array.isArray(parsed.boxes)) boxes = normalize(parsed.boxes);
+          if (typeof parsed.style === "number") savedStyle = parsed.style;
+        } else if (Array.isArray(parsed) && parsed.length === lines.length) {
+          boxes = normalize(parsed); // legacy bare-array save
+        }
       }
     } catch {
       /* ignore corrupt localStorage */
@@ -283,6 +298,7 @@ export default function FormulaRunPage() {
       boxes = normalize(f.overlayLayout);
     }
     setOverlayBoxes(boxes ?? lines.map((_, i) => defaultOverlayBox(0.12 + i * 0.14)));
+    if (savedStyle != null) setOverlayStyle(savedStyle);
     setReversePlayback(f.boomerang);
   }, [formulaId]);
 
@@ -326,13 +342,8 @@ export default function FormulaRunPage() {
     setRunning(true);
     setDone(false);
     try {
-      // Persist the dragged layout + styles for this formula (system formulas
-      // are read-only, so the browser keeps the user's arrangement).
-      try {
-        localStorage.setItem(`vs-overlay-pos:${formula.id}`, JSON.stringify(overlayBoxes));
-      } catch {
-        /* storage full/blocked — non-fatal */
-      }
+      // Layout + styles already auto-saved on every edit (see autoSaveLayout
+      // effect below) — nothing to persist here.
       // Mode/resolution → quality. BatchBot: Fast=480p, Quality=720p.
       // 480p ≈ $0.22/s vs 720p ≈ $0.47/s on fal — fast must stay 480p.
       const quality = mode === "fast" && resolution === "480p" ? "fast" : "standard";
@@ -371,6 +382,32 @@ export default function FormulaRunPage() {
     }
   };
 
+  // Auto-save the whole overlay editor state (lines + boxes + style) to
+  // localStorage, per formula, so navigating away never loses edits. Debounced
+  // 300ms, plus a pagehide flush for instant navigation. Skipped until the
+  // formula finishes loading (otherwise the pre-load defaults would overwrite
+  // the user's saved layout).
+  useEffect(() => {
+    if (loading || !formula) return;
+    const persist = () => {
+      try {
+        localStorage.setItem(
+          `vs-overlay-pos:${formula.id}`,
+          JSON.stringify({ lines: overlayLines, boxes: overlayBoxes, style: overlayStyle })
+        );
+      } catch {
+        /* storage full/blocked — non-fatal */
+      }
+    };
+    const t = setTimeout(persist, 300);
+    const flush = () => persist();
+    window.addEventListener("pagehide", flush);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [overlayLines, overlayBoxes, overlayStyle, loading, formula]);
+
   if (loading) {
     return (
       <div className="mx-auto flex min-h-[60vh] w-full max-w-2xl items-center justify-center">
@@ -394,6 +431,11 @@ export default function FormulaRunPage() {
     `flex items-center gap-2 rounded-md border p-2 text-sm transition-colors ${
       on ? "border-blue-500 bg-blue-50" : "hover:bg-muted/50"
     }`;
+
+  // Editor canvas is 240px wide max; video output is 270px (480p) or 720px
+  // (720p). Scale box font sizes by that ratio so the preview proportions
+  // match the final burn at the selected resolution.
+  const canvasScale = 240 / (resolution === "720p" ? 720 : 270);
 
   return (
     <main className="mx-auto w-full max-w-2xl space-y-6 px-4 py-8">
@@ -655,6 +697,7 @@ export default function FormulaRunPage() {
               dragging; boxes render with the exact font/bg colors that get
               burned into the video. */}
           <div
+            ref={canvasRef}
             className="relative aspect-[9/16] w-full max-w-[240px] overflow-hidden rounded-md border bg-[repeating-conic-gradient(#e5e7eb_0%_25%,#f9fafb_0%_50%)] bg-[length:12px_12px] select-none"
             onPointerMove={(e) => {
               if (dragIndex.current === null) return;
@@ -689,6 +732,7 @@ export default function FormulaRunPage() {
               const b = overlayBoxes[i] ?? defaultOverlayBox(0.12 + i * 0.14);
               const dragging = dragIndex.current === i;
               const opacity = b.bgOpacity ?? 0.55;
+              const fontSize = Math.max(8, Math.round((b.fontSize ?? overlayStyle) * canvasScale));
               return (
                 <div
                   key={i}
@@ -701,6 +745,7 @@ export default function FormulaRunPage() {
                     transform: "translate(-50%, -50%)",
                     color: b.fontColor ?? "#ffffff",
                     background: opacity > 0 ? hexToRgba(b.bgColor ?? "#000000", opacity) : "transparent",
+                    fontSize,
                   }}
                   onPointerDown={(e) => {
                     e.preventDefault();
@@ -728,8 +773,8 @@ export default function FormulaRunPage() {
                       setOverlayLines(next);
                     }}
                     placeholder={i === 0 ? "@product" : "Deal of the Day"}
-                    className="w-28 bg-transparent text-xs font-bold outline-none placeholder:opacity-50"
-                    style={{ color: "inherit" }}
+                    className="min-w-[64px] bg-transparent font-bold outline-none placeholder:opacity-50"
+                    style={{ color: "inherit", width: `${Math.max(10, line.length + 3)}ch` }}
                     onPointerDown={(e) => e.stopPropagation()}
                   />
                   <button
@@ -743,6 +788,62 @@ export default function FormulaRunPage() {
                   >
                     <X className="h-3 w-3" />
                   </button>
+                  {/* Resize handle: drag away from the box to scale its font
+                      size (what "size" means in the burned video). */}
+                  <span
+                    role="slider"
+                    aria-label={`Resize Text ${i + 1}`}
+                    title="Drag to resize"
+                    className="absolute -bottom-2 -right-2 h-3 w-3 cursor-se-resize rounded-[2px] border border-white bg-blue-500 shadow"
+                    style={{ touchAction: "none" }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      resizeIndex.current = i;
+                      e.currentTarget.setPointerCapture?.(e.pointerId);
+                      const rect = canvasRef.current?.getBoundingClientRect();
+                      if (!rect) return;
+                      const bx = (overlayBoxes[i] ?? defaultOverlayBox(0.12)).x;
+                      const by = (overlayBoxes[i] ?? defaultOverlayBox(0.12)).y;
+                      resizeStart.current = {
+                        dist: Math.max(
+                          8,
+                          Math.hypot(e.clientX - (rect.left + bx * rect.width), e.clientY - (rect.top + by * rect.height))
+                        ),
+                        size: overlayBoxes[i]?.fontSize ?? overlayStyle,
+                      };
+                    }}
+                    onPointerMove={(e) => {
+                      if (resizeIndex.current !== i || !resizeStart.current) return;
+                      const rect = canvasRef.current?.getBoundingClientRect();
+                      if (!rect) return;
+                      const box = overlayBoxes[resizeIndex.current] ?? defaultOverlayBox(0.12);
+                      const dist = Math.max(
+                        8,
+                        Math.hypot(
+                          e.clientX - (rect.left + box.x * rect.width),
+                          e.clientY - (rect.top + box.y * rect.height)
+                        )
+                      );
+                      const size = Math.min(
+                        160,
+                        Math.max(20, Math.round((resizeStart.current.size * dist) / resizeStart.current.dist))
+                      );
+                      setOverlayBoxes((cur) => {
+                        const next = [...cur];
+                        next[resizeIndex.current!] = { ...next[resizeIndex.current!], fontSize: size };
+                        return next;
+                      });
+                    }}
+                    onPointerUp={() => {
+                      resizeIndex.current = null;
+                      resizeStart.current = null;
+                    }}
+                    onPointerCancel={() => {
+                      resizeIndex.current = null;
+                      resizeStart.current = null;
+                    }}
+                  />
                 </div>
               );
             })}
