@@ -9,7 +9,7 @@
 // Runs a batch through POST /api/batches; run-view overrides (duration,
 // boomerang, overlay text/style, image resolution) beat formula defaults.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -47,6 +47,7 @@ interface Formula {
   isSystem: boolean;
   boomerang: boolean;
   overlayTemplate: string | null;
+  overlayLayout: { x: number; y: number }[] | null;
   nodeGraph: unknown;
 }
 
@@ -91,9 +92,13 @@ export default function FormulaRunPage() {
   const [imageResolution, setImageResolution] = useState("720p");
   // Final video settings
   const [reversePlayback, setReversePlayback] = useState(false);
-  // BatchBot Text Overlay = a LIST of text lines (Text 1, Text 2, ...) saved as
-  // part of the formula (overlay_template stores them newline-separated).
+  // BatchBot Text Overlay = a LIST of draggable text lines (Text 1, Text 2, ...)
+  // saved as part of the formula: overlay_template = newline-separated text,
+  // overlay_layout = per-line {x,y} fractions (0..1) aligned by index. The
+  // canvas below lets the user drag each box; positions burn into the video.
   const [overlayLines, setOverlayLines] = useState<string[]>([""]);
+  const [overlayPos, setOverlayPos] = useState<{ x: number; y: number }[]>([{ x: 0.5, y: 0.12 }]);
+  const dragIndex = useRef<number | null>(null);
   const [overlayStyle, setOverlayStyle] = useState(62); // BatchBot default style
   // Voice / engine (Symphony-specific, kept below the mirrored sections)
   const [voiceId, setVoiceId] = useState("");
@@ -210,7 +215,24 @@ export default function FormulaRunPage() {
     setMode(f.quality === "pro" ? "quality" : "fast");
     setResolution(f.quality === "pro" ? "720p" : "480p");
     setLengthSec(f.durationSec ?? 4);
-    setOverlayLines(f.overlayTemplate ? f.overlayTemplate.split("\n") : [""]);
+    const lines = f.overlayTemplate ? f.overlayTemplate.split("\n") : [""];
+    setOverlayLines(lines);
+    // Positions: user-dragged layout (localStorage, per formula) beats the
+    // formula's saved layout beats the default stacked-top.
+    let pos: { x: number; y: number }[] | null = null;
+    try {
+      const saved = localStorage.getItem(`vs-overlay-pos:${formulaId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length === lines.length) pos = parsed;
+      }
+    } catch {
+      /* ignore corrupt localStorage */
+    }
+    if (!pos && Array.isArray(f.overlayLayout) && f.overlayLayout.length === lines.length) {
+      pos = f.overlayLayout;
+    }
+    setOverlayPos(pos ?? lines.map((_, i) => ({ x: 0.5, y: 0.12 + i * 0.14 })));
     setReversePlayback(f.boomerang);
   }, [formulaId]);
 
@@ -254,6 +276,13 @@ export default function FormulaRunPage() {
     setRunning(true);
     setDone(false);
     try {
+      // Persist the dragged layout for this formula (system formulas are
+      // read-only, so the browser keeps the user's arrangement).
+      try {
+        localStorage.setItem(`vs-overlay-pos:${formula.id}`, JSON.stringify(overlayPos));
+      } catch {
+        /* storage full/blocked — non-fatal */
+      }
       // Mode/resolution → quality. BatchBot: Fast=480p, Quality=720p.
       // 480p ≈ $0.22/s vs 720p ≈ $0.47/s on fal — fast must stay 480p.
       const quality = mode === "fast" && resolution === "480p" ? "fast" : "standard";
@@ -273,6 +302,10 @@ export default function FormulaRunPage() {
           boomerang: reversePlayback,
           overlayTemplate: overlayLines.map((l) => l.trim()).filter(Boolean).join("\n") || null,
           overlayFontSize: overlayStyle,
+          overlayLayout: overlayLines
+            .map((l, i) => ({ line: l.trim(), pos: overlayPos[i] ?? { x: 0.5, y: 0.12 } }))
+            .filter((e) => e.line.length > 0)
+            .map((e) => e.pos),
           imageResolution,
         }),
       });
@@ -563,40 +596,78 @@ export default function FormulaRunPage() {
         <div className="mt-3 space-y-2">
           <p className="text-sm font-medium">Text Overlay</p>
           <p className="text-xs text-muted-foreground">
-            The text shown on top of the video. Leave it blank to add no overlay text.
+            The text shown on top of the video. Drag each box to position it — the
+            layout is saved with the formula and burned into the final video.
           </p>
-          {overlayLines.map((line, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Label className="w-12 shrink-0 text-xs text-muted-foreground">Text {i + 1}</Label>
-              <Input
-                value={line}
-                onChange={(e) => {
-                  const next = [...overlayLines];
-                  next[i] = e.target.value;
-                  setOverlayLines(next);
-                }}
-                placeholder={i === 0 ? "@product" : "Deal of the Day"}
-                className="h-9"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-red-600"
-                title="Remove"
-                onClick={() => setOverlayLines((cur) => cur.filter((_, j) => j !== i))}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          ))}
+
+          {/* 9:16 canvas with draggable text boxes (BatchBot run view) */}
+          <div
+            className="relative aspect-[9/16] w-full max-w-[240px] overflow-hidden rounded-md border bg-[repeating-conic-gradient(#e5e7eb_0%_25%,#f9fafb_0%_50%)] bg-[length:12px_12px] select-none"
+            onPointerMove={(e) => {
+              if (dragIndex.current === null) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = Math.min(0.95, Math.max(0.05, (e.clientX - rect.left) / rect.width));
+              const y = Math.min(0.92, Math.max(0.05, (e.clientY - rect.top) / rect.height));
+              setOverlayPos((cur) => {
+                const next = [...cur];
+                next[dragIndex.current!] = { x, y };
+                return next;
+              });
+            }}
+            onPointerUp={() => (dragIndex.current = null)}
+            onPointerLeave={() => (dragIndex.current = null)}
+          >
+            {overlayLines.map((line, i) => {
+              const p = overlayPos[i] ?? { x: 0.5, y: 0.12 };
+              return (
+                <div
+                  key={i}
+                  className="absolute flex cursor-grab items-center gap-1.5 rounded border border-blue-400 bg-black/60 px-2 py-1 text-white shadow-sm active:cursor-grabbing"
+                  style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: "translate(-50%, -50%)" }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    dragIndex.current = i;
+                    e.currentTarget.setPointerCapture?.(e.pointerId);
+                  }}
+                >
+                  <span className="text-[10px] font-semibold text-blue-300">Text {i + 1}</span>
+                  <input
+                    value={line}
+                    onChange={(e) => {
+                      const next = [...overlayLines];
+                      next[i] = e.target.value;
+                      setOverlayLines(next);
+                    }}
+                    placeholder={i === 0 ? "@product" : "Deal of the Day"}
+                    className="w-32 bg-transparent text-xs font-medium text-white outline-none placeholder:text-white/40"
+                    onPointerDown={(e) => e.stopPropagation()}
+                  />
+                  <button
+                    type="button"
+                    title="Remove"
+                    className="text-white/60 hover:text-red-400"
+                    onClick={() => {
+                      setOverlayLines((cur) => cur.filter((_, j) => j !== i));
+                      setOverlayPos((cur) => cur.filter((_, j) => j !== i));
+                    }}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
           <div className="flex items-center gap-3">
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="h-8 text-xs"
-              onClick={() => setOverlayLines((cur) => [...cur, ""])}
+              onClick={() => {
+                setOverlayLines((cur) => [...cur, ""]);
+                setOverlayPos((cur) => [...cur, { x: 0.5, y: 0.12 + cur.length * 0.14 }]);
+              }}
             >
               <Plus className="h-3.5 w-3.5" /> Add text
             </Button>

@@ -155,6 +155,7 @@ export async function POST(request: Request) {
       boomerang: runBoomerang,
       overlayTemplate: runOverlayTemplate,
       overlayFontSize,
+      overlayLayout: runOverlayLayout,
       imageResolution,
     }: {
       workspaceId?: string;
@@ -169,6 +170,7 @@ export async function POST(request: Request) {
       boomerang?: boolean | null;
       overlayTemplate?: string | null;
       overlayFontSize?: number | null;
+      overlayLayout?: { x: number; y: number }[] | null;
       imageResolution?: string | null;
     } = body;
 
@@ -267,6 +269,11 @@ export async function POST(request: Request) {
           extendMode: (runBoomerang ?? boomerang) ? "reverse" : "none",
           overlayTemplate: runOverlayTemplate ?? overlayTemplate ?? null,
           ...(overlayFontSize ? { overlayFontSize } : {}),
+          // Per-line overlay positions from the run view's draggable canvas.
+          // Only passed when it lines up with the non-empty overlay lines.
+          ...(Array.isArray(runOverlayLayout) && runOverlayLayout.length > 0
+            ? { overlayLayout: runOverlayLayout.map((p) => ({ x: Number(p.x) || 0.5, y: Number(p.y) || 0.5 })) }
+            : {}),
           // Which TikTok account this batch publishes to (multi-account).
           ...(tiktokAccountId ? { tiktokAccountId } : {}),
           // Graph-authored scene/motion/duration/quality override the formula row.
