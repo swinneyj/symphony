@@ -83,6 +83,18 @@ const STATUS_STYLE: Record<Product["status"], string> = {
   failed: "bg-red-100 text-red-700",
 };
 
+const VIDEO_STUDIO_TABS = new Set([
+  "products",
+  "discover",
+  "formulas",
+  "voices",
+  "batches",
+  "market",
+  "clone",
+  "downloader",
+  "queue",
+]);
+
 // ─── Page ───────────────────────────────────────────────────────────────────
 
 export default function VideoStudioPage() {
@@ -92,6 +104,14 @@ export default function VideoStudioPage() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("products");
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    if (!requested || !VIDEO_STUDIO_TABS.has(requested)) return;
+    const frame = window.requestAnimationFrame(() => setActiveTab(requested));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   const loadWorkspace = useCallback(async () => {
     const res = await fetch("/api/workspaces");
@@ -154,7 +174,15 @@ export default function VideoStudioPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="products">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          setActiveTab(value);
+          const url = new URL(window.location.href);
+          url.searchParams.set("tab", value);
+          window.history.replaceState(window.history.state, "", url);
+        }}
+      >
         <TabsList className="w-full justify-start overflow-x-auto md:w-auto md:justify-center">
           <TabsTrigger value="products" className="gap-1.5 shrink-0">
             <Package className="h-4 w-4" /> Products
@@ -1413,7 +1441,7 @@ function FormulasTab({
                   <img
                     src={`/api/formula-covers/${formula.id}`}
                     alt={formula.name}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    className="formula-preview-image h-full w-full object-cover"
                   />
                 ) : (
                   <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-100 to-zinc-200 p-4 text-center">
@@ -1422,6 +1450,11 @@ function FormulasTab({
                       {formula.name}
                     </span>
                   </div>
+                )}
+                {formula.coverImageUrl && (
+                  <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-[10px] font-medium text-white backdrop-blur-sm">
+                    <Play className="h-2.5 w-2.5 fill-current" /> Scene preview
+                  </span>
                 )}
                 <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent p-2">
                   <Badge className="bg-blue-600 text-white">

@@ -17,6 +17,45 @@ interface OverlayBox {
   bgColor?: string;
   bgOpacity?: number;
   fontSize?: number;
+  fontFamily?: "tiktok" | "snapchat" | "anton" | "montserrat" | "poppins" | "bebas";
+  treatment?: "outline" | "inverse" | "box" | "box-inverse" | "plain";
+  textAlign?: "left" | "center" | "right";
+  width?: number;
+  height?: number;
+}
+
+const FONT_FILES: Record<NonNullable<OverlayBox["fontFamily"]>, string> = {
+  tiktok: "/app/fonts/TikTokSans-Bold.ttf",
+  snapchat: "/app/fonts/Inter-Regular.ttf",
+  anton: "/app/fonts/Anton-Regular.ttf",
+  montserrat: "/app/fonts/Montserrat-ExtraBold.ttf",
+  poppins: "/app/fonts/Poppins-ExtraBold.ttf",
+  bebas: "/app/fonts/BebasNeue-Regular.ttf",
+};
+
+/** Approximate Batchbot's visual line wrapping inside a resized text block.
+ * drawtext has no native max-width, so wrap on word boundaries before burn. */
+function wrapOverlayText(text: string, width: number, fontSize: number): string {
+  const maxChars = Math.max(8, Math.floor((1080 * width) / (fontSize * 0.58)));
+  return text
+    .split("\n")
+    .flatMap((paragraph) => {
+      const words = paragraph.trim().split(/\s+/).filter(Boolean);
+      if (words.length === 0) return [""];
+      const lines: string[] = [];
+      let current = "";
+      for (const word of words) {
+        if (!current || `${current} ${word}`.length <= maxChars) {
+          current = current ? `${current} ${word}` : word;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    })
+    .join("\n");
 }
 
 /**
@@ -99,56 +138,78 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     // is available on the worker so the job can never fail over a font.
     let overlayArgs: string[] = [];
     const overlayTemplate = (job.metadata?.overlayTemplate as string | undefined) ?? null;
-    if (overlayTemplate && overlayTemplate.trim().length > 0) {
+    const rawOverlayBlocks = job.metadata?.overlayBlocks;
+    const overlayBlocks = Array.isArray(rawOverlayBlocks)
+      ? rawOverlayBlocks.map((line) => String(line)).filter((line) => line.trim().length > 0)
+      : overlayTemplate?.split("\n").filter((line) => line.trim().length > 0) ?? [];
+    if (overlayBlocks.length > 0) {
       const [product] = await sql`
         SELECT name, price FROM products WHERE id = ${job.product_id}
       `;
-      const text = overlayTemplate
+      const substitute = (value: string) => value
         .replaceAll("@product", product?.name ?? "this")
         .replaceAll("@price", product?.price != null ? String(product.price) : "")
         .replaceAll("{product}", product?.name ?? "this")
         .replaceAll("{price}", product?.price != null ? String(product.price) : "");
-      const font = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "/usr/share/fonts/truetype/freefont/FreeSans.ttf"].find((p) => existsSync(p));
-      if (font) {
+      const blocks = overlayBlocks.map(substitute);
+      const fallbackFont = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "/usr/share/fonts/truetype/freefont/FreeSans.ttf"].find((p) => existsSync(p));
+      const bundledFallbackFont = Object.values(FONT_FILES).find((p) => existsSync(p));
+      if (fallbackFont || bundledFallbackFont) {
         // Per-line layout from the run view's draggable canvas: each line is
         // burned at its own {x,y} fraction (0..1), centered on that point.
         // Falls back to stacked-top when no layout accompanies the text.
         const layout = (job.metadata?.overlayLayout as OverlayBox[] | undefined) ?? null;
-        const lines = text.split("\n").filter((l) => l.trim().length > 0);
         const { writeFile } = await import("node:fs/promises");
-        const fontSize = Number(job.metadata?.overlayFontSize ?? 44);
+        const fontSize = Number(job.metadata?.overlayFontSize ?? 72);
         const drawtexts: string[] = [];
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
+        for (let i = 0; i < blocks.length; i++) {
           const textFile = `${workdir}/overlay-${i}.txt`;
-          await writeFile(textFile, line, "utf8");
           const pos = layout?.[i] ?? { x: 0.5, y: 0.12 + i * 0.14 };
           const x = Math.min(0.95, Math.max(0.05, Number(pos.x) || 0.5));
           const y = Math.min(0.92, Math.max(0.05, Number(pos.y) || 0.5));
+          const width = Math.min(0.92, Math.max(0.2, Number(pos.width) || 0.8));
           // Per-line style from the run view's WYSIWYG canvas: hex font + box
           // colors with a 0..1 opacity. 0 opacity = plain text, no box. Hex is
           // validated so arbitrary strings can never reach the filter graph.
           const fc = /^#?([0-9a-fA-F]{6})$/.exec(pos.fontColor ?? "")?.[1];
-          const bc = /^#?([0-9a-fA-F]{6})$/.exec(pos.bgColor ?? "")?.[1];
           const opRaw = Number(pos.bgOpacity);
-          const op = Number.isFinite(opRaw) ? Math.min(1, Math.max(0, opRaw)) : 0.55;
+          const op = Number.isFinite(opRaw) ? Math.min(1, Math.max(0, opRaw)) : 1;
           // Per-box font size (px at output resolution) beats the global style.
           const sizeRaw = Number(pos.fontSize);
           const lineFontSize = Number.isFinite(sizeRaw)
-            ? Math.min(160, Math.max(20, Math.round(sizeRaw)))
+            ? Math.min(120, Math.max(18, Math.round(sizeRaw)))
             : fontSize;
-          const style = `${fc ? `fontcolor=0x${fc}` : "fontcolor=white"}${
-            bc && op > 0 ? `:box=1:boxcolor=0x${bc}@${op}` : ""
-          }`;
-          // Center the text box on (x,y): x=(w-text_w)*fx keeps it on-screen
-          // and centered at fx=0.5; same for y.
+          await writeFile(textFile, wrapOverlayText(blocks[i], width, lineFontSize), "utf8");
+          const treatment = pos.treatment ?? "outline";
+          const fontKey = pos.fontFamily ?? "tiktok";
+          const font = existsSync(FONT_FILES[fontKey]) ? FONT_FILES[fontKey] : (bundledFallbackFont ?? fallbackFont!);
+          const fill = treatment === "inverse" || treatment === "box-inverse"
+            ? "000000"
+            : fc ?? "ffffff";
+          const treatmentArgs = treatment === "outline"
+            ? ":borderw=8:bordercolor=black"
+            : treatment === "inverse"
+              ? ":borderw=7:bordercolor=white"
+              : treatment === "box"
+                ? `:box=1:boxcolor=black@${op}:boxborderw=16`
+                : treatment === "box-inverse"
+                  ? `:box=1:boxcolor=white@${op}:boxborderw=16`
+                  : "";
+          const left = Math.max(0.02, Math.min(0.98, x - width / 2));
+          const right = Math.max(0.02, Math.min(0.98, x + width / 2));
+          const align = pos.textAlign ?? "center";
+          const xExpr = align === "left"
+            ? `w*${left}`
+            : align === "right"
+              ? `w*${right}-text_w`
+              : `w*${x}-text_w/2`;
           drawtexts.push(
-            `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${lineFontSize}:${style}:boxborderw=16:x=(w-text_w)*${x}:y=(h-text_h)*${y}`
+            `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${lineFontSize}:fontcolor=0x${fill}${treatmentArgs}:x=max(0\\,min(w-text_w\\,${xExpr})):y=max(0\\,min(h-text_h\\,h*${y}-text_h/2))`
           );
         }
         if (drawtexts.length > 0) {
           overlayArgs = ["-vf", drawtexts.join(",")];
-          console.log(`[video-worker] assemble overlay job=${job.id}: ${lines.length} line(s) @ ${JSON.stringify(layout ?? "stacked")}`);
+          console.log(`[video-worker] assemble overlay job=${job.id}: ${blocks.length} block(s) @ ${JSON.stringify(layout ?? "stacked")}`);
         }
       } else {
         console.warn(`[video-worker] assemble: no font found, skipping overlay job=${job.id}`);

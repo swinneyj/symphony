@@ -22,5 +22,6 @@ RUN chmod +x /usr/local/bin/bws
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --omit=optional
 COPY --from=build /app/dist ./dist
+COPY fonts ./fonts
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

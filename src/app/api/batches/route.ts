@@ -42,6 +42,11 @@ interface RunOverlayBox {
   bgColor?: string;
   bgOpacity?: number;
   fontSize?: number;
+  fontFamily?: string;
+  treatment?: string;
+  textAlign?: string;
+  width?: number;
+  height?: number;
 }
 
 /** Normalize a run-view overlay box for the worker: clamp position, keep only
@@ -55,15 +60,27 @@ function sanitizeOverlayBox(p: RunOverlayBox): RunOverlayBox {
   };
   const fontColor = hex(p.fontColor);
   const bgColor = hex(p.bgColor);
+  const fontFamily = ["tiktok", "snapchat", "anton", "montserrat", "poppins", "bebas"].includes(p.fontFamily ?? "")
+    ? p.fontFamily
+    : "tiktok";
+  const treatment = ["outline", "inverse", "box", "box-inverse", "plain"].includes(p.treatment ?? "")
+    ? p.treatment
+    : "outline";
+  const textAlign = ["left", "center", "right"].includes(p.textAlign ?? "") ? p.textAlign : "center";
   return {
-    x: Number(p.x) || 0.5,
-    y: Number(p.y) || 0.5,
+    x: Math.min(0.95, Math.max(0.05, Number(p.x) || 0.5)),
+    y: Math.min(0.92, Math.max(0.05, Number(p.y) || 0.5)),
     ...(fontColor ? { fontColor } : {}),
     ...(bgColor ? { bgColor } : {}),
     ...(p.bgOpacity != null ? { bgOpacity: Math.min(1, Math.max(0, Number(p.bgOpacity) || 0)) } : {}),
     ...(p.fontSize != null
-      ? { fontSize: Math.min(160, Math.max(20, Math.round(Number(p.fontSize) || 62))) }
+      ? { fontSize: Math.min(120, Math.max(18, Math.round(Number(p.fontSize) || 72))) }
       : {}),
+    fontFamily,
+    treatment,
+    textAlign,
+    width: Math.min(0.92, Math.max(0.2, Number(p.width) || 0.8)),
+    height: Math.min(0.5, Math.max(0.08, Number(p.height) || 0.16)),
   };
 }
 
@@ -187,6 +204,7 @@ export async function POST(request: Request) {
       durationSec: runDurationSec,
       boomerang: runBoomerang,
       overlayTemplate: runOverlayTemplate,
+      overlayBlocks: runOverlayBlocks,
       overlayFontSize,
       overlayLayout: runOverlayLayout,
       imageResolution,
@@ -202,6 +220,7 @@ export async function POST(request: Request) {
       durationSec?: number | null;
       boomerang?: boolean | null;
       overlayTemplate?: string | null;
+      overlayBlocks?: string[] | null;
       overlayFontSize?: number | null;
       overlayLayout?: RunOverlayBox[] | null;
       imageResolution?: string | null;
@@ -301,6 +320,9 @@ export async function POST(request: Request) {
           // Run-view overrides win when the user touched them in view=run.
           extendMode: (runBoomerang ?? boomerang) ? "reverse" : "none",
           overlayTemplate: runOverlayTemplate ?? overlayTemplate ?? null,
+          ...(Array.isArray(runOverlayBlocks)
+            ? { overlayBlocks: runOverlayBlocks.map((line) => String(line).trim()).filter(Boolean).slice(0, 12) }
+            : {}),
           ...(overlayFontSize ? { overlayFontSize } : {}),
           // Per-line overlay boxes (position + style) from the run view's
           // WYSIWYG canvas. Only passed when it lines up with the non-empty

@@ -101,6 +101,9 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
           footageUrl: result.url,
           extendMode: meta.extendMode ?? "none",
           overlayTemplate: meta.overlayTemplate ?? null,
+          overlayBlocks: meta.overlayBlocks ?? null,
+          overlayFontSize: meta.overlayFontSize ?? null,
+          overlayLayout: meta.overlayLayout ?? null,
         }))}, now(), now())
       `;
     }
