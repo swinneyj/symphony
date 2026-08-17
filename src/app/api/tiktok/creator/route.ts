@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { socialAccounts } from "@/db/schema";
-import { fetchTikTokCreatorInfo, getTikTokAccountForMember } from "@/lib/tiktok";
+import { ensureFreshTikTokAccessToken, fetchTikTokCreatorInfo, getTikTokAccountForMember } from "@/lib/tiktok";
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -46,7 +46,8 @@ export async function GET(request: NextRequest) {
       if (requested) account = requested;
     }
 
-    const creator = await fetchTikTokCreatorInfo(account.accessToken);
+    const accessToken = await ensureFreshTikTokAccessToken(account);
+    const creator = await fetchTikTokCreatorInfo(accessToken);
     return NextResponse.json(creator);
   } catch (error) {
     console.error("TikTok creator info error:", error);

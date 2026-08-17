@@ -180,6 +180,63 @@ export async function getTikTokAccountForMember(workspaceId: string, userId: str
   return { authorized: true as const, account: account || null };
 }
 
+export async function ensureFreshTikTokAccessToken(
+  account: typeof socialAccounts.$inferSelect
+) {
+  const refreshWindowMs = 5 * 60 * 1000;
+  if (
+    account.tokenExpiresAt &&
+    account.tokenExpiresAt.getTime() > Date.now() + refreshWindowMs
+  ) {
+    return account.accessToken;
+  }
+
+  if (!account.refreshToken) {
+    throw new TikTokApiError(
+      "This TikTok connection has expired. Reconnect the account and try again.",
+      "refresh_token_missing"
+    );
+  }
+
+  const { clientKey, clientSecret } = getTikTokCredentials();
+  const response = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: account.refreshToken,
+    }),
+    cache: "no-store",
+  });
+  const raw = (await response.json()) as TikTokTokenResponse & {
+    data?: TikTokTokenResponse;
+  };
+  const payload = raw.data?.access_token ? raw.data : raw;
+
+  if (!response.ok || !payload.access_token) {
+    throw new TikTokApiError(
+      payload.error_description || "This TikTok connection has expired. Reconnect the account and try again.",
+      typeof payload.error === "string" ? payload.error : `refresh_http_${response.status}`,
+      payload.log_id
+    );
+  }
+
+  const expiresAt = new Date(Date.now() + (payload.expires_in || 86400) * 1000);
+  await db
+    .update(socialAccounts)
+    .set({
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token || account.refreshToken,
+      tokenExpiresAt: expiresAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(socialAccounts.id, account.id));
+
+  return payload.access_token;
+}
+
 export async function fetchTikTokCreatorInfo(accessToken: string) {
   const response = await fetch(
     "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",

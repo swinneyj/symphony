@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { socialAccounts } from "@/db/schema";
-import { fetchTikTokPublishStatus, getTikTokAccountForMember } from "@/lib/tiktok";
+import { ensureFreshTikTokAccessToken, fetchTikTokPublishStatus, getTikTokAccountForMember } from "@/lib/tiktok";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -50,7 +50,8 @@ export async function POST(request: Request) {
       account = requested;
     }
 
-    const status = await fetchTikTokPublishStatus(account.accessToken, publishId);
+    const accessToken = await ensureFreshTikTokAccessToken(account);
+    const status = await fetchTikTokPublishStatus(accessToken, publishId);
     return NextResponse.json(status);
   } catch (error) {
     console.error("TikTok status error:", error);

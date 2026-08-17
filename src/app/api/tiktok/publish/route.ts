@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { socialAccounts } from "@/db/schema";
 import {
   fetchTikTokCreatorInfo,
+  ensureFreshTikTokAccessToken,
   getTikTokAccountForMember,
   initializeTikTokUpload,
   sendVideoToTikTok,
@@ -100,8 +101,10 @@ export async function POST(request: Request) {
       if (requested) account = requested;
     }
 
+    const accessToken = await ensureFreshTikTokAccessToken(account);
+
     if (mode === "direct") {
-      const creator = await fetchTikTokCreatorInfo(account.accessToken);
+      const creator = await fetchTikTokCreatorInfo(accessToken);
       if (!creator.privacy_level_options.includes(privacyLevel)) {
         return NextResponse.json({ error: "That privacy option is no longer available" }, { status: 409 });
       }
@@ -120,7 +123,7 @@ export async function POST(request: Request) {
     }
 
     const initialized = await initializeTikTokUpload({
-      accessToken: account.accessToken,
+      accessToken,
       mode,
       fileSize: video.size,
       caption,
