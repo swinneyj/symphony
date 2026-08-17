@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { socialAccounts } from "@/db/schema";
 import { fetchTikTokPublishStatus, getTikTokAccountForMember } from "@/lib/tiktok";
 
 export async function POST(request: Request) {
@@ -10,8 +13,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { workspaceId, publishId } = (await request.json()) as {
+    const { workspaceId, accountId, publishId } = (await request.json()) as {
       workspaceId?: string;
+      accountId?: string;
       publishId?: string;
     };
     if (!workspaceId || !publishId) {
@@ -26,7 +30,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Connect TikTok first" }, { status: 409 });
     }
 
-    const status = await fetchTikTokPublishStatus(result.account.accessToken, publishId);
+    let account = result.account;
+    if (accountId) {
+      const [requested] = await db
+        .select()
+        .from(socialAccounts)
+        .where(
+          and(
+            eq(socialAccounts.workspaceId, workspaceId),
+            eq(socialAccounts.platform, "tiktok"),
+            eq(socialAccounts.id, accountId),
+            eq(socialAccounts.status, "connected")
+          )
+        )
+        .limit(1);
+      if (!requested) {
+        return NextResponse.json({ error: "TikTok account not found" }, { status: 404 });
+      }
+      account = requested;
+    }
+
+    const status = await fetchTikTokPublishStatus(account.accessToken, publishId);
     return NextResponse.json(status);
   } catch (error) {
     console.error("TikTok status error:", error);

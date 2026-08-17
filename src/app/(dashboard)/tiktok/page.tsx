@@ -75,6 +75,7 @@ export default function TikTokPage() {
   const [creator, setCreator] = useState<CreatorInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [creatorLoading, setCreatorLoading] = useState(false);
+  const [creatorUnavailable, setCreatorUnavailable] = useState<string | null>(null);
   const [mode, setMode] = useState<"draft" | "direct">("draft");
   const [video, setVideo] = useState<File | null>(null);
   const [caption, setCaption] = useState("");
@@ -105,7 +106,14 @@ export default function TikTokPage() {
 
   const loadCreator = useCallback(async (workspaceId: string, accountId?: string) => {
     setCreatorLoading(true);
+    setCreator(null);
+    setCreatorUnavailable(null);
     setError(null);
+    setPrivacyLevel("");
+    setAllowComment(false);
+    setAllowDuet(false);
+    setAllowStitch(false);
+    setConsent(false);
     try {
       const query = new URLSearchParams({ workspaceId });
       if (accountId) query.set("accountId", accountId);
@@ -113,9 +121,10 @@ export default function TikTokPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load TikTok posting settings");
       setCreator(data);
-      setPrivacyLevel("");
     } catch (creatorError) {
-      setError(creatorError instanceof Error ? creatorError.message : "Creator lookup failed");
+      const message = creatorError instanceof Error ? creatorError.message : "Creator lookup failed";
+      setCreatorUnavailable(message);
+      setError(message);
     } finally {
       setCreatorLoading(false);
     }
@@ -161,7 +170,7 @@ export default function TikTokPage() {
         const response = await fetch("/api/tiktok/status", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ workspaceId: workspace.id, publishId: result.publishId }),
+          body: JSON.stringify({ workspaceId: workspace.id, accountId: selectedAccountId, publishId: result.publishId }),
         });
         const data = (await response.json()) as PublishStatus & { error?: string };
         if (!response.ok) throw new Error(data.error || "Status lookup failed");
@@ -182,7 +191,7 @@ export default function TikTokPage() {
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, [result, workspace]);
+  }, [result, selectedAccountId, workspace]);
 
   const handleVideoChange = (file: File | null) => {
     if (videoPreviewUrlRef.current) URL.revokeObjectURL(videoPreviewUrlRef.current);
@@ -237,7 +246,7 @@ export default function TikTokPage() {
       const response = await fetch("/api/tiktok/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspaceId: workspace.id, publishId: result.publishId }),
+        body: JSON.stringify({ workspaceId: workspace.id, accountId: selectedAccountId, publishId: result.publishId }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Status lookup failed");
@@ -261,7 +270,7 @@ export default function TikTokPage() {
     !!creator && videoDuration !== null && videoDuration > 0 && videoDuration <= creator.max_video_post_duration_sec
   );
   const directReady = mode === "draft" || (
-    !!creator && !!privacyLevel && consent && disclosureReady && brandedPrivacyReady && durationReady
+    !!creator && !creatorLoading && !creatorUnavailable && !!privacyLevel && consent && disclosureReady && brandedPrivacyReady && durationReady
   );
   const disclosureLabel = brandedContent ? "Paid partnership" : ownBrand ? "Promotional content" : null;
   const durationTooLong = mode === "direct" && !!creator && videoDuration !== null && videoDuration > creator.max_video_post_duration_sec;
@@ -377,6 +386,7 @@ export default function TikTokPage() {
                     <select
                       id="tiktok-account"
                       value={selectedAccountId}
+                      disabled={publishing || !!result}
                       onChange={(event) => {
                         const nextId = event.target.value;
                         setSelectedAccountId(nextId);
@@ -404,7 +414,10 @@ export default function TikTokPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setMode("direct")}
+                    onClick={() => {
+                      setMode("direct");
+                      if (workspace) loadCreator(workspace.id, selectedAccountId);
+                    }}
                     className={`rounded-md px-3 py-2 text-sm font-medium ${mode === "direct" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
                   >
                     Direct Post
@@ -444,8 +457,9 @@ export default function TikTokPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="tiktok-caption">Caption</Label>
+                  <Label htmlFor="tiktok-caption">Title / caption</Label>
                   <Textarea id="tiktok-caption" value={caption} maxLength={2200} onChange={(event) => setCaption(event.target.value)} />
+                  <p className="text-xs text-muted-foreground">Enter and edit exactly what will accompany the video on TikTok. Symphony does not add preset text, hashtags, logos, or watermarks.</p>
                   <p className="text-right text-xs text-muted-foreground">{caption.length} / 2,200</p>
                 </div>
 
@@ -456,16 +470,27 @@ export default function TikTokPage() {
                         <p className="text-sm font-medium">Live creator settings</p>
                         <p className="text-xs text-muted-foreground">Required by TikTok before every Direct Post.</p>
                       </div>
-                      <Button size="sm" variant="outline" disabled={creatorLoading || !workspace} onClick={() => workspace && loadCreator(workspace.id)}>
+                      <Button size="sm" variant="outline" disabled={creatorLoading || !workspace} onClick={() => workspace && loadCreator(workspace.id, selectedAccountId)}>
                         {creatorLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                       </Button>
                     </div>
+                    {creatorLoading && (
+                      <p className="rounded-md bg-muted p-3 text-xs text-muted-foreground">Checking the latest posting permissions with TikTok…</p>
+                    )}
+                    {!creatorLoading && creatorUnavailable && (
+                      <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                        Posting is unavailable for this creator right now. TikTok reported: {creatorUnavailable}. Try again later or refresh the creator settings.
+                      </p>
+                    )}
                     {creator && (
                       <>
                         <div className="flex items-center gap-3">
                           <Avatar><AvatarImage src={creator.creator_avatar_url || ""} /><AvatarFallback>TT</AvatarFallback></Avatar>
                           <div><p className="text-sm font-medium">{creator.creator_nickname}</p><p className="text-xs text-muted-foreground">@{creator.creator_username}</p></div>
                         </div>
+                        <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">
+                          TikTok currently allows @{creator.creator_username} to post videos up to {creator.max_video_post_duration_sec} seconds. Symphony checks this video before enabling Post to TikTok.
+                        </p>
                         <div className="space-y-2">
                           <Label htmlFor="privacy-level">Who can view this video?</Label>
                           <select
@@ -545,7 +570,7 @@ export default function TikTokPage() {
                         <label className="flex items-start gap-2 rounded-md bg-muted p-3 text-xs">
                           <input className="mt-0.5" type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
                           <span>
-                            By posting, I agree to TikTok&apos;s {brandedContent && (
+                            By posting, you agree to TikTok&apos;s {brandedContent && (
                               <><a className="underline" href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer">Branded Content Policy</a> and </>
                             )}
                             <a className="underline" href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer">Music Usage Confirmation</a>.
@@ -563,10 +588,16 @@ export default function TikTokPage() {
                   </div>
                 )}
 
-                <Button className="w-full" disabled={!video || !directReady || publishing} onClick={publish}>
-                  {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : mode === "draft" ? <Upload className="mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />}
-                  {publishing ? "Sending to TikTok..." : mode === "draft" ? "Upload Draft to TikTok" : "Post to TikTok"}
-                </Button>
+                <div
+                  title={mode === "direct" && contentDisclosure && !disclosureReady
+                    ? "You need to indicate if your content promotes yourself, a third party, or both."
+                    : undefined}
+                >
+                  <Button className="w-full" disabled={!video || !directReady || publishing} onClick={publish}>
+                    {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : mode === "draft" ? <Upload className="mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />}
+                    {publishing ? "Sending to TikTok..." : mode === "draft" ? "Upload Draft to TikTok" : "Post to TikTok"}
+                  </Button>
+                </div>
 
                 {result && (
                   <div className="space-y-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
@@ -596,7 +627,20 @@ export default function TikTokPage() {
                     {checkingStatus && <p className="text-xs text-muted-foreground">TikTok is still processing this post. Symphony will check again automatically.</p>}
                     {status?.fail_reason && <p className="text-xs text-destructive">TikTok reported: {status.fail_reason}</p>}
                     {!!status?.publicaly_available_post_id?.length && (
-                      <p className="text-xs"><span className="text-muted-foreground">TikTok post ID:</span> <span className="font-mono">{status.publicaly_available_post_id.join(", ")}</span></p>
+                      <div className="space-y-2 rounded-md border border-emerald-500/30 bg-background p-3 text-xs">
+                        <p className="font-medium text-emerald-700">Post published successfully on TikTok</p>
+                        <p><span className="text-muted-foreground">TikTok post ID:</span> <span className="font-mono">{status.publicaly_available_post_id.join(", ")}</span></p>
+                        {creator?.creator_username && (
+                          <a
+                            className="inline-flex items-center gap-1 font-medium underline"
+                            href={`https://www.tiktok.com/@${creator.creator_username}/video/${status.publicaly_available_post_id[0]}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            View the published post on TikTok <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
