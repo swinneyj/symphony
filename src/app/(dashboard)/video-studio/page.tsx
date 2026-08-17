@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -56,6 +56,7 @@ interface Formula {
   id: string;
   name: string;
   category: string | null;
+  format: string | null;
   scriptTemplate: string;
   scenePromptTemplate: string | null;
   motionPreset: string | null;
@@ -1091,9 +1092,14 @@ function FormulasTab({
   const [preview, setPreview] = useState<{ script: string; features: string[]; llm: boolean } | null>(null);
   const [rendering, setRendering] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  // Library filters (mirror batchbot.io: search + All formats + All categories)
+  const [query, setQuery] = useState("");
+  const [formatFilter, setFormatFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [draft, setDraft] = useState({
     name: "",
     category: "generic",
+    format: "ai",
     scriptTemplate:
       "I just saw the same {product} at the store, but I found mine on TikTok Shop. Let me show you. {features} Tap the orange cart to check it out.",
     scenePromptTemplate: "",
@@ -1104,6 +1110,23 @@ function FormulasTab({
     overlayTemplate: "",
   });
   const [creating, setCreating] = useState(false);
+
+  // Client-side filtering: search by name + format + category (like batchbot.io).
+  const filteredFormulas = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return formulas.filter((f) => {
+      if (formatFilter !== "all" && (f.format ?? "ai") !== formatFilter) return false;
+      if (categoryFilter !== "all" && (f.category ?? "generic") !== categoryFilter) return false;
+      if (q && !f.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [formulas, query, formatFilter, categoryFilter]);
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of formulas) if (f.category) set.add(f.category);
+    return [...set].sort();
+  }, [formulas]);
 
   const handleRender = async () => {
     if (!previewFormula || !previewProductId) return;
@@ -1142,6 +1165,7 @@ function FormulasTab({
           workspaceId,
           name: draft.name.trim(),
           category: draft.category,
+          format: draft.format,
           scriptTemplate: draft.scriptTemplate.trim(),
           scenePromptTemplate: draft.scenePromptTemplate.trim() || null,
           motionPreset: draft.motionPreset,
@@ -1178,11 +1202,40 @@ function FormulasTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {formulas.length} formulas · system templates plus your own
-        </p>
+      {/* Library toolbar — mirrors batchbot.io: search + All formats + All categories */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search formulas"
+            className="h-9 pl-8"
+          />
+        </div>
         <div className="flex items-center gap-2">
+          <select
+            className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+            value={formatFilter}
+            onChange={(e) => setFormatFilter(e.target.value)}
+          >
+            <option value="all">All formats</option>
+            <option value="ai">AI</option>
+            <option value="no_ai">No AI</option>
+            <option value="hybrid">Hybrid</option>
+          </select>
+          <select
+            className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+          >
+            <option value="all">All categories</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
           <Link href="/video-studio/builder">
             <Button size="sm" variant="outline">
               <Workflow className="h-4 w-4" /> Formula Studio
@@ -1219,6 +1272,18 @@ function FormulasTab({
                       {c}
                     </option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <Label>Format</Label>
+                <select
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                  value={draft.format}
+                  onChange={(e) => setDraft({ ...draft, format: e.target.value })}
+                >
+                  <option value="ai">AI</option>
+                  <option value="no_ai">No AI</option>
+                  <option value="hybrid">Hybrid</option>
                 </select>
               </div>
               <div>
@@ -1298,8 +1363,27 @@ function FormulasTab({
         </div>
       </div>
 
+      {filteredFormulas.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-16 text-center">
+          <Search className="h-6 w-6 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            No formulas match your search or filters.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setQuery("");
+              setFormatFilter("all");
+              setCategoryFilter("all");
+            }}
+          >
+            Clear filters
+          </Button>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-        {formulas.map((formula) => (
+        {filteredFormulas.map((formula) => (
           <Card
             key={formula.id}
             className="group overflow-hidden transition-shadow hover:shadow-md"
@@ -1334,6 +1418,7 @@ function FormulasTab({
                 <p className="line-clamp-1 text-sm font-semibold">{formula.name}</p>
                 <p className="line-clamp-1 text-xs text-muted-foreground capitalize">
                   {formula.category ?? "formula"}
+                  {formula.format ? ` · ${formula.format.replace("_", " ")}` : ""}
                   {formula.boomerang ? " · ↺" : ""}
                   {formula.overlayTemplate ? " · TXT" : ""}
                 </p>
@@ -1372,6 +1457,7 @@ function FormulasTab({
           </Card>
         ))}
       </div>
+      )}
 
       <Dialog
         open={previewFormula !== null}

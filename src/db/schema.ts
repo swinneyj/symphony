@@ -370,6 +370,8 @@ export const videoFormulas = pgTable("video_formulas", {
   workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   category: text("category"),
+  /** BatchBot-style format tag: 'ai' | 'no_ai' | 'hybrid' — drives the library filter. */
+  format: text("format").notNull().default("ai"),
   scriptTemplate: text("script_template").notNull(),
   scenePromptTemplate: text("scene_prompt_template"),
   // 'render' (default): AI re-renders the product into a custom scene before

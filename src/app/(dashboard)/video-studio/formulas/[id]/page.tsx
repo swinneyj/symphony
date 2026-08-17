@@ -91,7 +91,9 @@ export default function FormulaRunPage() {
   const [imageResolution, setImageResolution] = useState("720p");
   // Final video settings
   const [reversePlayback, setReversePlayback] = useState(false);
-  const [overlayText, setOverlayText] = useState("");
+  // BatchBot Text Overlay = a LIST of text lines (Text 1, Text 2, ...) saved as
+  // part of the formula (overlay_template stores them newline-separated).
+  const [overlayLines, setOverlayLines] = useState<string[]>([""]);
   const [overlayStyle, setOverlayStyle] = useState(62); // BatchBot default style
   // Voice / engine (Symphony-specific, kept below the mirrored sections)
   const [voiceId, setVoiceId] = useState("");
@@ -208,7 +210,7 @@ export default function FormulaRunPage() {
     setMode(f.quality === "pro" ? "quality" : "fast");
     setResolution(f.quality === "pro" ? "720p" : "480p");
     setLengthSec(f.durationSec ?? 4);
-    setOverlayText(f.overlayTemplate ?? "");
+    setOverlayLines(f.overlayTemplate ? f.overlayTemplate.split("\n") : [""]);
     setReversePlayback(f.boomerang);
   }, [formulaId]);
 
@@ -269,7 +271,7 @@ export default function FormulaRunPage() {
           // Run-view overrides (BatchBot view=run controls)
           durationSec: lengthSec,
           boomerang: reversePlayback,
-          overlayTemplate: overlayText.trim() || null,
+          overlayTemplate: overlayLines.map((l) => l.trim()).filter(Boolean).join("\n") || null,
           overlayFontSize: overlayStyle,
           imageResolution,
         }),
@@ -563,23 +565,53 @@ export default function FormulaRunPage() {
           <p className="text-xs text-muted-foreground">
             The text shown on top of the video. Leave it blank to add no overlay text.
           </p>
-          <textarea
-            className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-            value={overlayText}
-            onChange={(e) => setOverlayText(e.target.value)}
-            placeholder="e.g. @product is back! Tap the orange cart to see if you have coupons at checkout!"
-          />
+          {overlayLines.map((line, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Label className="w-12 shrink-0 text-xs text-muted-foreground">Text {i + 1}</Label>
+              <Input
+                value={line}
+                onChange={(e) => {
+                  const next = [...overlayLines];
+                  next[i] = e.target.value;
+                  setOverlayLines(next);
+                }}
+                placeholder={i === 0 ? "@product" : "Deal of the Day"}
+                className="h-9"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-red-600"
+                title="Remove"
+                onClick={() => setOverlayLines((cur) => cur.filter((_, j) => j !== i))}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
           <div className="flex items-center gap-3">
-            <Label>Style</Label>
-            <Input
-              type="number"
-              min={20}
-              max={120}
-              value={overlayStyle}
-              onChange={(e) => setOverlayStyle(Number(e.target.value) || 62)}
-              className="h-8 w-20"
-            />
-            <span className="text-xs text-muted-foreground">font size</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => setOverlayLines((cur) => [...cur, ""])}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add text
+            </Button>
+            <div className="ml-auto flex items-center gap-2">
+              <Label>Style</Label>
+              <Input
+                type="number"
+                min={20}
+                max={120}
+                value={overlayStyle}
+                onChange={(e) => setOverlayStyle(Number(e.target.value) || 62)}
+                className="h-8 w-20"
+              />
+              <span className="text-xs text-muted-foreground">font size</span>
+            </div>
           </div>
         </div>
       </section>
