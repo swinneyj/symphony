@@ -432,10 +432,11 @@ export default function FormulaRunPage() {
       on ? "border-blue-500 bg-blue-50" : "hover:bg-muted/50"
     }`;
 
-  // Editor canvas is 240px wide max; video output is 270px (480p) or 720px
-  // (720p). Scale box font sizes by that ratio so the preview proportions
-  // match the final burn at the selected resolution.
-  const canvasScale = 240 / (resolution === "720p" ? 720 : 270);
+  // Editor canvas preview scale. The burn uses raw px font sizes; the canvas
+  // is a compact approximation of the frame — a constant 1/3 keeps the default
+  // boxes at BatchBot's modest start look instead of blowing up the small
+  // preview (62px default → ~21px on canvas, matching batchbot.io's run view).
+  const canvasScale = 1 / 3;
 
   return (
     <main className="mx-auto w-full max-w-2xl space-y-6 px-4 py-8">
