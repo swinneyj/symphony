@@ -254,6 +254,24 @@ export default function VideoStudioPage() {
 
 // ─── Products tab ───────────────────────────────────────────────────────────
 
+function QcBadge({ qc }: { qc: { flag: string; reasons?: string[] } }) {
+  const flag = qc.flag ?? "pass";
+  const styles: Record<string, string> = {
+    pass: "bg-green-100 text-green-700",
+    review: "bg-amber-100 text-amber-700",
+    fail: "bg-red-100 text-red-700",
+  };
+  const label = flag === "pass" ? "QC pass" : flag === "review" ? "QC review" : "QC fail";
+  return (
+    <span
+      title={(qc.reasons ?? []).join(" · ") || "Automated border/motion QC"}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${styles[flag] ?? styles.pass}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 function ProductsTab({
   workspaceId,
   products,
@@ -2040,6 +2058,9 @@ function BatchStudioTab({
                       />
                       <span className="min-w-0 flex-1 truncate">{job.productName}</span>
                       <Badge className={BATCH_STATUS_STYLE[job.status]}>{job.status}</Badge>
+                      {job.status === "done" && job.metadata && (job.metadata.qc as { flag?: string; reasons?: string[] } | undefined) && (
+                        <QcBadge qc={job.metadata.qc as { flag: string; reasons?: string[] }} />
+                      )}
                       {(job.footageUrl || job.finalUrl) && (
                         <a
                           href={job.finalUrl ?? job.footageUrl!}

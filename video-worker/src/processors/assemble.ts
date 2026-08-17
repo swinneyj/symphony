@@ -4,6 +4,7 @@ import { blobToken } from "../env.js";
 import { sql, markDone, failWithRetry, type JobRow } from "../db.js";
 import { generateVoiceover } from "../tts.js";
 import { renderPlaceholder } from "../providers.js";
+import { runQc } from "../qc.js";
 
 /**
  * batch_video job: voiceover + final assembly.
@@ -147,6 +148,17 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     );
     execFileSync("ffmpeg", args, { stdio: "ignore", timeout: 180_000 });
 
+    // 3b. QC pass: border stability + letterbox check on the finished video
+    // ($0 ffmpeg pixel analysis). Flags feed the UI; 'fail' still uploads but
+    // the job is surfaced as needing review before posting.
+    let qc: ReturnType<typeof runQc> | null = null;
+    try {
+      qc = runQc(finalPath);
+      console.log(`[video-worker] assemble QC job=${job.id}: flag=${qc.flag} score=${qc.score.toFixed(1)} motion=${qc.motion.toFixed(1)} letterbox=${qc.letterbox} reasons=${qc.reasons.join("|") || "none"}`);
+    } catch (qcError) {
+      console.warn(`[video-worker] assemble QC skipped job=${job.id}: ${qcError instanceof Error ? qcError.message : qcError}`);
+    }
+
     // 4. Upload + store (dry-run without Blob token → marker URL)
     const { put } = await import("@vercel/blob");
     let url: string;
@@ -159,7 +171,14 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     } else {
       url = `dryrun:assemble:${job.id}`;
     }
-    await markDone(job.id, { final_url: url });
+    const meta = (job.metadata ?? {}) as Record<string, unknown>;
+    await markDone(job.id, {
+      final_url: url,
+      metadata: {
+        ...meta,
+        ...(qc ? { qc: { flag: qc.flag, score: Math.round(qc.score * 10) / 10, motion: Math.round(qc.motion * 10) / 10, letterbox: qc.letterbox, reasons: qc.reasons } } : {}),
+      },
+    });
     console.log(`[video-worker] assemble done job=${job.id} vo=${haveVoiceover}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
