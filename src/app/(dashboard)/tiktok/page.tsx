@@ -289,6 +289,9 @@ export default function TikTokPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             Connect a creator with Login Kit, then upload a draft or publish a test video.
           </p>
+          <p className="mt-2 text-xs font-medium text-muted-foreground">
+            Website: <a className="underline" href="https://symphonyapp.company">https://symphonyapp.company</a>
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {accountData?.scopes.map((scope) => <Badge key={scope} variant="secondary">{scope}</Badge>)}
