@@ -6,6 +6,18 @@ import { generateVoiceover } from "../tts.js";
 import { renderPlaceholder } from "../providers.js";
 import { runQc } from "../qc.js";
 
+/** Run-view overlay box: position fractions (canvas center anchor) plus the
+ *  style burned into the final video — hex font color, hex box color, and a
+ *  0..1 box opacity (0 = plain text, no box). Matches the formula editor's
+ *  WYSIWYG canvas. */
+interface OverlayBox {
+  x: number;
+  y: number;
+  fontColor?: string;
+  bgColor?: string;
+  bgOpacity?: number;
+}
+
 /**
  * batch_video job: voiceover + final assembly.
  *
@@ -100,7 +112,7 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
         // Per-line layout from the run view's draggable canvas: each line is
         // burned at its own {x,y} fraction (0..1), centered on that point.
         // Falls back to stacked-top when no layout accompanies the text.
-        const layout = (job.metadata?.overlayLayout as { x: number; y: number }[] | undefined) ?? null;
+        const layout = (job.metadata?.overlayLayout as OverlayBox[] | undefined) ?? null;
         const lines = text.split("\n").filter((l) => l.trim().length > 0);
         const { writeFile } = await import("node:fs/promises");
         const fontSize = Number(job.metadata?.overlayFontSize ?? 44);
@@ -112,10 +124,20 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
           const pos = layout?.[i] ?? { x: 0.5, y: 0.12 + i * 0.14 };
           const x = Math.min(0.95, Math.max(0.05, Number(pos.x) || 0.5));
           const y = Math.min(0.92, Math.max(0.05, Number(pos.y) || 0.5));
+          // Per-line style from the run view's WYSIWYG canvas: hex font + box
+          // colors with a 0..1 opacity. 0 opacity = plain text, no box. Hex is
+          // validated so arbitrary strings can never reach the filter graph.
+          const fc = /^#?([0-9a-fA-F]{6})$/.exec(pos.fontColor ?? "")?.[1];
+          const bc = /^#?([0-9a-fA-F]{6})$/.exec(pos.bgColor ?? "")?.[1];
+          const opRaw = Number(pos.bgOpacity);
+          const op = Number.isFinite(opRaw) ? Math.min(1, Math.max(0, opRaw)) : 0.55;
+          const style = `${fc ? `fontcolor=0x${fc}` : "fontcolor=white"}${
+            bc && op > 0 ? `:box=1:boxcolor=0x${bc}@${op}` : ""
+          }`;
           // Center the text box on (x,y): x=(w-text_w)*fx keeps it on-screen
           // and centered at fx=0.5; same for y.
           drawtexts.push(
-            `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=16:x=(w-text_w)*${x}:y=(h-text_h)*${y}`
+            `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:${style}:boxborderw=16:x=(w-text_w)*${x}:y=(h-text_h)*${y}`
           );
         }
         if (drawtexts.length > 0) {

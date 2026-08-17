@@ -34,6 +34,35 @@ function flattenGraph(
   };
 }
 
+/** Run-view overlay box (position + style) as sent from the formula editor. */
+interface RunOverlayBox {
+  x: number;
+  y: number;
+  fontColor?: string;
+  bgColor?: string;
+  bgOpacity?: number;
+}
+
+/** Normalize a run-view overlay box for the worker: clamp position, keep only
+ *  well-formed hex colors and a 0..1 opacity so arbitrary strings can never
+ *  reach the ffmpeg drawtext filter. */
+function sanitizeOverlayBox(p: RunOverlayBox): RunOverlayBox {
+  const hex = (v?: string): string | undefined => {
+    if (!v) return undefined;
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(v.trim());
+    return m ? `#${m[1].toUpperCase()}` : undefined;
+  };
+  const fontColor = hex(p.fontColor);
+  const bgColor = hex(p.bgColor);
+  return {
+    x: Number(p.x) || 0.5,
+    y: Number(p.y) || 0.5,
+    ...(fontColor ? { fontColor } : {}),
+    ...(bgColor ? { bgColor } : {}),
+    ...(p.bgOpacity != null ? { bgOpacity: Math.min(1, Math.max(0, Number(p.bgOpacity) || 0)) } : {}),
+  };
+}
+
 /**
  * GET /api/batches?workspaceId=…  — list batches + per-batch progress
  * POST /api/batches               — create a batch (batch + one footage job per product)
@@ -170,7 +199,7 @@ export async function POST(request: Request) {
       boomerang?: boolean | null;
       overlayTemplate?: string | null;
       overlayFontSize?: number | null;
-      overlayLayout?: { x: number; y: number }[] | null;
+      overlayLayout?: RunOverlayBox[] | null;
       imageResolution?: string | null;
     } = body;
 
@@ -269,10 +298,11 @@ export async function POST(request: Request) {
           extendMode: (runBoomerang ?? boomerang) ? "reverse" : "none",
           overlayTemplate: runOverlayTemplate ?? overlayTemplate ?? null,
           ...(overlayFontSize ? { overlayFontSize } : {}),
-          // Per-line overlay positions from the run view's draggable canvas.
-          // Only passed when it lines up with the non-empty overlay lines.
+          // Per-line overlay boxes (position + style) from the run view's
+          // WYSIWYG canvas. Only passed when it lines up with the non-empty
+          // overlay lines. Colors are sanitized here, never trusted raw.
           ...(Array.isArray(runOverlayLayout) && runOverlayLayout.length > 0
-            ? { overlayLayout: runOverlayLayout.map((p) => ({ x: Number(p.x) || 0.5, y: Number(p.y) || 0.5 })) }
+            ? { overlayLayout: runOverlayLayout.map(sanitizeOverlayBox) }
             : {}),
           // Which TikTok account this batch publishes to (multi-account).
           ...(tiktokAccountId ? { tiktokAccountId } : {}),
