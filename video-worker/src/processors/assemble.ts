@@ -96,20 +96,31 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
         .replaceAll("{price}", product?.price != null ? String(product.price) : "");
       const font = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "/usr/share/fonts/truetype/freefont/FreeSans.ttf"].find((p) => existsSync(p));
       if (font) {
-        const textFile = `${workdir}/overlay.txt`;
+        // Per-line layout from the run view's draggable canvas: each line is
+        // burned at its own {x,y} fraction (0..1), centered on that point.
+        // Falls back to stacked-top when no layout accompanies the text.
+        const layout = (job.metadata?.overlayLayout as { x: number; y: number }[] | undefined) ?? null;
+        const lines = text.split("\n").filter((l) => l.trim().length > 0);
         const { writeFile } = await import("node:fs/promises");
-        await writeFile(textFile, text, "utf8");
-        // BatchBot view=run sends overlayFontSize (their default style is 62).
-        // Multi-line overlay (Text 1/2/3 from the run view) renders as stacked
-        // centered lines via the textfile's embedded newlines.
         const fontSize = Number(job.metadata?.overlayFontSize ?? 44);
-        overlayArgs = [
-          "-vf",
-          // BatchBot text overlay default: position "top", centered. Multi-line
-          // text stacks downward from the top of the frame.
-          `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=18:x=(w-text_w)/2:y=h*0.12:line_spacing=12`,
-        ];
-        console.log(`[video-worker] assemble overlay job=${job.id}: "${text.slice(0, 60)}"`);
+        const drawtexts: string[] = [];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const textFile = `${workdir}/overlay-${i}.txt`;
+          await writeFile(textFile, line, "utf8");
+          const pos = layout?.[i] ?? { x: 0.5, y: 0.12 + i * 0.14 };
+          const x = Math.min(0.95, Math.max(0.05, Number(pos.x) || 0.5));
+          const y = Math.min(0.92, Math.max(0.05, Number(pos.y) || 0.5));
+          // Center the text box on (x,y): x=(w-text_w)*fx keeps it on-screen
+          // and centered at fx=0.5; same for y.
+          drawtexts.push(
+            `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=16:x=(w-text_w)*${x}:y=(h-text_h)*${y}`
+          );
+        }
+        if (drawtexts.length > 0) {
+          overlayArgs = ["-vf", drawtexts.join(",")];
+          console.log(`[video-worker] assemble overlay job=${job.id}: ${lines.length} line(s) @ ${JSON.stringify(layout ?? "stacked")}`);
+        }
       } else {
         console.warn(`[video-worker] assemble: no font found, skipping overlay job=${job.id}`);
       }
