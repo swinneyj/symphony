@@ -35,6 +35,43 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
+/** Per-line overlay box — position (canvas fractions, box center) plus the
+ *  style burned into the final video (font + background color). The canvas
+ *  below renders these 1:1 with what video-worker's drawtext produces. */
+interface OverlayBox {
+  x: number;
+  y: number;
+  fontColor?: string; // hex #RRGGBB — default white
+  bgColor?: string; // hex #RRGGBB — default black
+  bgOpacity?: number; // 0..1 — 0 = transparent (no box)
+}
+
+const defaultOverlayBox = (y: number): OverlayBox => ({
+  x: 0.5,
+  y,
+  fontColor: "#ffffff",
+  bgColor: "#000000",
+  bgOpacity: 0.55,
+});
+
+/** Composition grid the boxes snap to: rule-of-thirds lines + exact center. */
+const SNAP_GRID = [1 / 3, 1 / 2, 2 / 3];
+const SNAP_THRESHOLD = 0.04;
+const snapAxis = (v: number): number => {
+  for (const g of SNAP_GRID) {
+    if (Math.abs(v - g) <= SNAP_THRESHOLD) return g;
+  }
+  return v;
+};
+
+/** "#RRGGBB" + opacity 0..1 → "rgba(r,g,b,a)" for the editor preview. */
+const hexToRgba = (hex: string, opacity: number): string => {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return `rgba(0,0,0,${opacity})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${opacity})`;
+};
+
 interface Formula {
   id: string;
   name: string;
@@ -47,7 +84,7 @@ interface Formula {
   isSystem: boolean;
   boomerang: boolean;
   overlayTemplate: string | null;
-  overlayLayout: { x: number; y: number }[] | null;
+  overlayLayout: OverlayBox[] | null;
   nodeGraph: unknown;
 }
 
@@ -94,10 +131,11 @@ export default function FormulaRunPage() {
   const [reversePlayback, setReversePlayback] = useState(false);
   // BatchBot Text Overlay = a LIST of draggable text lines (Text 1, Text 2, ...)
   // saved as part of the formula: overlay_template = newline-separated text,
-  // overlay_layout = per-line {x,y} fractions (0..1) aligned by index. The
-  // canvas below lets the user drag each box; positions burn into the video.
+  // overlay_layout = per-line boxes {x,y,fontColor,bgColor,bgOpacity} aligned
+  // by index. The canvas below is a WYSIWYG preview — boxes render with the
+  // exact colors that get burned into the video.
   const [overlayLines, setOverlayLines] = useState<string[]>([""]);
-  const [overlayPos, setOverlayPos] = useState<{ x: number; y: number }[]>([{ x: 0.5, y: 0.12 }]);
+  const [overlayBoxes, setOverlayBoxes] = useState<OverlayBox[]>([defaultOverlayBox(0.12)]);
   const dragIndex = useRef<number | null>(null);
   const [overlayStyle, setOverlayStyle] = useState(62); // BatchBot default style
   // Voice / engine (Symphony-specific, kept below the mirrored sections)
@@ -217,22 +255,34 @@ export default function FormulaRunPage() {
     setLengthSec(f.durationSec ?? 4);
     const lines = f.overlayTemplate ? f.overlayTemplate.split("\n") : [""];
     setOverlayLines(lines);
-    // Positions: user-dragged layout (localStorage, per formula) beats the
-    // formula's saved layout beats the default stacked-top.
-    let pos: { x: number; y: number }[] | null = null;
+    // Boxes: user-dragged layout + styles (localStorage, per formula) beat the
+    // formula's saved layout beats the default stacked-top. Legacy saved
+    // layouts may be plain {x,y} — style keys fall back to defaults.
+    const normalize = (rows: unknown[]): OverlayBox[] =>
+      rows.map((r) => {
+        const p = (r ?? {}) as Record<string, unknown>;
+        return {
+          x: Number(p.x) || 0.5,
+          y: Number(p.y) || 0.5,
+          fontColor: typeof p.fontColor === "string" ? p.fontColor : "#ffffff",
+          bgColor: typeof p.bgColor === "string" ? p.bgColor : "#000000",
+          bgOpacity: p.bgOpacity != null ? Math.min(1, Math.max(0, Number(p.bgOpacity) || 0)) : 0.55,
+        };
+      });
+    let boxes: OverlayBox[] | null = null;
     try {
       const saved = localStorage.getItem(`vs-overlay-pos:${formulaId}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length === lines.length) pos = parsed;
+        if (Array.isArray(parsed) && parsed.length === lines.length) boxes = normalize(parsed);
       }
     } catch {
       /* ignore corrupt localStorage */
     }
-    if (!pos && Array.isArray(f.overlayLayout) && f.overlayLayout.length === lines.length) {
-      pos = f.overlayLayout;
+    if (!boxes && Array.isArray(f.overlayLayout) && f.overlayLayout.length === lines.length) {
+      boxes = normalize(f.overlayLayout);
     }
-    setOverlayPos(pos ?? lines.map((_, i) => ({ x: 0.5, y: 0.12 + i * 0.14 })));
+    setOverlayBoxes(boxes ?? lines.map((_, i) => defaultOverlayBox(0.12 + i * 0.14)));
     setReversePlayback(f.boomerang);
   }, [formulaId]);
 
@@ -276,10 +326,10 @@ export default function FormulaRunPage() {
     setRunning(true);
     setDone(false);
     try {
-      // Persist the dragged layout for this formula (system formulas are
-      // read-only, so the browser keeps the user's arrangement).
+      // Persist the dragged layout + styles for this formula (system formulas
+      // are read-only, so the browser keeps the user's arrangement).
       try {
-        localStorage.setItem(`vs-overlay-pos:${formula.id}`, JSON.stringify(overlayPos));
+        localStorage.setItem(`vs-overlay-pos:${formula.id}`, JSON.stringify(overlayBoxes));
       } catch {
         /* storage full/blocked — non-fatal */
       }
@@ -303,9 +353,9 @@ export default function FormulaRunPage() {
           overlayTemplate: overlayLines.map((l) => l.trim()).filter(Boolean).join("\n") || null,
           overlayFontSize: overlayStyle,
           overlayLayout: overlayLines
-            .map((l, i) => ({ line: l.trim(), pos: overlayPos[i] ?? { x: 0.5, y: 0.12 } }))
+            .map((l, i) => ({ line: l.trim(), box: overlayBoxes[i] ?? defaultOverlayBox(0.12) }))
             .filter((e) => e.line.length > 0)
-            .map((e) => e.pos),
+            .map((e) => e.box),
           imageResolution,
         }),
       });
@@ -600,37 +650,76 @@ export default function FormulaRunPage() {
             layout is saved with the formula and burned into the final video.
           </p>
 
-          {/* 9:16 canvas with draggable text boxes (BatchBot run view) */}
+          {/* 9:16 canvas with draggable text boxes — WYSIWYG of the final
+              burn. Grid overlay (thirds + center) with snap-to-grid while
+              dragging; boxes render with the exact font/bg colors that get
+              burned into the video. */}
           <div
             className="relative aspect-[9/16] w-full max-w-[240px] overflow-hidden rounded-md border bg-[repeating-conic-gradient(#e5e7eb_0%_25%,#f9fafb_0%_50%)] bg-[length:12px_12px] select-none"
             onPointerMove={(e) => {
               if (dragIndex.current === null) return;
               const rect = e.currentTarget.getBoundingClientRect();
-              const x = Math.min(0.95, Math.max(0.05, (e.clientX - rect.left) / rect.width));
-              const y = Math.min(0.92, Math.max(0.05, (e.clientY - rect.top) / rect.height));
-              setOverlayPos((cur) => {
+              const rawX = (e.clientX - rect.left) / rect.width;
+              const rawY = (e.clientY - rect.top) / rect.height;
+              // Snap the box CENTER to the composition grid (thirds + center).
+              const x = Math.min(0.95, Math.max(0.05, snapAxis(rawX)));
+              const y = Math.min(0.92, Math.max(0.05, snapAxis(rawY)));
+              setOverlayBoxes((cur) => {
                 const next = [...cur];
-                next[dragIndex.current!] = { x, y };
+                next[dragIndex.current!] = { ...next[dragIndex.current!], x, y };
                 return next;
               });
             }}
             onPointerUp={() => (dragIndex.current = null)}
             onPointerLeave={() => (dragIndex.current = null)}
           >
+            {/* Composition grid: thirds (subtle) + center crosshair (bold).
+                Snapped boxes land on these lines so the canvas center and
+                symmetric splits are always visible. */}
+            <div className="pointer-events-none absolute inset-0 z-0">
+              <div className="absolute left-1/3 top-0 h-full w-px bg-slate-400/25" />
+              <div className="absolute left-2/3 top-0 h-full w-px bg-slate-400/25" />
+              <div className="absolute left-0 top-1/3 h-px w-full bg-slate-400/25" />
+              <div className="absolute left-0 top-2/3 h-px w-full bg-slate-400/25" />
+              <div className="absolute left-1/2 top-0 h-full w-px border-l border-dashed border-blue-400/60" />
+              <div className="absolute left-0 top-1/2 h-px w-full border-t border-dashed border-blue-400/60" />
+            </div>
+
             {overlayLines.map((line, i) => {
-              const p = overlayPos[i] ?? { x: 0.5, y: 0.12 };
+              const b = overlayBoxes[i] ?? defaultOverlayBox(0.12 + i * 0.14);
+              const dragging = dragIndex.current === i;
+              const opacity = b.bgOpacity ?? 0.55;
               return (
                 <div
                   key={i}
-                  className="absolute flex cursor-grab items-center gap-1.5 rounded border border-blue-400 bg-black/60 px-2 py-1 text-white shadow-sm active:cursor-grabbing"
-                  style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: "translate(-50%, -50%)" }}
+                  className={`absolute z-10 flex cursor-grab items-center gap-1.5 rounded px-2 py-1 font-bold shadow-sm active:cursor-grabbing ${
+                    dragging ? "outline outline-2 outline-blue-500" : ""
+                  }`}
+                  style={{
+                    left: `${b.x * 100}%`,
+                    top: `${b.y * 100}%`,
+                    transform: "translate(-50%, -50%)",
+                    color: b.fontColor ?? "#ffffff",
+                    background: opacity > 0 ? hexToRgba(b.bgColor ?? "#000000", opacity) : "transparent",
+                  }}
                   onPointerDown={(e) => {
                     e.preventDefault();
                     dragIndex.current = i;
                     e.currentTarget.setPointerCapture?.(e.pointerId);
                   }}
                 >
-                  <span className="text-[10px] font-semibold text-blue-300">Text {i + 1}</span>
+                  {dragging && (
+                    <>
+                      {/* Center crosshair on the active box's anchor + label */}
+                      <span className="pointer-events-none absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2">
+                        <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-blue-500" />
+                        <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-blue-500" />
+                      </span>
+                      <span className="absolute -top-4 left-0 rounded bg-blue-600 px-1 text-[9px] font-semibold text-white">
+                        Text {i + 1}
+                      </span>
+                    </>
+                  )}
                   <input
                     value={line}
                     onChange={(e) => {
@@ -639,16 +728,17 @@ export default function FormulaRunPage() {
                       setOverlayLines(next);
                     }}
                     placeholder={i === 0 ? "@product" : "Deal of the Day"}
-                    className="w-32 bg-transparent text-xs font-medium text-white outline-none placeholder:text-white/40"
+                    className="w-28 bg-transparent text-xs font-bold outline-none placeholder:opacity-50"
+                    style={{ color: "inherit" }}
                     onPointerDown={(e) => e.stopPropagation()}
                   />
                   <button
                     type="button"
                     title="Remove"
-                    className="text-white/60 hover:text-red-400"
+                    className="rounded-full bg-black/40 p-0.5 text-white/80 hover:text-red-300"
                     onClick={() => {
                       setOverlayLines((cur) => cur.filter((_, j) => j !== i));
-                      setOverlayPos((cur) => cur.filter((_, j) => j !== i));
+                      setOverlayBoxes((cur) => cur.filter((_, j) => j !== i));
                     }}
                   >
                     <X className="h-3 w-3" />
@@ -658,6 +748,78 @@ export default function FormulaRunPage() {
             })}
           </div>
 
+          {/* Per-line style: font + background colors, exactly as burned. */}
+          {overlayLines.length > 0 && (
+            <div className="space-y-1.5">
+              {overlayLines.map((line, i) => {
+                const b = overlayBoxes[i] ?? defaultOverlayBox(0.12 + i * 0.14);
+                return (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs"
+                  >
+                    <span className="w-12 shrink-0 font-medium text-muted-foreground">
+                      {line.trim() ? `Text ${i + 1}` : `Text ${i + 1} · empty`}
+                    </span>
+                    <label className="flex items-center gap-1" title="Font color">
+                      <span className="font-bold text-muted-foreground">A</span>
+                      <input
+                        type="color"
+                        value={b.fontColor ?? "#ffffff"}
+                        onChange={(e) =>
+                          setOverlayBoxes((cur) => {
+                            const next = [...cur];
+                            next[i] = { ...next[i], fontColor: e.target.value };
+                            return next;
+                          })
+                        }
+                        className="h-6 w-8 cursor-pointer rounded border bg-transparent"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1" title="Background color">
+                      <span
+                        className="h-3.5 w-3.5 rounded-sm border border-black/20"
+                        style={{ background: b.bgColor ?? "#000000" }}
+                      />
+                      <input
+                        type="color"
+                        value={b.bgColor ?? "#000000"}
+                        onChange={(e) =>
+                          setOverlayBoxes((cur) => {
+                            const next = [...cur];
+                            next[i] = { ...next[i], bgColor: e.target.value };
+                            return next;
+                          })
+                        }
+                        className="h-6 w-8 cursor-pointer rounded border bg-transparent"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Background opacity">
+                      <span className="text-muted-foreground">bg</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round((b.bgOpacity ?? 0.55) * 100)}
+                        onChange={(e) =>
+                          setOverlayBoxes((cur) => {
+                            const next = [...cur];
+                            next[i] = { ...next[i], bgOpacity: Number(e.target.value) / 100 };
+                            return next;
+                          })
+                        }
+                        className="h-1.5 w-16"
+                      />
+                      <span className="w-8 text-right tabular-nums text-muted-foreground">
+                        {Math.round((b.bgOpacity ?? 0.55) * 100)}%
+                      </span>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <Button
               type="button"
@@ -666,7 +828,7 @@ export default function FormulaRunPage() {
               className="h-8 text-xs"
               onClick={() => {
                 setOverlayLines((cur) => [...cur, ""]);
-                setOverlayPos((cur) => [...cur, { x: 0.5, y: 0.12 + cur.length * 0.14 }]);
+                setOverlayBoxes((cur) => [...cur, defaultOverlayBox(0.12 + cur.length * 0.14)]);
               }}
             >
               <Plus className="h-3.5 w-3.5" /> Add text
