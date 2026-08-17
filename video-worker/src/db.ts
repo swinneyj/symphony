@@ -58,7 +58,13 @@ export async function requeueStaleRunning(staleMinutes: number): Promise<number>
   return (rows as unknown as { id: string }[]).length;
 }
 
-export async function markDone(jobId: string, fields: Partial<Pick<JobRow, "final_url" | "footage_url" | "voiceover_url" | "thumbnail_url" | "scene_image_url">> = {}) {
+export async function markDone(
+  jobId: string,
+  fields: Partial<
+    Pick<JobRow, "final_url" | "footage_url" | "voiceover_url" | "thumbnail_url" | "scene_image_url">
+  > & { metadata?: Record<string, unknown> } = {}
+) {
+  const meta = fields.metadata ? JSON.stringify(fields.metadata) : null;
   await sql`
     UPDATE video_batch_jobs
     SET status = 'done', updated_at = now(),
@@ -67,6 +73,7 @@ export async function markDone(jobId: string, fields: Partial<Pick<JobRow, "fina
         voiceover_url = ${fields.voiceover_url ?? null},
         thumbnail_url = ${fields.thumbnail_url ?? null},
         scene_image_url = ${fields.scene_image_url ?? null}
+        ${meta ? sql` , metadata = ${meta} ` : sql``}
     WHERE id = ${jobId}
   `;
 }

@@ -4,6 +4,7 @@ import { blobToken } from "../env.js";
 import { sql, markDone, failWithRetry, type JobRow } from "../db.js";
 import { generateVoiceover } from "../tts.js";
 import { renderPlaceholder } from "../providers.js";
+import { runQc } from "../qc.js";
 
 /**
  * batch_video job: voiceover + final assembly.
@@ -127,14 +128,21 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     }
 
     // 3. Assemble: footage video + VO audio, silence-cut start, 9:16, faststart.
+    //    Overscan: crop a small margin off every edge and scale back up. AI
+    //    video models (Kling especially) warp/move the outer border band on
+    //    near-static shots; cropping that band out removes the artifact
+    //    deterministically (the classic editor's overscan trick). 3% per side
+    //    is visually invisible but sits outside the warping zone.
     const finalPath = `${workdir}/final.mp4`;
     const args = ["-y"];
     args.push("-i", footagePath);
     if (haveVoiceover) args.push("-i", voiceOverPath);
+    const overscanVf = "crop=iw*0.94:ih*0.94:iw*0.03:ih*0.03,scale=trunc(iw/0.94/2)*2:trunc(ih/0.94/2)*2";
+    const vf = overlayArgs.length > 0 ? `${overscanVf},${overlayArgs[1]}` : overscanVf;
     args.push(
       "-map", "0:v:0",
       ...(haveVoiceover ? ["-map", "1:a:0"] : []),
-      ...overlayArgs,
+      "-vf", vf,
       "-c:v", "libx264", "-preset", "medium", "-crf", "23",
       ...(haveVoiceover
         ? ["-c:a", "aac", "-b:a", "128k", "-af", "silenceremove=start_periods=1:start_threshold=-45dB,alimiter=limit=0.95"]
@@ -146,6 +154,17 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
       finalPath
     );
     execFileSync("ffmpeg", args, { stdio: "ignore", timeout: 180_000 });
+
+    // 3b. QC pass: border stability + letterbox check on the finished video
+    // ($0 ffmpeg pixel analysis). Flags feed the UI; 'fail' still uploads but
+    // the job is surfaced as needing review before posting.
+    let qc: ReturnType<typeof runQc> | null = null;
+    try {
+      qc = runQc(finalPath);
+      console.log(`[video-worker] assemble QC job=${job.id}: flag=${qc.flag} score=${qc.score.toFixed(1)} motion=${qc.motion.toFixed(1)} letterbox=${qc.letterbox} reasons=${qc.reasons.join("|") || "none"}`);
+    } catch (qcError) {
+      console.warn(`[video-worker] assemble QC skipped job=${job.id}: ${qcError instanceof Error ? qcError.message : qcError}`);
+    }
 
     // 4. Upload + store (dry-run without Blob token → marker URL)
     const { put } = await import("@vercel/blob");
@@ -159,7 +178,14 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     } else {
       url = `dryrun:assemble:${job.id}`;
     }
-    await markDone(job.id, { final_url: url });
+    const meta = (job.metadata ?? {}) as Record<string, unknown>;
+    await markDone(job.id, {
+      final_url: url,
+      metadata: {
+        ...meta,
+        ...(qc ? { qc: { flag: qc.flag, score: Math.round(qc.score * 10) / 10, motion: Math.round(qc.motion * 10) / 10, letterbox: qc.letterbox, reasons: qc.reasons } } : {}),
+      },
+    });
     console.log(`[video-worker] assemble done job=${job.id} vo=${haveVoiceover}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
