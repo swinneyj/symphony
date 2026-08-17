@@ -128,14 +128,21 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     }
 
     // 3. Assemble: footage video + VO audio, silence-cut start, 9:16, faststart.
+    //    Overscan: crop a small margin off every edge and scale back up. AI
+    //    video models (Kling especially) warp/move the outer border band on
+    //    near-static shots; cropping that band out removes the artifact
+    //    deterministically (the classic editor's overscan trick). 3% per side
+    //    is visually invisible but sits outside the warping zone.
     const finalPath = `${workdir}/final.mp4`;
     const args = ["-y"];
     args.push("-i", footagePath);
     if (haveVoiceover) args.push("-i", voiceOverPath);
+    const overscanVf = "crop=iw*0.94:ih*0.94:iw*0.03:ih*0.03,scale=trunc(iw/0.94/2)*2:trunc(ih/0.94/2)*2";
+    const vf = overlayArgs.length > 0 ? `${overscanVf},${overlayArgs[1]}` : overscanVf;
     args.push(
       "-map", "0:v:0",
       ...(haveVoiceover ? ["-map", "1:a:0"] : []),
-      ...overlayArgs,
+      "-vf", vf,
       "-c:v", "libx264", "-preset", "medium", "-crf", "23",
       ...(haveVoiceover
         ? ["-c:a", "aac", "-b:a", "128k", "-af", "silenceremove=start_periods=1:start_threshold=-45dB,alimiter=limit=0.95"]

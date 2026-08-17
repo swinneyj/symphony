@@ -14,6 +14,15 @@ export const MOTION_PRESETS: Record<string, string> = {
   blueDepth: "Deep blue gradient backdrop, product glides forward through depth of field, cinematic.",
 };
 
+/**
+ * Anti-artifact guardrail appended to EVERY scene prompt (2026-08): video
+ * models (Kling especially) tend to add micro camera motion / edge warping on
+ * near-static shots — the "moving borders" artifact. Explicitly pinning the
+ * frame down measurably reduces it. Only the described camera move is allowed.
+ */
+export const STABLE_FRAME_CLAUSE =
+  "Camera moves ONLY as described; do not add any other motion. The frame borders and edges must remain perfectly static and sharp throughout — no zooming, panning, drifting, pulsing, warping, morphing, or shifting at the video edges. Keep the image stable and locked.";
+
 export interface PromptProduct {
   name: string;
   description: string | null;
@@ -38,5 +47,5 @@ export function buildScenePrompt(opts: {
     ? fillPlaceholders(opts.scenePromptTemplate, opts.product)
     : `${opts.product.name}, professional product showcase video`;
   const motion = MOTION_PRESETS[opts.motionPreset ?? "none"] ?? "";
-  return [base, motion].filter(Boolean).join(" ");
+  return [base, motion, STABLE_FRAME_CLAUSE].filter(Boolean).join(" ");
 }
