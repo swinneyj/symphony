@@ -41,6 +41,7 @@ interface RunOverlayBox {
   fontColor?: string;
   bgColor?: string;
   bgOpacity?: number;
+  fontSize?: number;
 }
 
 /** Normalize a run-view overlay box for the worker: clamp position, keep only
@@ -60,6 +61,9 @@ function sanitizeOverlayBox(p: RunOverlayBox): RunOverlayBox {
     ...(fontColor ? { fontColor } : {}),
     ...(bgColor ? { bgColor } : {}),
     ...(p.bgOpacity != null ? { bgOpacity: Math.min(1, Math.max(0, Number(p.bgOpacity) || 0)) } : {}),
+    ...(p.fontSize != null
+      ? { fontSize: Math.min(160, Math.max(20, Math.round(Number(p.fontSize) || 62))) }
+      : {}),
   };
 }
 

@@ -16,6 +16,7 @@ interface OverlayBox {
   fontColor?: string;
   bgColor?: string;
   bgOpacity?: number;
+  fontSize?: number;
 }
 
 /**
@@ -131,13 +132,18 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
           const bc = /^#?([0-9a-fA-F]{6})$/.exec(pos.bgColor ?? "")?.[1];
           const opRaw = Number(pos.bgOpacity);
           const op = Number.isFinite(opRaw) ? Math.min(1, Math.max(0, opRaw)) : 0.55;
+          // Per-box font size (px at output resolution) beats the global style.
+          const sizeRaw = Number(pos.fontSize);
+          const lineFontSize = Number.isFinite(sizeRaw)
+            ? Math.min(160, Math.max(20, Math.round(sizeRaw)))
+            : fontSize;
           const style = `${fc ? `fontcolor=0x${fc}` : "fontcolor=white"}${
             bc && op > 0 ? `:box=1:boxcolor=0x${bc}@${op}` : ""
           }`;
           // Center the text box on (x,y): x=(w-text_w)*fx keeps it on-screen
           // and centered at fx=0.5; same for y.
           drawtexts.push(
-            `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${fontSize}:${style}:boxborderw=16:x=(w-text_w)*${x}:y=(h-text_h)*${y}`
+            `drawtext=fontfile=${font}:textfile=${textFile}:fontsize=${lineFontSize}:${style}:boxborderw=16:x=(w-text_w)*${x}:y=(h-text_h)*${y}`
           );
         }
         if (drawtexts.length > 0) {
