@@ -162,6 +162,20 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
         const { writeFile } = await import("node:fs/promises");
         const fontSize = Number(job.metadata?.overlayFontSize ?? 72);
         const drawtexts: string[] = [];
+        // Output canvas is upscaled to 1080x1920 before text burn so glyphs
+        // render at full resolution (BatchBot parity — their composition is
+        // 1080p). Per-box px font sizes were tuned on the smaller source
+        // canvas, so scale them by the same factor.
+        const { execFileSync: probeExec } = await import("node:child_process");
+        let srcH = 1280;
+        try {
+          const probe = probeExec("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0", footagePath]);
+          srcH = Number(probe.toString().trim()) || 1280;
+        } catch {
+          /* keep default */
+        }
+        const canvasH = 1920;
+        const fontScale = canvasH / srcH;
         for (let i = 0; i < blocks.length; i++) {
           const textFile = `${workdir}/overlay-${i}.txt`;
           const pos = layout?.[i] ?? { x: 0.5, y: 0.12 + i * 0.14 };
@@ -177,9 +191,9 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
           const op = Number.isFinite(opRaw) ? Math.min(1, Math.max(0, opRaw)) : 1;
           // Per-box font size (px at output resolution) beats the global style.
           const sizeRaw = Number(pos.fontSize);
-          const lineFontSize = Number.isFinite(sizeRaw)
-            ? Math.min(120, Math.max(18, Math.round(sizeRaw)))
-            : fontSize;
+          const lineFontSize = Math.round(
+            (Number.isFinite(sizeRaw) ? Math.min(120, Math.max(18, sizeRaw)) : fontSize) * fontScale
+          );
           await writeFile(textFile, wrapOverlayText(blocks[i], width, lineFontSize), "utf8");
           const treatment = pos.treatment ?? "outline";
           const fontKey = pos.fontFamily ?? "tiktok";
@@ -188,13 +202,13 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
             ? "000000"
             : fc ?? "ffffff";
           const treatmentArgs = treatment === "outline"
-            ? ":borderw=8:bordercolor=black"
+            ? `:borderw=${Math.round(8 * fontScale)}:bordercolor=black`
             : treatment === "inverse"
-              ? ":borderw=7:bordercolor=white"
+              ? `:borderw=${Math.round(7 * fontScale)}:bordercolor=white`
               : treatment === "box"
-                ? `:box=1:boxcolor=0x${bc}@${op}:boxborderw=16`
+                ? `:box=1:boxcolor=0x${bc}@${op}:boxborderw=${Math.round(16 * fontScale)}`
                 : treatment === "box-inverse"
-                  ? `:box=1:boxcolor=white@${op}:boxborderw=16`
+                  ? `:box=1:boxcolor=white@${op}:boxborderw=${Math.round(16 * fontScale)}`
                   : "";
           const left = Math.max(0.02, Math.min(0.98, x - width / 2));
           const right = Math.max(0.02, Math.min(0.98, x + width / 2));
@@ -223,17 +237,28 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     //    near-static shots; cropping that band out removes the artifact
     //    deterministically (the classic editor's overscan trick). 3% per side
     //    is visually invisible but sits outside the warping zone.
+    //    Font quality: when text overlays exist, upscale to a 1080x1920
+    //    canvas (lanczos) BEFORE the drawtext pass so glyph edges render at
+    //    full resolution — BatchBot composites text at 1080p. Without text,
+    //    keep the source resolution (no pointless upscale).
     const finalPath = `${workdir}/final.mp4`;
     const args = ["-y"];
     args.push("-i", footagePath);
     if (haveVoiceover) args.push("-i", voiceOverPath);
     const overscanVf = "crop=iw*0.94:ih*0.94:iw*0.03:ih*0.03,scale=trunc(iw/0.94/2)*2:trunc(ih/0.94/2)*2";
-    const vf = overlayArgs.length > 0 ? `${overscanVf},${overlayArgs[1]}` : overscanVf;
+    const canvasVf =
+      overlayArgs.length > 0
+        ? `${overscanVf},scale=1080:1920:flags=lanczos`
+        : overscanVf;
+    const vf = overlayArgs.length > 0 ? `${canvasVf},${overlayArgs[1]}` : canvasVf;
     args.push(
       "-map", "0:v:0",
       ...(haveVoiceover ? ["-map", "1:a:0"] : []),
       "-vf", vf,
-      "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+      "-c:v", "libx264", "-preset", "medium",
+      // Text overlays deserve a tighter encode — crf 19 keeps glyph edges
+      // crisp on the 1080p canvas (crf 23 macroblocks text at low bitrates).
+      ...(overlayArgs.length > 0 ? ["-crf", "19"] : ["-crf", "23"]),
       ...(haveVoiceover
         ? ["-c:a", "aac", "-b:a", "128k", "-af", "silenceremove=start_periods=1:start_threshold=-45dB,alimiter=limit=0.95"]
         : ["-an"]),
