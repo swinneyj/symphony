@@ -12,7 +12,7 @@ import { blobToken } from "./env.js";
  * Phase 3 kickoff (the one thing that needs a real call to pin down).
  */
 
-export type Engine = "veo" | "seedance" | "sora" | "kling";
+export type Engine = "veo" | "seedance" | "sora" | "kling" | "kling_v1" | "kling_v3";
 
 export interface FootageRequest {
   engine: Engine;
@@ -41,9 +41,11 @@ export class MissingKeyError extends Error {
 const DRY_RUN = ["1", "true"].includes((process.env.VIDEO_DRY_RUN ?? "").toLowerCase());
 
 const KEY_BY_ENGINE: Record<Engine, string> = {
-  veo: "GEMINI_API_KEY",
+  veo: "FAL_KEY",
   seedance: "FAL_KEY",
   kling: "FAL_KEY",
+  kling_v1: "FAL_KEY",
+  kling_v3: "FAL_KEY",
   sora: "OPENAI_API_KEY",
 };
 
@@ -143,47 +145,16 @@ async function generateSora(req: FootageRequest): Promise<string> {
 
 async function generateVeo(req: FootageRequest): Promise<string> {
   const key = requireKey("veo");
-  // Veo 3.1 via the Gemini Developer API. Verified live 2026-08-14:
-  //   - supported RPC is :predictLongRunning (Vertex-style instances/parameters);
-  //     generateContent / longRunningGenerateContent both 404 for this model.
-  //   - image-to-video rides as instance.image.image_bytes.data.
-  //   - BILLING-GATED: the project's prepay credits are depleted → 429
-  //     RESOURCE_EXHAUSTED until the user tops up at ai.studio/projects.
-  const model = "veo-3.1-generate-preview";
-  let image: { image_bytes: { data: string } } | undefined;
-  if (req.imageUrl?.startsWith("data:")) {
-    image = { image_bytes: { data: req.imageUrl.split(",")[1] } };
-  }
-  const submit = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${key}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        instances: [{ prompt: req.prompt, ...(image ? { image } : {}) }],
-        parameters: {
-          // Veo 3.1 caps at 8s per request; clamp below that.
-          durationSeconds: Math.min(req.durationSec, 8),
-          resolution: req.resolution,
-          aspectRatio: "9:16",
-        },
-      }),
-    }
-  );
-  if (!submit.ok) throw new Error(`veo submit failed: ${submit.status} ${await submit.text()}`);
-  const { name } = (await submit.json()) as { name: string };
-  // Veo returns a long-running operation; poll it.
-  for (let i = 0; i < 120; i++) {
-    await new Promise((r) => setTimeout(r, 5000));
-    const poll = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/${name}?key=${key}`
-    );
-    if (!poll.ok) throw new Error(`veo poll failed: ${poll.status}`);
-    const op = (await poll.json()) as { done?: boolean; response?: { video?: { url?: string } }; error?: { message?: string } };
-    if (op.done && op.response?.video?.url) return op.response.video.url;
-    if (op.error) throw new Error(`veo generation failed: ${op.error.message}`);
-  }
-  throw new Error("veo generation timed out");
+  // fal.ai Veo 3.1 image-to-video. This keeps Veo on the same FAL_KEY and
+  // queue/poll path as Kling and Seedance.
+  return falSubmit("/fal-ai/veo3.1/image-to-video", key, {
+    prompt: req.prompt,
+    image_url: req.imageUrl,
+    aspect_ratio: "9:16",
+    duration: `${Math.min(Math.max(req.durationSec, 4), 8)}s`,
+    resolution: req.resolution === "480p" ? "720p" : req.resolution,
+    generate_audio: false,
+  });
 }
 
 async function falSubmit(queueId: string, key: string, body: unknown): Promise<string> {
@@ -222,10 +193,6 @@ async function falSubmit(queueId: string, key: string, body: unknown): Promise<s
 }
 
 async function generateSeedance(req: FootageRequest): Promise<string> {
-  // PAUSED 2026-08-14 (user): Seedance 2.5 is too expensive and fal.ai
-  // credits are depleted. Hard gate so no job can spend after a top-up.
-  // Re-enable by removing this throw (engine + fal path are verified).
-  throw new Error("seedance 2.5 paused: fal.ai credits depleted (2026-08-14). Use kling or sora.");
   const key = requireKey("seedance");
   // Verified live 2026-08-14: fal moved Seedance off the old
   // /fal-ai/byte-dance/seedance/v1.5-alpha path (404 "Application not
@@ -244,11 +211,23 @@ async function generateSeedance(req: FootageRequest): Promise<string> {
 
 async function generateKling(req: FootageRequest): Promise<string> {
   const key = requireKey("kling");
-  // TODO_VERIFY: exact fal queue id for Kling image-to-video.
-  return falSubmit("/fal-ai/kling-video/v2.5/image-to-video", key, {
+  // Verified fal.ai model id. The former v2.5 path was accepted by the queue
+  // endpoint but failed at runtime with `Path ... not found` because it is not
+  // a real application. Kling v3 expects start_image_url.
+  return falSubmit("/fal-ai/kling-video/v3/pro/image-to-video", key, {
+    start_image_url: req.imageUrl,
+    prompt: req.prompt,
+    duration: String(Math.min(Math.max(req.durationSec, 5), 10)),
+  });
+}
+
+async function generateKlingV1(req: FootageRequest): Promise<string> {
+  const key = requireKey("kling_v1");
+  return falSubmit("/fal-ai/kling-video/v1/standard/image-to-video", key, {
     image_url: req.imageUrl,
     prompt: req.prompt,
-    duration: req.durationSec,
+    duration: String(Math.min(Math.max(req.durationSec, 5), 10)),
+    aspect_ratio: "9:16",
   });
 }
 
@@ -610,5 +589,9 @@ export async function generateFootage(req: FootageRequest): Promise<FootageResul
       return { url: await generateSeedance(req), engine: "seedance", dryRun: false };
     case "kling":
       return { url: await generateKling(req), engine: "kling", dryRun: false };
+    case "kling_v1":
+      return { url: await generateKlingV1(req), engine: "kling_v1", dryRun: false };
+    case "kling_v3":
+      return { url: await generateKling(req), engine: "kling_v3", dryRun: false };
   }
 }

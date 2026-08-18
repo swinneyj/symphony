@@ -1760,7 +1760,13 @@ interface BatchDetailJob {
   productOriginalImage: string | null;
 }
 
-const ENGINES = ["sora", "seedance", "veo", "kling"];
+const ENGINES = [
+  { value: "sora", label: "Sora" },
+  { value: "seedance", label: "Seedance 2.5" },
+  { value: "veo", label: "Veo 3.1" },
+  { value: "kling_v1", label: "Kling 1.0" },
+  { value: "kling_v3", label: "Kling 3.0" },
+];
 const BATCH_STATUS_STYLE: Record<string, string> = {
   queued: "bg-yellow-100 text-yellow-700",
   running: "bg-blue-100 text-blue-700",
@@ -1975,8 +1981,8 @@ function BatchStudioTab({
                 onChange={(e) => setEngine(e.target.value)}
               >
                 {ENGINES.map((e) => (
-                  <option key={e} value={e}>
-                    {e}
+                  <option key={e.value} value={e.value}>
+                    {e.label}
                   </option>
                 ))}
               </select>

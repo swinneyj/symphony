@@ -168,7 +168,13 @@ interface Voice {
   provider: string;
 }
 
-const ENGINES = ["sora", "seedance", "veo", "kling"];
+const ENGINES = [
+  { value: "sora", label: "Sora" },
+  { value: "seedance", label: "Seedance 2.5" },
+  { value: "veo", label: "Veo 3.1" },
+  { value: "kling_v1", label: "Kling 1.0" },
+  { value: "kling_v3", label: "Kling 3.0" },
+];
 const LENGTH_OPTIONS = [4, 5, 6, 8, 10, 15];
 const IMAGE_RES_OPTIONS = ["480p", "720p", "1080p"];
 
@@ -632,7 +638,7 @@ export default function FormulaRunPage() {
                             checked ? cur.filter((x) => x !== p.id) : [...cur, p.id]
                           )
                         }
-                        className={`flex w-full items-center gap-3 rounded-md border p-2 text-left text-sm transition-colors ${
+                        className={`flex min-w-0 w-full max-w-full items-center gap-3 overflow-hidden rounded-md border p-2 text-left text-sm transition-colors ${
                           checked ? "border-blue-500 bg-blue-50" : "hover:bg-muted/50"
                         }`}
                       >
@@ -1156,8 +1162,8 @@ export default function FormulaRunPage() {
               onChange={(e) => setEngine(e.target.value)}
             >
               {ENGINES.map((e) => (
-                <option key={e} value={e}>
-                  {e}
+                <option key={e.value} value={e.value}>
+                  {e.label}
                 </option>
               ))}
             </select>
