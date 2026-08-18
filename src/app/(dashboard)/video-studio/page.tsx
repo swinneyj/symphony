@@ -1695,6 +1695,18 @@ function VoicesTab({
         </Dialog>
       </div>
 
+      <Card className="border-dashed bg-muted/20">
+        <CardContent className="flex items-center justify-between gap-4 p-4">
+          <div>
+            <p className="text-sm font-medium">Music &amp; sounds</p>
+            <p className="text-xs text-muted-foreground">
+              TikTok Shop / Commercial Music Library integration will appear here when an authorized catalog connection is available.
+            </p>
+          </div>
+          <Badge variant="secondary">Coming with catalog access</Badge>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {voices.map((voice) => (
           <Card key={voice.id}>

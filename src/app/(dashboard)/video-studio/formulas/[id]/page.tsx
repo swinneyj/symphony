@@ -28,6 +28,7 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  Volume2,
 } from "lucide-react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { estimateMediaCost, formatUsd, formatTokens, type MediaCostBreakdown } from "@/lib/usage-core";
@@ -167,6 +168,7 @@ interface Voice {
   id: string;
   name: string;
   provider: string;
+  providerVoiceId?: string | null;
 }
 
 const ENGINES = [
@@ -218,6 +220,7 @@ export default function FormulaRunPage() {
   const [overlayStyle, setOverlayStyle] = useState(72); // BatchBot Overlay Studio default
   // Voice / engine (Symphony-specific, kept below the mirrored sections)
   const [voiceId, setVoiceId] = useState("");
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [engine, setEngine] = useState("seedance");
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
@@ -240,6 +243,27 @@ export default function FormulaRunPage() {
       voiceProvider: voice?.provider ?? null,
     });
   }, [productIds.length, mode, resolution, lengthSec, engine, voices, voiceId]);
+
+  const previewVoice = async () => {
+    const voice = voices.find((v) => v.id === voiceId);
+    if (!voice?.providerVoiceId) return;
+    setPreviewingVoice(voice.id);
+    try {
+      const res = await fetch("/api/voices/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: voice.provider, providerVoiceId: voice.providerVoiceId }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Preview failed");
+      const url = URL.createObjectURL(await res.blob());
+      const audio = new Audio(url);
+      audio.onended = () => { URL.revokeObjectURL(url); setPreviewingVoice(null); };
+      await audio.play();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Preview failed");
+      setPreviewingVoice(null);
+    }
+  };
 
   // Poll the batch while it renders so the "actual spend" panel stays real.
   useEffect(() => {
@@ -607,7 +631,7 @@ export default function FormulaRunPage() {
         )}
 
         <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="min-w-0 max-w-md overflow-hidden">
             <DialogHeader>
               <DialogTitle>Select products</DialogTitle>
             </DialogHeader>
@@ -621,7 +645,7 @@ export default function FormulaRunPage() {
                   className="pl-8"
                 />
               </div>
-              <div className="max-h-72 space-y-1 overflow-y-auto">
+              <div className="min-w-0 max-h-72 space-y-1 overflow-x-hidden overflow-y-auto">
                 {products.length === 0 && (
                   <p className="py-6 text-center text-sm text-muted-foreground">
                     No products yet — add them from the Products tab first.
@@ -642,6 +666,7 @@ export default function FormulaRunPage() {
                         className={`flex min-w-0 w-full max-w-full items-center gap-3 overflow-hidden rounded-md border p-2 text-left text-sm transition-colors ${
                           checked ? "border-blue-500 bg-blue-50" : "hover:bg-muted/50"
                         }`}
+                        style={{ minWidth: 0 }}
                       >
                         {p.originalImageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -655,7 +680,13 @@ export default function FormulaRunPage() {
                             <Package className="h-4 w-4 text-muted-foreground" />
                           </div>
                         )}
-                        <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                        <span
+                          className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                          style={{ minWidth: 0 }}
+                          title={p.name}
+                        >
+                          {p.name}
+                        </span>
                         {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600" />}
                       </button>
                     );
@@ -1198,18 +1229,21 @@ export default function FormulaRunPage() {
         <div className="mt-2 grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Voiceover</Label>
-            <select
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-              value={voiceId}
-              onChange={(e) => setVoiceId(e.target.value)}
-            >
-              <option value="">No voiceover</option>
-              {voices.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
+            <div className="flex gap-2">
+              <select
+                className="flex h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                value={voiceId}
+                onChange={(e) => setVoiceId(e.target.value)}
+              >
+                <option value="">No voiceover</option>
+                {voices.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+              {voiceId && (
+                <Button type="button" variant="outline" size="icon" onClick={previewVoice} disabled={previewingVoice === voiceId} title="Preview voice">
+                  {previewingVoice === voiceId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
+                </Button>
+              )}
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label>Engine</Label>
