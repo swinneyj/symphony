@@ -280,6 +280,9 @@ export async function POST(request: Request) {
     const gQuality = cfg?.quality ?? null;
     const overlayTemplate = cfg?.overlayTemplate ?? formula.overlayTemplate;
     const boomerang = cfg?.boomerang ?? formula.boomerang;
+    // Keep compatibility with databases that have not applied the optional
+    // Kling-specific enum migration yet; the exact model travels with jobs.
+    const dbProvider = provider === "kling_v1" || provider === "kling_v3" ? "kling" : provider;
 
     // Sequential inserts — Neon HTTP driver has no transactions.
     const [batch] = await db
@@ -291,7 +294,7 @@ export async function POST(request: Request) {
         formulaId,
         voiceId: voiceId ?? null,
         quality,
-        provider: (provider as never) ?? "sora",
+        provider: (dbProvider as never) ?? "sora",
         status: "queued",
         totalCount: productRows.length,
       })
@@ -316,6 +319,7 @@ export async function POST(request: Request) {
         status: "queued",
         script: rendered.script,
         metadata: {
+          ...(provider === "kling_v1" || provider === "kling_v3" ? { videoEngine: provider } : {}),
           // Boomerang + CTA overlay flow from the formula to the final assembly.
           // Run-view overrides win when the user touched them in view=run.
           extendMode: (runBoomerang ?? boomerang) ? "reverse" : "none",

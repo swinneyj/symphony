@@ -29,10 +29,10 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
       ? await sql`SELECT provider FROM video_batches WHERE id = ${job.batch_id}`
       : [null];
 
-    const engine = (batch?.provider ?? process.env.VIDEO_DEFAULT_ENGINE ?? "sora") as Engine;
     // First frame: the AI scene render when present (spec §10 — never feed the
     // brand's listing photo to the video provider), else processed/original.
     const meta = (job.metadata ?? {}) as {
+      videoEngine?: Engine;
       sourceFrame?: string;
       sceneImageUrl?: string;
       scenePromptTemplate?: string;
@@ -40,6 +40,7 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
       durationSec?: number;
       quality?: string;
     };
+    const engine = (meta.videoEngine ?? batch?.provider ?? process.env.VIDEO_DEFAULT_ENGINE ?? "sora") as Engine;
     const imageUrl =
       meta.sceneImageUrl ?? product.processed_image_url ?? product.original_image_url;
     if (!imageUrl) {
