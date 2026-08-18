@@ -58,6 +58,15 @@ export const CHAIN_FIRST: Record<LLMTask, string> = {
 export const MEDIA_PRICING = {
   sceneImageUsd: 0.04,
   footagePerSec: { "480p": 0.22, "720p": 0.47, "1080p": 0.9 } as Record<string, number>,
+  // fal.ai list prices, no audio: Seedance 2.5 ≈ $0.22/$0.47/$0.90 per sec;
+  // Kling 1.0 $0.045/sec; Kling 3.0 Standard $0.084/sec; Veo 3.1 $0.20/sec.
+  providerFootagePerSec: {
+    seedance: { "480p": 0.22, "720p": 0.47, "1080p": 0.9 },
+    kling_v1: { "480p": 0.045, "720p": 0.045, "1080p": 0.045 },
+    kling_v3: { "480p": 0.084, "720p": 0.084, "1080p": 0.084 },
+    kling: { "480p": 0.084, "720p": 0.084, "1080p": 0.084 },
+    veo: { "480p": 0.2, "720p": 0.2, "1080p": 0.2 },
+  } as Record<string, Record<string, number>>,
   veoPerSec: { "1080p": 0.12, "4k": 0.3 } as Record<string, number>,
   ttsPerChar: { openai_tts: 0.0000006, elevenlabs: 0.0002, kokoro: 0 } as Record<string, number>,
 } as const;
@@ -168,15 +177,12 @@ export function estimateMediaCost(opts: {
   let footageUsd = 0;
   let footageCreditBased = false;
   if (engine === "veo") {
-    footageUsd =
-      opts.productCount *
-      (opts.durationSec * (MEDIA_PRICING.veoPerSec[res] ?? MEDIA_PRICING.veoPerSec["1080p"]));
+    footageUsd = opts.productCount * opts.durationSec * 0.2;
   } else if (engine === "sora") {
     footageCreditBased = true; // billed in OpenAI credits, no public $/s map
   } else {
-    // seedance / kling (fal): documented $/s by resolution.
-    footageUsd =
-      opts.productCount * (opts.durationSec * (MEDIA_PRICING.footagePerSec[res] ?? 0.47));
+    const rates = MEDIA_PRICING.providerFootagePerSec[engine] ?? MEDIA_PRICING.footagePerSec;
+    footageUsd = opts.productCount * opts.durationSec * (rates[res] ?? rates["720p"] ?? 0.47);
   }
 
   const ttsPerChar = opts.voiceProvider ? (MEDIA_PRICING.ttsPerChar[opts.voiceProvider] ?? 0) : 0;

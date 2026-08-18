@@ -98,6 +98,7 @@ const OVERLAY_COLORS = [
   "#d10869",
   "#a307ba",
 ] as const;
+const OVERLAY_EMOJIS = ["🔥", "✨", "😍", "😱", "🚀", "💥", "✅", "🛍️", "🎉", "⚡", "❤️", "😂"];
 
 const OVERLAY_FONTS: Array<{ value: OverlayFont; label: string; group: string }> = [
   { value: "tiktok", label: "TikTok Sans", group: "Batchbot" },
@@ -194,7 +195,7 @@ export default function FormulaRunPage() {
   const [productSearch, setProductSearch] = useState("");
   // Video settings
   const [mode, setMode] = useState<"fast" | "quality">("fast"); // Fast | Quality
-  const [resolution, setResolution] = useState<"480p" | "720p">("480p");
+  const [resolution, setResolution] = useState<"480p" | "720p" | "1080p">("480p");
   const [lengthSec, setLengthSec] = useState(4);
   // Image settings
   const [imageResolution, setImageResolution] = useState("720p");
@@ -229,7 +230,7 @@ export default function FormulaRunPage() {
 
   /** Live pre-flight estimate of the AI spend for this run. */
   const estimate = useMemo(() => {
-    const quality = mode === "fast" && resolution === "480p" ? "fast" : "standard";
+    const quality = resolution === "480p" ? "fast" : resolution === "1080p" ? "pro" : "standard";
     const voice = voices.find((v) => v.id === voiceId);
     return estimateMediaCost({
       productCount: productIds.length,
@@ -437,7 +438,7 @@ export default function FormulaRunPage() {
       // effect below) — nothing to persist here.
       // Mode/resolution → quality. BatchBot: Fast=480p, Quality=720p.
       // 480p ≈ $0.22/s vs 720p ≈ $0.47/s on fal — fast must stay 480p.
-      const quality = mode === "fast" && resolution === "480p" ? "fast" : "standard";
+      const quality = resolution === "480p" ? "fast" : resolution === "1080p" ? "pro" : "standard";
       const res = await fetch("/api/batches", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -707,7 +708,7 @@ export default function FormulaRunPage() {
           <div className="space-y-1.5">
             <Label>Resolution</Label>
             <div className="flex gap-1 rounded-md border p-0.5">
-              {(["480p", "720p"] as const).map((r) => (
+              {(["480p", "720p", "1080p"] as const).map((r) => (
                 <button
                   key={r}
                   onClick={() => setResolution(r)}
@@ -834,7 +835,7 @@ export default function FormulaRunPage() {
                   const fill = isInverse ? "#000000" : (b.fontColor ?? "#ffffff");
                   const stroke = treatment === "outline" ? "#000000" : treatment === "inverse" ? "#ffffff" : "transparent";
                   const background = treatment === "box"
-                    ? hexToRgba("#000000", b.bgOpacity ?? 1)
+                    ? hexToRgba(b.bgColor ?? "#000000", b.bgOpacity ?? 1)
                     : treatment === "box-inverse"
                       ? hexToRgba("#ffffff", b.bgOpacity ?? 1)
                       : "transparent";
@@ -860,7 +861,8 @@ export default function FormulaRunPage() {
                         fontFamily: FONT_STACKS[b.fontFamily ?? "tiktok"],
                         fontSize,
                         lineHeight: b.fontFamily === "snapchat" ? 1.18 : 1.2,
-                        fontWeight: b.fontFamily === "snapchat" ? 400 : 800,
+                        fontWeight: b.fontFamily === "snapchat" ? 500 : 700,
+                        WebkitFontSmoothing: "antialiased",
                         color: fill,
                         WebkitTextStroke: treatment === "plain" || isBox ? "0" : `1.5px ${stroke}`,
                       }}
@@ -1000,6 +1002,27 @@ export default function FormulaRunPage() {
                   placeholder="Overlay text..."
                   className="mt-1.5 min-h-24 w-full resize-y rounded-[10px] border bg-white px-3 py-3 text-sm leading-relaxed text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                 />
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[11px] font-medium text-slate-500">Emojis</span>
+                  {OVERLAY_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      aria-label={`Add ${emoji}`}
+                      className="grid h-8 w-8 place-items-center rounded-md border bg-white text-base hover:bg-blue-50"
+                      onClick={() => {
+                        setSelectedPreset("Custom");
+                        setOverlayLines((cur) => {
+                          const next = [...cur];
+                          next[selectedOverlay] = `${next[selectedOverlay] ?? ""}${emoji}`;
+                          return next;
+                        });
+                      }}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
               </label>
 
               <div className="space-y-3 rounded-xl border bg-slate-50/60 p-3">
@@ -1127,7 +1150,41 @@ export default function FormulaRunPage() {
                         onClick={() => updateSelectedOverlayBox({ fontColor: color })}
                       />
                     ))}
+                    <label className="relative h-7 w-7 shrink-0 cursor-pointer overflow-hidden rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(16,24,40,0.15)]" title="Custom text color">
+                      <input
+                        aria-label="Custom text color"
+                        type="color"
+                        value={activeOverlayBox.fontColor ?? "#ffffff"}
+                        onChange={(e) => updateSelectedOverlayBox({ fontColor: e.target.value })}
+                        className="absolute -inset-2 h-12 w-12 cursor-pointer"
+                      />
+                    </label>
                   </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-lg border bg-white p-2">
+                  <span className="text-[11px] font-medium text-slate-500">Background</span>
+                  <label className="flex min-w-0 flex-1 items-center gap-2 text-xs text-slate-600">
+                    <input
+                      aria-label="Custom background color"
+                      type="color"
+                      value={activeOverlayBox.bgColor ?? "#000000"}
+                      onChange={(e) => updateSelectedOverlayBox({ bgColor: e.target.value, treatment: "box" })}
+                      className="h-8 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
+                    />
+                    <span>{activeOverlayBox.bgColor ?? "#000000"}</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                    Opacity
+                    <input
+                      aria-label="Background opacity"
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round((activeOverlayBox.bgOpacity ?? 1) * 100)}
+                      onChange={(e) => updateSelectedOverlayBox({ bgOpacity: Number(e.target.value) / 100, treatment: "box" })}
+                      className="w-20 accent-blue-600"
+                    />
+                  </label>
                 </div>
               </div>
             </div>
@@ -1177,7 +1234,7 @@ export default function FormulaRunPage() {
         <p className="mb-3 text-xs text-muted-foreground">
           Run the workflow to generate your finished video. {lengthSec}s clip
           {reversePlayback ? " · ↺ reverse playback (doubles length)" : ""} ·{" "}
-          {mode === "quality" || resolution === "720p" ? "720p" : "480p"}
+          {resolution}
         </p>
 
         {/* Estimated AI cost — before Run */}
@@ -1197,7 +1254,7 @@ export default function FormulaRunPage() {
               <li className="flex justify-between">
                 <span>
                   Footage ({productIds.length} × {lengthSec}s @{" "}
-                  {mode === "quality" || resolution === "720p" ? "720p" : "480p"} · {engine})
+                  {resolution} · {engine})
                 </span>
                 {estimate.footageCreditBased ? (
                   <span className="text-amber-500">credit-based</span>

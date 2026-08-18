@@ -172,6 +172,7 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
           // colors with a 0..1 opacity. 0 opacity = plain text, no box. Hex is
           // validated so arbitrary strings can never reach the filter graph.
           const fc = /^#?([0-9a-fA-F]{6})$/.exec(pos.fontColor ?? "")?.[1];
+          const bc = /^#?([0-9a-fA-F]{6})$/.exec(pos.bgColor ?? "")?.[1] ?? "000000";
           const opRaw = Number(pos.bgOpacity);
           const op = Number.isFinite(opRaw) ? Math.min(1, Math.max(0, opRaw)) : 1;
           // Per-box font size (px at output resolution) beats the global style.
@@ -191,7 +192,7 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
             : treatment === "inverse"
               ? ":borderw=7:bordercolor=white"
               : treatment === "box"
-                ? `:box=1:boxcolor=black@${op}:boxborderw=16`
+                ? `:box=1:boxcolor=0x${bc}@${op}:boxborderw=16`
                 : treatment === "box-inverse"
                   ? `:box=1:boxcolor=white@${op}:boxborderw=16`
                   : "";
