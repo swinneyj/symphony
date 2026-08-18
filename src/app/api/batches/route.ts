@@ -280,6 +280,10 @@ export async function POST(request: Request) {
     const gQuality = cfg?.quality ?? null;
     const overlayTemplate = cfg?.overlayTemplate ?? formula.overlayTemplate;
     const boomerang = cfg?.boomerang ?? formula.boomerang;
+    // source_frame='render' formulas must run the scene_render job FIRST so the
+    // video is generated from a re-created scene (product photo as reference),
+    // not the flat listing photo. The worker chains scene_render → footage.
+    const needsSceneRender = formula.sourceFrame === "render";
     // Keep compatibility with databases that have not applied the optional
     // Kling-specific enum migration yet; the exact model travels with jobs.
     const dbProvider = provider === "kling_v1" || provider === "kling_v3" ? "kling" : provider;
@@ -315,7 +319,11 @@ export async function POST(request: Request) {
         workspaceId,
         productId: product.id,
         formulaId: formula.id,
-        jobType: "footage",
+        // source_frame='render' → run scene_render first (re-creates the
+        // product in the formula's scene, product photo as reference), which
+        // the worker chains into footage. Otherwise footage runs directly on
+        // the listing photo.
+        jobType: needsSceneRender ? "scene_render" : "footage",
         status: "queued",
         script: rendered.script,
         metadata: {

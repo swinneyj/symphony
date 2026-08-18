@@ -40,16 +40,32 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
     let sceneUrl = imageUrl;
     let dryRun = false;
     if (sourceFrame === "render") {
+      // Graph/run-view scene prompt override wins over the formula row.
+      const jobMeta = (job.metadata ?? {}) as {
+        scenePromptTemplate?: string;
+        quality?: string;
+        durationSec?: number;
+        videoEngine?: string;
+        overlayBlocks?: string[];
+        overlayLayout?: unknown;
+        overlayTemplate?: string;
+        overlayFontSize?: number;
+        extendMode?: string;
+        tiktokAccountId?: string;
+        imageResolution?: string;
+        motionPreset?: string;
+      };
+      const scenePromptTemplate = jobMeta.scenePromptTemplate ?? formula?.scene_prompt_template ?? null;
       const prompt = [
         "Only use the attached image as a reference for the scale and dimension of the products.",
-        formula?.scene_prompt_template?.trim() ||
+        scenePromptTemplate?.trim() ||
           "Place the product on a clean neutral table with soft natural lighting.",
         "Keep all product details, text, and logos identical.",
       ].join(" ");
       const result = await generateSceneImage({
         imageUrl,
         prompt,
-        quality: (formula?.quality ?? "standard") === "pro" ? "pro" : "standard",
+        quality: (jobMeta.quality ?? formula?.quality ?? "standard") === "pro" ? "pro" : "standard",
       });
       sceneUrl = result.url;
       dryRun = result.dryRun;
@@ -64,11 +80,16 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
     if (job.batch_id) await updateBatchProgress(job.batch_id);
 
     // Chain: scene_render done → enqueue footage from the rendered frame.
+    // ALL original job metadata is carried forward (overlay blocks, engine,
+    // duration, quality, TikTok account, etc.) so run-view overrides survive
+    // the chain — plus the rendered scene url becomes the first frame.
     if (job.batch_id) {
+      const carriedMeta = { ...(job.metadata ?? {}) };
+      delete (carriedMeta as Record<string, unknown>).sourceFrame;
       await sql`
         INSERT INTO video_batch_jobs (batch_id, workspace_id, product_id, formula_id, job_type, status, script, metadata, created_at, updated_at)
         VALUES (${job.batch_id}, ${job.workspace_id}, ${job.product_id}, ${job.formula_id}, 'footage', 'queued', ${job.script},
-                ${JSON.stringify({ sourceFrame, sceneImageUrl: sceneUrl })}, now(), now())
+                ${JSON.stringify({ ...carriedMeta, sourceFrame, sceneImageUrl: sceneUrl })}, now(), now())
       `;
     }
     console.log(
