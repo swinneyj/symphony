@@ -21,6 +21,17 @@ const voices = [
 // BatchBot-proven structure + the spec's variant hooks.
 const formulas = [
   {
+    name: "Kitchen Counter Display",
+    category: "product",
+    scriptTemplate:
+      "This {product} is one of those products that looks even better in person. Tap the orange cart to check it out.",
+    scenePromptTemplate:
+      "Create a polished vertical 9:16 product hero scene for {product}. Place one complete, accurately shaped product prominently in the foreground on a clean light marble kitchen countertop. Use bright soft daylight from a nearby window, a warm neutral modern kitchen background, shallow depth of field, premium commercial food-and-beverage advertising photography, realistic contact shadow and subtle reflections. Face the product toward the camera and preserve its label, logo, colors, proportions, and packaging details exactly. Keep the product large, centered, fully in frame, and sharp, with clean negative space for captions. Do not add extra cans or duplicate products, hands, people, props covering the product, invented text, warped packaging, melted logos, cropped edges, or extreme perspective.",
+    motionPreset: "kitchenCounterProduct",
+    durationSec: 4,
+    quality: "standard",
+  },
+  {
     name: "TikTok Shop Hook",
     category: "generic",
     scriptTemplate:

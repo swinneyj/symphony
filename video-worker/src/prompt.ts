@@ -12,6 +12,8 @@ export const MOTION_PRESETS: Record<string, string> = {
   iceStatue: "Product frozen in a crystalline ice block, camera slowly orbits, frost particles drift.",
   elevate: "Product rises elegantly from below into frame, slow upward drift, premium feel.",
   blueDepth: "Deep blue gradient backdrop, product glides forward through depth of field, cinematic.",
+  kitchenCounterProduct:
+    "Very slow, subtle commercial product-camera push-in with gentle side-to-side parallax only; the product remains rigid, centered, fully in frame, and readable; no rotation, no deformation, no label changes, no object duplication.",
 };
 
 /**

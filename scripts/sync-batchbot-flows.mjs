@@ -177,6 +177,26 @@ const FLOWS = [
 // ---------------------------------------------------------------------------
 // Build a Symphony-vocabulary node graph (linear chain) from a flow spec.
 // ---------------------------------------------------------------------------
+function promptFor(f) {
+  const n = f.name.toLowerCase();
+  let setting = "a premium, realistic commercial product scene";
+  let action = "Keep the product large, centered, sharp, fully in frame, and facing the camera.";
+  if (n.includes("warehouse")) setting = "a realistic organized warehouse aisle with dramatic practical lighting";
+  else if (n.includes("shelf") || n.includes("endcap") || n.includes("store display")) setting = "a realistic big-box retail shelf or endcap with believable store lighting";
+  else if (n.includes("kitchen") || n.includes("counter") || n.includes("bathroom")) setting = "a realistic, clean lifestyle countertop with soft window light and shallow depth of field";
+  else if (n.includes("car") || n.includes("driving")) setting = "a realistic luxury car interior or first-person driving scene";
+  else if (n.includes("shoe")) setting = "a realistic lifestyle footwear scene with natural perspective and believable ground contact";
+  else if (n.includes("try-on") || n.includes("outfit") || n.includes("clothing mirror")) {
+    setting = "a realistic faceless fashion try-on scene, cropped below the face";
+    action = "Show fit, drape, fabric texture, and movement while keeping the garment construction and pattern unchanged.";
+  } else if (n.includes("unbox")) {
+    setting = "a realistic hands-only unboxing scene on a clean home surface";
+    action = "Show careful hands opening and presenting the product without covering its important details.";
+  } else if (n.includes("purse") || n.includes("handbag")) setting = "a premium lifestyle scene with the bag in a luxury car or elegant city café setting";
+  else if (n.includes("nail")) setting = "a clean, elegant beauty close-up focused on the hand and nail product theme";
+  return `Create a polished vertical 9:16 TikTok Shop product video for {product}. Use ${setting}. ${action} Preserve the product's exact shape, label, logo, colors, proportions, and packaging details. Do not invent text, alter branding, duplicate the product, add extra limbs or people, melt or warp the product, crop the product, or let props obscure it. ${f.desc}`;
+}
+
 function buildGraph(f) {
   const nodes = [];
   const edges = [];
@@ -188,7 +208,7 @@ function buildGraph(f) {
   };
   let x = 80;
   add("product", {}, x); x += 260;
-  add("sceneRender", { prompt: f.desc }, x); x += 260;
+  add("sceneRender", { prompt: promptFor(f) }, x); x += 260;
   add("footage", { durationSec: f.dur, quality: f.quality }, x); x += 260;
   // NOTE: no script node — flattenGraph reads script.scriptTemplate and an
   // empty string would clobber the formula's flat script_template (killing
@@ -218,7 +238,11 @@ for (const f of FLOWS) {
     WHERE name = ${f.name} AND workspace_id IS NULL AND is_system = true
     LIMIT 1
   `;
-  const scenePrompt = existing[0]?.scene_prompt_template ?? f.desc;
+  const scenePrompt = existing[0]?.scene_prompt_template?.length > 220
+    ? existing[0].scene_prompt_template
+    : promptFor(f);
+  const sceneNode = graph.nodes.find((node) => node.type === "sceneRender");
+  if (sceneNode) sceneNode.data.prompt = scenePrompt;
   if (existing.length > 0) {
     await sql`
       UPDATE video_formulas SET
@@ -226,6 +250,7 @@ for (const f of FLOWS) {
         quality = ${f.quality},
         boomerang = ${f.reverse},
         overlay_template = ${f.overlay},
+        scene_prompt_template = ${scenePrompt},
         node_graph = ${JSON.stringify(graph)},
         updated_at = now()
       WHERE id = ${existing[0].id}
