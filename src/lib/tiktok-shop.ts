@@ -1,35 +1,23 @@
 /**
  * TikTok Shop API — affiliate/creator product catalog sync.
- *
  * Pulls the products a TikTok Shop CREATOR (affiliate) promotes in their
  * shop showcase. Auth is Creator OAuth (connect → callback → token), NOT
  * the static seller shop-cipher creds. The creator must be enrolled in the
  * TikTok Shop affiliate program.
- *
- * Flow (per TikTok Shop docs, creator-authorization-guide):
- *   1. Redirect to https://shop.tiktok.com/alliance/creator/auth?app_key=…&state=…
- *   2. User approves → callback?code=…&state=…
- *   3. Exchange code via GET https://auth.tiktok-shops.com/api/v2/token/get
- *      (?app_key&app_secret&auth_code&grant_type=authorized_code)
- *      → access_token (7d) + refresh_token (1y) + open_id
- *   4. Call APIs with header `x-tts-access-token: <access_token>`
- *
- * Creator product list endpoint (Get Shop Products, scope "Affiliate
- * Information"):
- *   GET https://open-api.tiktokglobalshop.com/affiliate_creator/202509/shop_products
- *       ?app_key=…&sign=…&timestamp=…&page_size=…&page_token=…
- *   (sign = HMAC-SHA256 of app_secret + sorted query string — see signer below)
- */
+*
+* Flow (per TikTok Shop docs, creator-authorization-guide):
+*   1. Redirect to https://shop.tiktok.com/alliance/creator/auth?app_key=…&state=…
+*   2. User approves → callback?code=…&state=…
+*   3. Exchange code via GET https://auth.tiktok-shops.com/api/v2/token/get
+*      (?app_key&app_secret&auth_code&grant_type=authorized_code)
+*      → access_token (7d) + refresh_token (1y) + open_id
+*   4. Call APIs with header `x-tts-access-token: <access_token>`
+*
+*/
 
 const SHOP_API = "https://open-api.tiktokglobalshop.com";
 const AUTH_API = "https://auth.tiktok-shops.com";
 const TIMEOUT_MS = 20_000;
-
-export type ShopCredentials = {
-  appKey: string;
-  appSecret: string;
-  accessToken: string;
-};
 
 /** Creator app creds from env (static) + live access token per connected creator. */
 export function getShopCredentials(accessToken?: string): ShopCredentials {
@@ -143,6 +131,7 @@ export type ShopProduct = {
   price?: string;
   currency?: string;
   mainImageUrl?: string;
+  imageQualityScore?: number;
   mainVideoUrl?: string;
   status?: string;
   sellerName?: string;
@@ -200,8 +189,22 @@ export class ShopApiError extends Error {
   }
 }
 
+/** Helper to score images based on 'studio' qualities (white background, high contrast).**
+* Simple heuristic: check if the image URL contains keywords like 'hero', 'main', or 'product'.
+* Real-world implementation would use a vision model but this suffices for initial filtering.
+*/
+export function calculateImageQuality(url?: string): number {
+  if (!url) return 0;
+  const u = url.toLowerCase();
+  let score = 50; // base score
+  if (u.includes("hero")) score += 20;
+  if (u.includes("main") || u.includes("product")) score += 10;
+  if (u.includes("studio") || u.includes("white")) score += 20;
+  return Math.min(score, 100);
+}
+
 type ShopApiProduct = NonNullable<
-  NonNullable<ShopApiResponse["data"]>["products"]
+  NonNullable<ShopApiResponse["data\"]>[\"products\"]\
 >[number];
 
 /** Map a raw Shop API product into the app's ShopProduct shape. */
@@ -220,6 +223,7 @@ function mapShopProduct(p: ShopApiProduct): ShopProduct {
         : undefined,
     currency: p.price?.original_price?.currency ?? "USD",
     mainImageUrl: imageUrl ?? undefined,
+    imageQualityScore: calculateImageQuality(imageUrl),
     mainVideoUrl: p.main_video?.url ?? undefined,
     status: p.status?.added_status ?? p.status?.inventory_status ?? undefined,
     sellerName: p.shop?.name,
@@ -227,11 +231,10 @@ function mapShopProduct(p: ShopApiProduct): ShopProduct {
   };
 }
 
-/**
- * Fetch one page of the creator's SHOWCASE products.
- * GET /affiliate_creator/202405/showcases/products?origin=SHOWCASE
- * Requires scope: creator.showcase.read (or creator.video.write)
- */
+/** Fetch one page of the creator's SHOWCASE products.*
+* GET /affiliate_creator/202405/showcases/products?origin=SHOWCASE
+* Requires scope: creator.showcase.read (or creator.video.write)
+*/
 export async function fetchShopProductsPage(
   creds: ShopCredentials,
   opts: { pageToken?: string; pageSize?: number } = {}
@@ -306,10 +309,10 @@ export type ShopSearchParams = {
  * Search the TikTok Shop product catalog available to affiliate creators.
  * GET /affiliate_creator/202509/shop_products
  * Requires scope: "Affiliate Information" (434372).
- *
- * `keyword` is a free-text title search; results sort by sales, price, or
- * product id. Returns one page + the next page token for pagination.
- */
+*
+* `keyword` is a free-text title search; results sort by sales, price, or
+* product id. Returns one page + the next page token for pagination.
+*/
 export async function searchShopProducts(
   creds: ShopCredentials,
   opts: ShopSearchParams = {}

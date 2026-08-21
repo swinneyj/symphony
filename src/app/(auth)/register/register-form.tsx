@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import { useActionState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 
@@ -18,6 +20,16 @@ interface RegisterFormProps {
 
 export function RegisterForm({ register }: RegisterFormProps) {
   const [state, formAction, isPending] = useActionState(register, undefined);
+  const router = useRouter();
+
+  // The register action auto-signs-in (session cookie set server-side) but
+  // returns success without navigating — send the user to the dashboard.
+  // Brief delay so the "Account created! Redirecting..." message is visible.
+  useEffect(() => {
+    if (!state?.success) return;
+    const t = setTimeout(() => router.replace("/dashboard"), 700);
+    return () => clearTimeout(t);
+  }, [state?.success, router]);
 
   return (
     <Card className="border-primary/10 shadow-lg">
