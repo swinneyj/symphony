@@ -4,17 +4,9 @@
  * and generate a high-end lifestyle scene for marketing.
  */
 
-import { calculateImageQuality } from "../lib/tiktok-shop";
+import type { ShopProduct } from "../lib/tiktok-shop";
 
 const NANO_BANANA_API = "https://api.nanobanana.pro/v1"; // Placeholder, will be configurable via env
-const GEMINI_PROMPT_TEMPLATE = `
-  Create a high-end lifestyle photograph for the following product: "${name}".
-  The original image style is ${qualityDescription}.
-  Desired Scene: [REPLACE WITH DYNAMIC SCENE BASED ON CATEGORY]
-  Style Guidelines: 8k resolution, photorealistic, cinematic lighting, shallow depth of field.
-  Avoid text in the image. Focus on natural product placement within a premium environment.
-`;
-
 /**
  * Maps quality scores to descriptive strings for prompt engineering.
  */
@@ -29,7 +21,7 @@ function getQualityDescription(score: number): string {
  * @param product The scraped TikTok Shop product.
  * @returns A URL to the generated high-end marketing image or undefined if failed.
  */
-export async function generateLifestyleAnchor(product: any): Promise<string | undefined> {
+export async function generateLifestyleAnchor(product: ShopProduct): Promise<string | undefined> {
   if (!product.mainImageUrl) return undefined;
 
   const qualityDesc = getQualityDescription(product.imageQualityScore ?? 50);
@@ -63,7 +55,7 @@ export async function generateLifestyleAnchor(product: any): Promise<string | un
       return undefined;
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as { images?: Array<{ url?: string }> };
     // Return the primary generated image URL
     return data.images?.[0]?.url ?? undefined;
   } catch (e) {
@@ -75,7 +67,9 @@ export async function generateLifestyleAnchor(product: any): Promise<string | un
 /**
  * Batch processes a list of products to generate anchors for all high-quality matches.
  */
-export async function batchGenerateAnchors(products: any[]): Promise<{ productId: string, anchorUrl?: string }[]> {
+export async function batchGenerateAnchors(
+  products: ShopProduct[]
+): Promise<Array<{ productId: string; anchorUrl?: string }>> {
   const results = [];
   for (const p of products) {
     if (p.imageQualityScore && p.imageQualityScore > 60) {
