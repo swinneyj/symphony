@@ -45,6 +45,7 @@ export async function GET(request: Request) {
         currency: products.currency,
         originalImageUrl: products.originalImageUrl,
         processedImageUrl: products.processedImageUrl,
+        sceneImageUrl: products.sceneImageUrl,
         sourceType: products.sourceType,
         sourceUrl: products.sourceUrl,
         tiktokProductId: products.tiktokProductId,

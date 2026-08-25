@@ -48,6 +48,7 @@ interface Product {
   price: string | null;
   originalImageUrl: string | null;
   processedImageUrl: string | null;
+  sceneImageUrl?: string | null;
   sourceType: "manual" | "link" | "tiktok_showcase";
   status: "raw" | "processing" | "ready" | "failed";
 }
@@ -553,7 +554,7 @@ function ProductsTab({
                 {product.originalImageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={product.originalImageUrl}
+                    src={`/api/products/${product.id}/image`}
                     alt={product.name}
                     className="h-full w-full object-cover"
                     onError={(e) => {
