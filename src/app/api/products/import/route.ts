@@ -95,10 +95,15 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
   let html: string;
   let finalUrl: string | null = null;
   try {
+    // Realistic browser UA — TikTok serves a "Security Check" page (no og
+    // tags, no product data) to bot-like agents like SymphonyBot/1.0.
     const res = await fetch(parsed.toString(), {
       headers: {
         "user-agent":
-          "Mozilla/5.0 (compatible; SymphonyBot/1.0; +https://symphonyapp.company)",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
       },
       redirect: "follow",
       signal: AbortSignal.timeout(15_000),
@@ -138,6 +143,12 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
     : og.image
       ? absolutize(og.image, parsed)
       : null;
+  // Fallback: TikTok Shop PDPs often ship the gallery in embedded JSON/img
+  // tags with no og:image at all (e.g. security-check'd pages). Hunt for
+  // any tiktokcdn image URL in the raw HTML before giving up.
+  if (!originalImageUrl) {
+    originalImageUrl = findTikTokImage(html);
+  }
   // TikTok CDN thumbs default to 260:260 — request the 720:720 variant so
   // the video pipeline gets a usable source (verified serving 200).
   if (originalImageUrl) {
@@ -220,6 +231,27 @@ function extractJsonLdPrice(html: string): string | null {
   const re = /"offers"\s*:\s*{[^}]*?"price"\s*:\s*"?([\d.,]+)"?/i;
   const m = html.match(re);
   return m ? m[1] : null;
+}
+
+/**
+ * Find the first TikTok CDN product image embedded in raw HTML.
+ * TikTok Shop PDPs ship the gallery as img.src / JSON fields under
+ * tiktokcdn domains even when og:image is absent. Prefer full-size
+ * (non-260:260 thumbnail) URLs and escape any backslash-escaped slashes
+ * that appear inside serialized JSON strings.
+ */
+function findTikTokImage(html: string): string | null {
+  // Match https://<sub>.tiktokcdn(.com|.us|...)/... up to a quote/space.
+  const re =
+    /https?:\\?\/\\?\/[a-z0-9.-]*tiktokcdn[a-z0-9.-]*\\?\/[^\s"'<>\\]+/gi;
+  const candidates = html.match(re) ?? [];
+  for (const raw of candidates) {
+    const url = raw.replace(/\\\//g, "/");
+    if (!/\.(jpe?g|png|webp)(\?|$)/i.test(url)) continue;
+    if (/:260:260\.webp/i.test(url)) continue; // skip tiny thumbs
+    return url;
+  }
+  return null;
 }
 
 function absolutize(url: string, base: URL): string {
