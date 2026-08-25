@@ -53,9 +53,7 @@ export async function GET(
       (variant === "scene" && product.sceneImageUrl) ||
       (variant === "processed" && product.processedImageUrl) ||
       (variant === "original" && product.originalImageUrl) ||
-      product.sceneImageUrl ??
-      product.processedImageUrl ??
-      product.originalImageUrl;
+      (product.sceneImageUrl ?? product.processedImageUrl ?? product.originalImageUrl);
     if (!url) return new Response("No image", { status: 404 });
     if (url.includes("blob.vercel-storage.com")) {
       const token = blobToken();
