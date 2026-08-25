@@ -46,12 +46,17 @@ export async function GET(
       return new Response("Forbidden", { status: 403 });
     }
 
+    // ?variant=scene|processed|original picks a specific image; default is
+    // scene → processed → original (the "best" available).
+    const variant = new URL(request.url).searchParams.get("variant");
     const url =
+      (variant === "scene" && product.sceneImageUrl) ||
+      (variant === "processed" && product.processedImageUrl) ||
+      (variant === "original" && product.originalImageUrl) ||
       product.sceneImageUrl ??
       product.processedImageUrl ??
       product.originalImageUrl;
     if (!url) return new Response("No image", { status: 404 });
-
     if (url.includes("blob.vercel-storage.com")) {
       const token = blobToken();
       if (!token) return new Response("Blob token missing", { status: 500 });

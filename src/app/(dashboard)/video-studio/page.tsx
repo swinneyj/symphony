@@ -316,6 +316,8 @@ function ProductsTab({
   const [manual, setManual] = useState({ name: "", price: "", description: "", imageUrl: "" });
   const [creating, setCreating] = useState(false);
   const [syncingShop, setSyncingShop] = useState(false);
+  // Per-product image view toggle: false = imported image, true = scene render.
+  const [sceneView, setSceneView] = useState<Record<string, boolean>>({});
 
   const handleShopSync = async () => {
     setSyncingShop(true);
@@ -550,11 +552,13 @@ function ProductsTab({
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {products.map((product) => (
             <Card key={product.id} className="overflow-hidden">
-              <div className="aspect-square bg-zinc-100">
+              <div className="relative aspect-square bg-zinc-100">
                 {product.originalImageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={`/api/products/${product.id}/image`}
+                    src={`/api/products/${product.id}/image${
+                      sceneView[product.id] ? "?variant=scene" : ""
+                    }`}
                     alt={product.name}
                     className="h-full w-full object-cover"
                     onError={(e) => {
@@ -565,6 +569,25 @@ function ProductsTab({
                   <div className="flex h-full items-center justify-center">
                     <Package className="h-10 w-10 text-muted-foreground/40" />
                   </div>
+                )}
+                {product.sceneImageUrl && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSceneView((v) => ({
+                        ...v,
+                        [product.id]: !v[product.id],
+                      }))
+                    }
+                    className={`absolute top-2 right-2 flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium shadow-sm transition-colors ${
+                      sceneView[product.id]
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-white/90 text-zinc-700 hover:bg-white"
+                    }`}
+                  >
+                    <Wand2 className="h-3 w-3" />
+                    {sceneView[product.id] ? "Scene" : "AI Scene"}
+                  </button>
                 )}
               </div>
               <CardContent className="p-4">
