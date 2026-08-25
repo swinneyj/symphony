@@ -59,6 +59,9 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
         "Only use the attached image as a reference for the scale and dimension of the products.",
         scenePromptTemplate?.trim() ||
           "Place the product on a clean neutral table with soft natural lighting.",
+        // Grounding clause: prevents the "floating product" look where the
+        // subject hovers with no surface contact. Applies to EVERY formula.
+        "Rest the product firmly on a visible surface (table, shelf, floor, or counter) with a soft contact shadow directly beneath it. The product must sit solidly on that surface — never float, hover, or appear levitating above it.",
         "Keep all product details, text, and logos identical.",
       ].join(" ");
       const result = await generateSceneImage({

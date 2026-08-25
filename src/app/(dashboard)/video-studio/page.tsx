@@ -218,6 +218,7 @@ export default function VideoStudioPage() {
           <ProductsTab
             workspaceId={workspaceId!}
             products={products}
+            formulas={formulas}
             onChanged={() => loadProducts(workspaceId!)}
           />
         </TabsContent>
@@ -304,10 +305,12 @@ function QcBadge({ qc }: { qc: { flag: string; reasons?: string[] } }) {
 function ProductsTab({
   workspaceId,
   products,
+  formulas,
   onChanged,
 }: {
   workspaceId: string;
   products: Product[];
+  formulas: Formula[];
   onChanged: () => void;
 }) {
   const [importUrl, setImportUrl] = useState("");
@@ -318,6 +321,8 @@ function ProductsTab({
   const [syncingShop, setSyncingShop] = useState(false);
   // Per-product image view toggle: false = imported image, true = scene render.
   const [sceneView, setSceneView] = useState<Record<string, boolean>>({});
+  // Per-product selected scene formula (dropdown on the card).
+  const [sceneFormula, setSceneFormula] = useState<Record<string, string>>({});
 
   const handleShopSync = async () => {
     setSyncingShop(true);
@@ -431,6 +436,23 @@ function ProductsTab({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Queue failed");
       toast.success("Processing queued");
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Queue failed");
+    }
+  };
+
+  const handleGenerateScene = async (product: Product, formulaId: string) => {
+    if (!formulaId) return;
+    try {
+      const res = await fetch(`/api/products/${product.id}/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId, formulaId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Queue failed");
+      toast.success("Scene generation queued");
       onChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Queue failed");
@@ -611,6 +633,37 @@ function ProductsTab({
                     <Play className="h-3.5 w-3.5" />
                     Process
                   </Button>
+                  <div className="flex min-w-0 flex-1 items-center gap-1">
+                    <select
+                      value={sceneFormula[product.id] ?? ""}
+                      onChange={(e) =>
+                        setSceneFormula((v) => ({
+                          ...v,
+                          [product.id]: e.target.value,
+                        }))
+                      }
+                      className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-xs text-foreground outline-none"
+                      title="Scene (formula) for AI regeneration"
+                    >
+                      <option value="">Scene…</option>
+                      {formulas.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!sceneFormula[product.id]}
+                      onClick={() =>
+                        handleGenerateScene(product, sceneFormula[product.id])
+                      }
+                    >
+                      <Wand2 className="h-3.5 w-3.5" />
+                      Scene
+                    </Button>
+                  </div>
                   <Button
                     size="sm"
                     variant="ghost"
