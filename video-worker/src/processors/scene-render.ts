@@ -17,9 +17,7 @@ import { generateSceneImage } from "../providers.js";
 export async function handleSceneRender(job: JobRow, maxRetries: number): Promise<void> {
   try {
     const [product] = await sql`
-      SELECT id, name, original_image_url, processed_image_url
-      FROM products WHERE id = ${job.product_id}
-    `;
+      SELECT id, name, original_image_url, processed_image_url, regenerated_image_url\n      FROM products WHERE id = ${job.product_id}\n    `;
     if (!product) {
       await failWithRetry(job, `product ${job.product_id} not found`, maxRetries);
       return;
@@ -37,10 +35,11 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
       return;
     }
 
-    let sceneUrl = imageUrl;
+    let sceneUrl = product.regenerated_image_url ?? imageUrl;
     let dryRun = false;
-    if (sourceFrame === "render") {
+    if (sourceFrame === "render" && !product.regenerated_image_url) {
       // Graph/run-view scene prompt override wins over the formula row.
+
       const jobMeta = (job.metadata ?? {}) as {
         scenePromptTemplate?: string;
         quality?: string;
