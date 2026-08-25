@@ -396,9 +396,12 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
   }
 
   // Primary: Gemini 2.5 Flash Image ("Nano Banana Pro") via the Google REST
-  // API — the GEMINI_API_KEY is verified-good (the veo adapter uses it), and
-  // this model is the best at preserving product text/logos.
-  const key = requireKey("veo"); // GEMINI_API_KEY
+  // API — the GEMINI_API_KEY is verified-good, and this model is the best at
+  // preserving product text/logos. NOTE: must read GEMINI_API_KEY directly —
+  // requireKey("veo") maps to FAL_KEY (KEY_BY_ENGINE.veo), which Gemini
+  // rejects with 400 "API key not valid".
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("Missing GEMINI_API_KEY for scene render");
   try {
     const url = await geminiImageEdit(key, req.imageUrl, req.prompt, req.quality);
     return { url, dryRun: false };
