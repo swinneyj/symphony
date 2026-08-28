@@ -77,54 +77,54 @@ export async function ingestMarketRows(
     const momentum = Number(
       (((prevRank ?? curRank) - curRank) + (row.growthRate ?? 0) * 100).toFixed(2)
     );
-    await db
-      .insert(marketProducts)
-      .values({
+    const values = {
+      name: row.name,
+      imageUrl: row.imageUrl,
+      priceMin: row.priceMin != null ? String(row.priceMin) : null,
+      priceMax: row.priceMax != null ? String(row.priceMax) : null,
+      currency: row.currency,
+      categoryL1: row.categoryL1,
+      categoryL2: row.categoryL2,
+      categoryL3: row.categoryL3,
+      region: row.region,
+      rank: row.rank,
+      rankPeriod: row.rankPeriod,
+      sales7d: row.sales7d,
+      sales30d: row.sales30d,
+      gmv30d: row.gmv30d != null ? String(row.gmv30d) : null,
+      growthRate: row.growthRate != null ? String(row.growthRate) : null,
+      commissionRate: row.commissionRate != null ? String(row.commissionRate) : null,
+      videoCount: row.videoCount,
+      creatorCount: row.creatorCount,
+      isHot: row.isHot ?? false,
+      momentumScore: String(momentum),
+    };
+
+    // Some existing installations predate the unique constraint used by the
+    // original ON CONFLICT clause. Update by the full tenant-scoped identity,
+    // then insert only when today's snapshot does not exist.
+    const updated = await db
+      .update(marketProducts)
+      .set(values)
+      .where(
+        and(
+          eq(marketProducts.workspaceId, workspaceId),
+          eq(marketProducts.source, source),
+          eq(marketProducts.sourceProductId, row.sourceProductId),
+          eq(marketProducts.snapshotDate, today)
+        )
+      )
+      .returning({ id: marketProducts.id });
+
+    if (updated.length === 0) {
+      await db.insert(marketProducts).values({
         workspaceId,
         source,
         sourceProductId: row.sourceProductId,
-        name: row.name,
-        imageUrl: row.imageUrl,
-        priceMin: row.priceMin != null ? String(row.priceMin) : null,
-        priceMax: row.priceMax != null ? String(row.priceMax) : null,
-        currency: row.currency,
-        categoryL1: row.categoryL1,
-        categoryL2: row.categoryL2,
-        categoryL3: row.categoryL3,
-        region: row.region,
-        rank: row.rank,
-        rankPeriod: row.rankPeriod,
-        sales7d: row.sales7d,
-        sales30d: row.sales30d,
-        gmv30d: row.gmv30d != null ? String(row.gmv30d) : null,
-        growthRate: row.growthRate != null ? String(row.growthRate) : null,
-        commissionRate: row.commissionRate != null ? String(row.commissionRate) : null,
-        videoCount: row.videoCount,
-        creatorCount: row.creatorCount,
-        isHot: row.isHot ?? false,
-        momentumScore: String(momentum),
         snapshotDate: today,
-      })
-      .onConflictDoUpdate({
-        target: [marketProducts.source, marketProducts.sourceProductId, marketProducts.snapshotDate],
-        set: {
-          name: row.name,
-          imageUrl: row.imageUrl,
-          priceMin: row.priceMin != null ? String(row.priceMin) : null,
-          priceMax: row.priceMax != null ? String(row.priceMax) : null,
-          rank: row.rank,
-          rankPeriod: row.rankPeriod,
-          sales7d: row.sales7d,
-          sales30d: row.sales30d,
-          gmv30d: row.gmv30d != null ? String(row.gmv30d) : null,
-          growthRate: row.growthRate != null ? String(row.growthRate) : null,
-          commissionRate: row.commissionRate != null ? String(row.commissionRate) : null,
-          videoCount: row.videoCount,
-          creatorCount: row.creatorCount,
-          isHot: row.isHot ?? false,
-          momentumScore: String(momentum),
-        },
+        ...values,
       });
+    }
   }
   return rows.length;
 }
