@@ -53,15 +53,34 @@ export async function resolveCoverUrl(coverUrl: string): Promise<string> {
     return coverUrl;
   }
 
-  const data = await get("/batch/cover/download", { cover_urls: coverUrl });
-  const resolved = data && typeof data === "object"
-    ? (data as Record<string, unknown>)[coverUrl] ?? Object.values(data as Record<string, unknown>)[0]
-    : null;
-  if (typeof resolved !== "string") throw new Error("[echotik] cover download returned no URL");
+  try {
+    const data = await get("/batch/cover/download", { cover_urls: coverUrl });
+    const resolved = data && typeof data === "object"
+      ? (data as Record<string, unknown>)[coverUrl] ?? Object.values(data as Record<string, unknown>)[0]
+      : null;
+    if (typeof resolved === "string") {
+      const destination = new URL(resolved);
+      if (destination.protocol === "https:") return destination.toString();
+    }
+  } catch {
+    // Some EchoTik accounts return no mapping for covers that are nevertheless
+    // available through the public product page. Fall through to that source.
+  }
 
-  const destination = new URL(resolved);
-  if (destination.protocol !== "https:") throw new Error("[echotik] cover download returned an invalid URL");
-  return destination.toString();
+  const productId = source.pathname.match(/\/product-cover\/\d+\/(\d+)_/)?.[1];
+  if (!productId) throw new Error("[echotik] could not identify cover product");
+  const page = await fetch(`https://www.echotik.live/products/${productId}`, {
+    headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0 Symphony/1.0" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!page.ok) throw new Error(`[echotik] product page ${page.status}`);
+  const html = await page.text();
+  const escapedId = productId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = html.match(
+    new RegExp(`https://cdn\\.echotik\\.live/[^"'<>\\s]+/product-cover/[^"'<>\\s]+/${escapedId}_0\\.(?:webp|jpe?g|png)`)
+  );
+  if (!match) throw new Error("[echotik] public product page returned no cover");
+  return match[0];
 }
 
 /** Ranklist → "who climbed fastest" per period. THE winning-product feed. */
