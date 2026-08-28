@@ -12,6 +12,11 @@ export interface MarketQuery {
   region?: string;        // "US" default
   category?: string;      // source category id or name
   limit?: number;         // default 50
+  minSales30d?: number;
+  maxSales30d?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  brandOnly?: boolean;
 }
 
 export interface MarketProduct {

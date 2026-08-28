@@ -98,6 +98,7 @@ export async function ingestMarketRows(
       creatorCount: row.creatorCount,
       isHot: row.isHot ?? false,
       momentumScore: String(momentum),
+      metadata: row.metadata ?? {},
     };
 
     // Some existing installations predate the unique constraint used by the

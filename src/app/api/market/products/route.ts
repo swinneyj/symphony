@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { marketProducts } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { fetchWinningProducts, ingestMarketRows } from "@/lib/market";
-import { dryRunEnabled, type MarketQuery, type MarketSource } from "@/lib/market/types";
+import type { MarketQuery, MarketSource } from "@/lib/market/types";
 
 /**
  * Winning-product feed.
@@ -27,8 +27,30 @@ export async function GET(request: Request) {
     const region = searchParams.get("region") ?? "US";
     const category = searchParams.get("category") ?? undefined;
     const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 100);
+    const optionalNumber = (key: string) => {
+      const value = searchParams.get(key);
+      if (value == null || value === "") return undefined;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+    const minSales30d = optionalNumber("minSales30d");
+    const maxSales30d = optionalNumber("maxSales30d");
+    const minPrice = optionalNumber("minPrice");
+    const maxPrice = optionalNumber("maxPrice");
+    const brandOnly = searchParams.get("brandOnly") === "1";
     const refresh = searchParams.get("refresh") === "1";
     const sort = searchParams.get("sort") ?? "rank";
+
+    const numericFilters = [minSales30d, maxSales30d, minPrice, maxPrice];
+    if (numericFilters.some((value) => value != null && value < 0)) {
+      return NextResponse.json({ error: "Market filters cannot be negative" }, { status: 400 });
+    }
+    if (minSales30d != null && maxSales30d != null && minSales30d > maxSales30d) {
+      return NextResponse.json({ error: "Minimum 30-day units cannot exceed the maximum" }, { status: 400 });
+    }
+    if (minPrice != null && maxPrice != null && minPrice > maxPrice) {
+      return NextResponse.json({ error: "Minimum price cannot exceed the maximum" }, { status: 400 });
+    }
 
     if (!workspaceId) return NextResponse.json({ error: "workspaceId required" }, { status: 400 });
     if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
@@ -43,11 +65,26 @@ export async function GET(request: Request) {
         region,
         category,
         limit,
+        minSales30d,
+        maxSales30d,
+        minPrice,
+        maxPrice,
+        brandOnly,
       });
 
       if (!dryRun) {
         // Upsert with momentum computation (rank trajectory vs prior snapshots).
         await ingestMarketRows(workspaceId, source, fetched);
+      }
+
+      if (fetched.length === 0) {
+        return NextResponse.json({
+          rows: [],
+          source,
+          dryRun,
+          stored: !dryRun,
+          notice: "No products matched these filters.",
+        });
       }
 
       // Return the fresh snapshot rows (sample rows in dry-run, stored rows otherwise).
@@ -60,7 +97,8 @@ export async function GET(request: Request) {
           and(
             eq(marketProducts.workspaceId, workspaceId),
             eq(marketProducts.source, source),
-            eq(marketProducts.snapshotDate, new Date(today))
+            eq(marketProducts.snapshotDate, new Date(today)),
+            inArray(marketProducts.sourceProductId, fetched.map((row) => row.sourceProductId))
           )
         )
         .orderBy(desc(orderByCol));

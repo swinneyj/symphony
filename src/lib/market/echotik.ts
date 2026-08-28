@@ -89,7 +89,11 @@ export async function fetchWinningProducts(query: MarketQuery): Promise<MarketPr
   // 2 creator-promoted), region codes, category params.
   const rankType = query.period === "day" ? 1 : query.period === "week" ? 2 : 3;
   const date = new Date().toISOString().slice(0, 10);
+  const hasProductFilters =
+    query.minSales30d != null || query.maxSales30d != null ||
+    query.minPrice != null || query.maxPrice != null || query.brandOnly;
   try {
+    if (hasProductFilters) return searchProducts(query);
     const data = await get("/product/ranklist", {
       date,
       region: query.region ?? "US",
@@ -118,6 +122,11 @@ export async function searchProducts(query: MarketQuery): Promise<MarketProduct[
   const data = await get("/product/list", {
     region: query.region ?? "US",
     ...(query.category ? { category_id: query.category } : {}),
+    ...(query.minSales30d != null ? { min_total_sale_30d_cnt: String(query.minSales30d) } : {}),
+    ...(query.maxSales30d != null ? { max_total_sale_30d_cnt: String(query.maxSales30d) } : {}),
+    ...(query.minPrice != null ? { min_spu_avg_price: String(query.minPrice) } : {}),
+    ...(query.maxPrice != null ? { max_spu_avg_price: String(query.maxPrice) } : {}),
+    ...(query.brandOnly ? { is_s_shop: "1" } : {}),
     product_sort_field: "2", // total_sale_gmv_amt
     sort_type: "1", // descending
     page_num: "1",

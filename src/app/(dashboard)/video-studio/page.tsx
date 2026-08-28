@@ -2315,14 +2315,24 @@ function MarketTab({
   const [watched, setWatched] = useState<WatchedRow[]>([]);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
   const [watching, setWatching] = useState<string | null>(null);
+  const [minSales30d, setMinSales30d] = useState("100");
+  const [maxSales30d, setMaxSales30d] = useState("20000");
+  const [minPrice, setMinPrice] = useState("50");
+  const [maxPrice, setMaxPrice] = useState("100");
+  const [brandOnly, setBrandOnly] = useState(true);
 
-  const refresh = useCallback(async () => {
+  const loadStored = useCallback(async () => {
     setLoading(true);
     setNotice(null);
     try {
-      const res = await fetch(
-        `/api/market/products?workspaceId=${workspaceId}&source=${source}&period=${period}&sort=${sort}&refresh=1&limit=50`
-      );
+      const params = new URLSearchParams({
+        workspaceId,
+        source,
+        period,
+        sort,
+        limit: "50",
+      });
+      const res = await fetch(`/api/market/products?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load market data");
       setRows(data.rows ?? []);
@@ -2334,9 +2344,31 @@ function MarketTab({
     }
   }, [workspaceId, source, period, sort]);
 
+  const refreshMarket = useCallback(async () => {
+    setLoading(true);
+    setNotice(null);
+    try {
+      const params = new URLSearchParams({ workspaceId, source, period, sort, limit: "50", refresh: "1" });
+      if (minSales30d) params.set("minSales30d", minSales30d);
+      if (maxSales30d) params.set("maxSales30d", maxSales30d);
+      if (minPrice) params.set("minPrice", minPrice);
+      if (maxPrice) params.set("maxPrice", maxPrice);
+      if (brandOnly) params.set("brandOnly", "1");
+      const res = await fetch(`/api/market/products?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to refresh market data");
+      setRows(data.rows ?? []);
+      if (data.notice) setNotice(data.notice);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to refresh market data");
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId, source, period, sort, minSales30d, maxSales30d, minPrice, maxPrice, brandOnly]);
+
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    void loadStored();
+  }, [loadStored]);
 
   const loadWatched = useCallback(async () => {
     try {
@@ -2396,7 +2428,7 @@ function MarketTab({
       if (!res.ok) throw new Error(data.error ?? "Failed to adopt");
       toast.success(`"${data.product.name}" added to Products`);
       onAdopted();
-      refresh();
+      await loadStored();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to adopt");
     } finally {
@@ -2467,13 +2499,37 @@ function MarketTab({
         <Button size="sm" variant={view === "watched" ? "default" : "outline"} onClick={() => setView(view === "watched" ? "discover" : "watched")}>
           <Star className="h-4 w-4" /> Watched ({watched.length})
         </Button>
-        <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
+        <Button size="sm" variant="outline" onClick={() => void refreshMarket()} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
           {loading ? "Fetching…" : "Refresh"}
         </Button>
         <span className="text-xs text-muted-foreground">
           Winning products — who climbed fastest this {period}.
         </span>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/30 p-3">
+        <label className="space-y-1 text-xs">
+          <span className="text-muted-foreground">30d units min</span>
+          <Input className="h-8 w-28" inputMode="numeric" value={minSales30d} onChange={(e) => setMinSales30d(e.target.value)} />
+        </label>
+        <label className="space-y-1 text-xs">
+          <span className="text-muted-foreground">30d units max</span>
+          <Input className="h-8 w-28" inputMode="numeric" value={maxSales30d} onChange={(e) => setMaxSales30d(e.target.value)} />
+        </label>
+        <label className="space-y-1 text-xs">
+          <span className="text-muted-foreground">Price min ($)</span>
+          <Input className="h-8 w-24" inputMode="decimal" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} />
+        </label>
+        <label className="space-y-1 text-xs">
+          <span className="text-muted-foreground">Price max ($)</span>
+          <Input className="h-8 w-24" inputMode="decimal" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
+        </label>
+        <label className="flex h-8 items-center gap-2 text-sm">
+          <input type="checkbox" checked={brandOnly} onChange={(e) => setBrandOnly(e.target.checked)} />
+          Proven brand shops only
+        </label>
+        <span className="text-xs text-muted-foreground">Ads-as-top-driver: awaiting a real EchoTik attribution field.</span>
       </div>
 
       {notice && (
