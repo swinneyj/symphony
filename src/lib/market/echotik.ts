@@ -15,6 +15,11 @@ import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./
 import { MissingSourceCredentialsError } from "./types";
 
 const BASE = "https://open.echotik.live/api/v3/echotik";
+const MAX_PAGE_SIZE = 10;
+
+function pageSize(limit: number | undefined): string {
+  return String(Math.min(Math.max(limit ?? MAX_PAGE_SIZE, 1), MAX_PAGE_SIZE));
+}
 
 function authHeader(): string {
   const u = process.env.ECHOTIK_USERNAME;
@@ -55,7 +60,7 @@ export async function fetchWinningProducts(query: MarketQuery): Promise<MarketPr
       product_rank_field: "1", // total_sale_cnt
       page_num: "1",
       ...(query.category ? { product_category_id: query.category } : {}),
-      page_size: String(query.limit ?? 50),
+      page_size: pageSize(query.limit),
     });
 
     const rows = responseRows(data);
@@ -79,7 +84,7 @@ export async function searchProducts(query: MarketQuery): Promise<MarketProduct[
     product_sort_field: "2", // total_sale_gmv_amt
     sort_type: "1", // descending
     page_num: "1",
-    page_size: String(query.limit ?? 50),
+    page_size: pageSize(query.limit),
   });
   const rows = responseRows(data);
   return rows.map((r, i) => normalize(r, i + 1, query.period));
@@ -164,7 +169,7 @@ export async function fetchProductCreators(
   const data = await get("/product/influencer/list", {
     product_id: sourceProductId,
     page_num: "1",
-    page_size: String(limit),
+    page_size: pageSize(limit),
   });
 
   const rows = responseRows(data);
