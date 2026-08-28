@@ -16,9 +16,21 @@
  */
 import type { MarketCreator, MarketProduct, MarketQuery, MarketSource, ProductAnalytics, TrendPoint } from "./types";
 import { MissingSourceCredentialsError } from "./types";
+import { cacheGet, cacheSet, cacheKey } from "./cache";
 
 const BASE = "https://open.echotik.live";
 const PAGE_SIZE = 10; // API hard cap
+
+/** How long to cache each endpoint before re-paying the daily quota.
+ *  Ranklist is T+1 (changes once per day) — long TTL is safe.
+ *  Filters are exploratory — short TTL dedupes repeated clicks. */
+const CACHE_TTL_SECONDS: Record<string, number> = {
+  "/api/v3/echotik/product/ranklist": 12 * 3600,
+  "/api/v3/echotik/product/list": 15 * 60,
+  "/api/v3/echotik/product/detail": 6 * 3600,
+  "/api/v3/echotik/product/trend": 6 * 3600,
+  "/api/v3/echotik/product/influencer/list": 6 * 3600,
+};
 
 type ApiRow = Record<string, unknown>;
 
@@ -33,13 +45,21 @@ function authHeader(): string {
   return "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
 }
 
-/** Single-page GET; returns the `data` array directly (verified live). */
+/** Single-page GET; returns the `data` array directly (verified live).
+ *  Cached in Vercel KV per endpoint TTL so identical queries don't re-pay
+ *  the daily API quota. */
 async function get(path: string, params: Record<string, string | number | undefined>): Promise<ApiRow[]> {
   const qs: Record<string, string> = {};
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") qs[k] = String(v);
   }
-  const res = await fetch(`${BASE}${path}?${new URLSearchParams(qs).toString()}`, {
+  const query = new URLSearchParams(qs).toString();
+  const ttl = CACHE_TTL_SECONDS[path];
+  if (ttl) {
+    const cached = await cacheGet<ApiRow[]>(cacheKey("echotik", `${path}?${query}`));
+    if (cached) return cached;
+  }
+  const res = await fetch(`${BASE}${path}?${query}`, {
     headers: { Authorization: authHeader(), Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
@@ -52,7 +72,11 @@ async function get(path: string, params: Record<string, string | number | undefi
     throw new Error(`[echotik] ${path}: code=${json.code} msg=${json.message ?? "unknown"}`);
   }
   // EchoTik wraps the array directly under `data` (no .list/.products wrapper).
-  return asRows(json?.data ?? json);
+  const rows = asRows(json?.data ?? json);
+  if (ttl && rows.length > 0) {
+    await cacheSet(cacheKey("echotik", `${path}?${query}`), rows, ttl);
+  }
+  return rows;
 }
 
 /** Page through until `limit` rows collected (page_size hard cap = 10). */
