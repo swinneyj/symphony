@@ -46,6 +46,24 @@ async function get(path: string, params: Record<string, string>): Promise<any> {
   return json?.data ?? json;
 }
 
+/** Exchange EchoTik's private stored cover URL for a public URL valid for 24h. */
+export async function resolveCoverUrl(coverUrl: string): Promise<string> {
+  const source = new URL(coverUrl);
+  if (source.protocol !== "https:" || source.hostname !== "echosell-images.tos-ap-southeast-1.volces.com") {
+    return coverUrl;
+  }
+
+  const data = await get("/batch/cover/download", { cover_urls: coverUrl });
+  const resolved = data && typeof data === "object"
+    ? (data as Record<string, unknown>)[coverUrl] ?? Object.values(data as Record<string, unknown>)[0]
+    : null;
+  if (typeof resolved !== "string") throw new Error("[echotik] cover download returned no URL");
+
+  const destination = new URL(resolved);
+  if (destination.protocol !== "https:") throw new Error("[echotik] cover download returned an invalid URL");
+  return destination.toString();
+}
+
 /** Ranklist → "who climbed fastest" per period. THE winning-product feed. */
 export async function fetchWinningProducts(query: MarketQuery): Promise<MarketProduct[]> {
   // TODO_VERIFY: parameter names for ranklist (product_rank_field=1 hot-sales,

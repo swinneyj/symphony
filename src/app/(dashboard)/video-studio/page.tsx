@@ -2586,7 +2586,7 @@ function MarketTab({
                       <div className="flex items-center gap-2">
                         {row.imageUrl ? (
                           <img
-                            src={row.imageUrl}
+                            src={row.id ? `/api/market/products/${row.id}/image` : row.imageUrl}
                             alt=""
                             className="h-9 w-9 rounded-md border object-cover"
                             onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}

@@ -5,6 +5,7 @@ import { products } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { blobToken } from "@/lib/blob-token";
+import { resolveCoverUrl } from "@/lib/market/echotik";
 
 export const runtime = "nodejs";
 
@@ -67,6 +68,19 @@ export async function GET(
         headers: {
           "Content-Type": upstream.headers.get("content-type") ?? "image/png",
           "Cache-Control": "public, max-age=3600",
+        },
+      });
+    }
+
+    if (new URL(url).hostname === "echosell-images.tos-ap-southeast-1.volces.com") {
+      const resolved = await resolveCoverUrl(url);
+      const upstream = await fetch(resolved, { signal: AbortSignal.timeout(30_000) });
+      if (!upstream.ok) return new Response("Upstream error", { status: 502 });
+      return new Response(upstream.body, {
+        status: 200,
+        headers: {
+          "Content-Type": upstream.headers.get("content-type") ?? "image/webp",
+          "Cache-Control": "private, max-age=3600",
         },
       });
     }
