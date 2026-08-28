@@ -3,10 +3,10 @@
  * Docs: https://opendocs.echotik.live  (openapi yaml per endpoint)
  * Auth: Basic (dedicated username/password from the EchoTik API dashboard).
  *
- * Endpoints used (EchoTik's documented v2 API):
- *   GET /api/v2/product/ranklist            — period rankings
- *   GET /api/v2/product/list                — product search
- *   GET /api/v2/product/influencer/list     — creators driving a product
+ * Endpoints used (EchoTik's documented v3 API):
+ *   GET /api/v3/echotik/product/ranklist            — period rankings
+ *   GET /api/v3/echotik/product/list                — product search
+ *   GET /api/v3/echotik/product/influencer/list     — creators driving a product
  *
  * EchoTik documents Basic Auth for these API endpoints. Keep credentials
  * server-side in ECHOTIK_USERNAME / ECHOTIK_PASSWORD.
@@ -14,7 +14,7 @@
 import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 
-const BASE = "https://open.echotik.live/api/v2";
+const BASE = "https://open.echotik.live/api/v3/echotik";
 
 function authHeader(): string {
   const u = process.env.ECHOTIK_USERNAME;
@@ -34,6 +34,9 @@ async function get(path: string, params: Record<string, string>): Promise<any> {
     throw new Error(`[echotik] ${res.status} ${path}: ${text.slice(0, 200)}`);
   }
   const json = await res.json();
+  if (typeof json?.code === "number" && json.code !== 0) {
+    throw new Error(`[echotik] API ${json.code} ${path}: ${String(json.message ?? json.msg ?? "request failed").slice(0, 200)}`);
+  }
   // EchoTik wraps data under data / data.list / data.products depending on endpoint.
   return json?.data ?? json;
 }
