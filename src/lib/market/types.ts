@@ -10,16 +10,51 @@ export type RankPeriod = "day" | "week" | "month";
 export interface MarketQuery {
   period: RankPeriod;
   region?: string;        // "US" default
-  category?: string;      // source category id or name
+  category?: string;      // L1 category id
+  categoryL2?: string;    // L2 category id
+  categoryL3?: string;    // L3 category id
   limit?: number;         // default 50
-  minSales30d?: number;
-  maxSales30d?: number;
-  minPrice?: number;
-  maxPrice?: number;
-  brandOnly?: boolean;
+  // ── Product Library filters (EchoTik product/list) ──
+  priceMin?: number;
+  priceMax?: number;
+  commissionMin?: number;     // fraction, e.g. 0.15 = 15%
+  commissionMax?: number;
+  influencersMin?: number;    // creators driving the product
+  influencersMax?: number;
+  videosMin?: number;         // videos featuring the product
+  videosMax?: number;
+  viewsMin?: number;          // total video views
+  viewsMax?: number;
+  ratingMin?: number;         // product experience points (rating)
+  ratingMax?: number;
+  reviewsMin?: number;        // comment count
+  reviewsMax?: number;
+  salesMin?: number;          // total sales
+  salesMax?: number;
+  sales30dMin?: number;       // 30-day sales
+  sales30dMax?: number;
+  gmvMin?: number;            // total GMV
+  gmvMax?: number;
+  gmv30dMin?: number;         // 30-day GMV
+  gmv30dMax?: number;
+  salesTrend?: 0 | 1 | 2;     // 7-day sales trend: 0=flat 1=up 2=down
+  isSShop?: boolean;          // full-managed (S-shop)
+  freeShipping?: boolean;
+  brandStore?: boolean;       // shop_type = brand store
+  fromFlag?: 1 | 2;           // shop type: 1=local 2=cross-border
+  isHot?: boolean;            // hot product flag
+  onSaleOnly?: boolean;       // off_mark=0 (exclude delisted)
+  salesFlag?: 1 | 2;          // main sales method: 1=video 2=live
+  newProductsDays?: number;   // first crawl within last N days (new products)
+  sortField?: "sales" | "gmv" | "price" | "sales7d" | "sales30d" | "gmv7d" | "gmv30d";
+  sortType?: "asc" | "desc";
 }
 
 export interface MarketProduct {
+  /** Stored snapshot row id — present when the product was persisted. */
+  id?: string;
+  /** Linked in-app product id — present when adopted. */
+  productId?: string | null;
   source: MarketSource;
   sourceProductId: string;
   name: string;
@@ -43,6 +78,52 @@ export interface MarketProduct {
   isHot: boolean;
   momentumScore: number | null;
   metadata?: Record<string, unknown>;
+}
+
+/** One daily snapshot in a product's 180-day trend series. */
+export interface TrendPoint {
+  date: string;
+  price: number | null;
+  influencers: number | null;
+  liveCount: number | null;
+  videoCount: number | null;
+  sales1d: number | null;
+  salesTotal: number | null;
+  gmv1d: number | null;
+  gmvTotal: number | null;
+}
+
+/** Per-product drill-down: business panorama + trend (EchoTik detail + trend). */
+export interface ProductAnalytics {
+  productId: string;
+  name: string | null;
+  imageUrl: string | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  commissionRate: number | null;
+  rating: number | null;
+  reviewCount: number | null;
+  sellerId: string | null;
+  salesTrend: number | null;        // 0=flat 1=up 2=down
+  firstCrawlDate: string | null;    // yyyyMMdd
+  isSShop: boolean;
+  freeShipping: boolean;
+  brandStore: boolean;
+  fromFlag: number | null;          // 1=local 2=cross-border
+  totalSales: number | null;
+  totalGmv: number | null;
+  /** 1/7/15/30/60/90-day live/video/influencer/sales/GMV breakdown. */
+  panorama: {
+    period: number;
+    sales: number | null;
+    gmv: number | null;
+    videoCnt: number | null;
+    videoSales: number | null;
+    liveCnt: number | null;
+    liveSales: number | null;
+    influencers: number | null;
+  }[];
+  trend: TrendPoint[];
 }
 
 /** A creator (influencer) driving sales for a specific market product. */

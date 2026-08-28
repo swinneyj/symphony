@@ -7,7 +7,7 @@
  * Dry-run (MARKET_DRY_RUN=1): returns realistic sample rows WITHOUT storing
  * them — the DB only ever sees real source data.
  */
-import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./types";
+import type { MarketCreator, MarketProduct, MarketQuery, MarketSource, ProductAnalytics } from "./types";
 import { dryRunEnabled } from "./types";
 import * as echotik from "./echotik";
 import * as fastmoss from "./fastmoss";
@@ -20,12 +20,39 @@ const ADAPTERS: Record<MarketSource, (q: MarketQuery) => Promise<MarketProduct[]
   fastmoss: fastmoss.fetchWinningProducts,
 };
 
+/** True when any Product Library filter is set (routes to search, not ranklist). */
+function hasLibraryFilters(q: MarketQuery): boolean {
+  return (
+    q.priceMin != null || q.priceMax != null ||
+    q.commissionMin != null || q.commissionMax != null ||
+    q.influencersMin != null || q.influencersMax != null ||
+    q.videosMin != null || q.videosMax != null ||
+    q.viewsMin != null || q.viewsMax != null ||
+    q.ratingMin != null || q.ratingMax != null ||
+    q.reviewsMin != null || q.reviewsMax != null ||
+    q.salesMin != null || q.salesMax != null ||
+    q.sales30dMin != null || q.sales30dMax != null ||
+    q.gmvMin != null || q.gmvMax != null ||
+    q.gmv30dMin != null || q.gmv30dMax != null ||
+    q.salesTrend != null || q.isSShop != null || q.freeShipping != null ||
+    q.brandStore != null || q.fromFlag != null || q.isHot != null ||
+    q.onSaleOnly || q.salesFlag != null || q.newProductsDays != null ||
+    q.categoryL2 != null || q.categoryL3 != null ||
+    (q.sortField != null && q.sortField !== "sales30d")
+  );
+}
+
 export async function fetchWinningProducts(
   source: MarketSource,
   query: MarketQuery
 ): Promise<{ rows: MarketProduct[]; dryRun: boolean }> {
   if (dryRunEnabled()) {
     return { rows: sampleProducts(query.period), dryRun: true };
+  }
+  // Filtered queries use the Products Library search surface (product/list);
+  // unfiltered uses the period rankings (ranklist) — the winners feed.
+  if (source === "echotik" && hasLibraryFilters(query)) {
+    return { rows: await echotik.searchProducts(query), dryRun: false };
   }
   const adapter = ADAPTERS[source];
   if (!adapter) throw new Error(`[market] unknown source: ${source}`);
@@ -210,6 +237,17 @@ export async function fetchCreators(
     return { rows: await echotik.fetchProductCreators(sourceProductId), dryRun: false };
   }
   throw new Error(`[market] creator feed not implemented for source: ${source}`);
+}
+
+/** Per-product drill-down: panorama + 180-day trend (EchoTik detail + trend). */
+export async function fetchProductAnalytics(
+  source: MarketSource,
+  sourceProductId: string
+): Promise<ProductAnalytics> {
+  if (source !== "echotik") {
+    throw new Error(`[market] analytics not implemented for source: ${source}`);
+  }
+  return echotik.fetchProductAnalytics(sourceProductId);
 }
 
 /**

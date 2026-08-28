@@ -8,12 +8,20 @@ import { fetchWinningProducts, ingestMarketRows } from "@/lib/market";
 import type { MarketQuery, MarketSource } from "@/lib/market/types";
 
 /**
- * Winning-product feed.
+ * Winning-product feed + Products Library search.
  *   GET /api/market/products?workspaceId&source=echotik&period=week&region=US&limit=50
  *     → latest DB snapshots (no fetch)
  *   GET ...&refresh=1
  *     → fetch from source, upsert snapshots, return fresh rows.
  *     Dry-run: returns sample rows WITHOUT storing (DB only holds real data).
+ *
+ * Product Library filters (any present → live search via product/list, no store):
+ *   priceMin/priceMax, commissionMin/commissionMax, influencersMin/Max,
+ *   videosMin/Max, viewsMin/Max, ratingMin/ratingMax, reviewsMin/reviewsMax,
+ *   salesMin/salesMax, sales30dMin/Max, gmvMin/gmvMax, gmv30dMin/Max,
+ *   salesTrend (0|1|2), sShop (1), freeShipping (1), brandStore (1),
+ *   fromFlag (1|2), hot (1), onSaleOnly (1), salesFlag (1|2),
+ *   newProductsDays (N), sortField, sortType (asc|desc)
  */
 export async function GET(request: Request) {
   try {
@@ -27,53 +35,87 @@ export async function GET(request: Request) {
     const region = searchParams.get("region") ?? "US";
     const category = searchParams.get("category") ?? undefined;
     const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 100);
-    const optionalNumber = (key: string) => {
-      const value = searchParams.get(key);
-      if (value == null || value === "") return undefined;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : undefined;
-    };
-    const minSales30d = optionalNumber("minSales30d");
-    const maxSales30d = optionalNumber("maxSales30d");
-    const minPrice = optionalNumber("minPrice");
-    const maxPrice = optionalNumber("maxPrice");
-    const brandOnly = searchParams.get("brandOnly") === "1";
     const refresh = searchParams.get("refresh") === "1";
     const sort = searchParams.get("sort") ?? "rank";
-
-    const numericFilters = [minSales30d, maxSales30d, minPrice, maxPrice];
-    if (numericFilters.some((value) => value != null && value < 0)) {
-      return NextResponse.json({ error: "Market filters cannot be negative" }, { status: 400 });
-    }
-    if (minSales30d != null && maxSales30d != null && minSales30d > maxSales30d) {
-      return NextResponse.json({ error: "Minimum 30-day units cannot exceed the maximum" }, { status: 400 });
-    }
-    if (minPrice != null && maxPrice != null && minPrice > maxPrice) {
-      return NextResponse.json({ error: "Minimum price cannot exceed the maximum" }, { status: 400 });
-    }
 
     if (!workspaceId) return NextResponse.json({ error: "workspaceId required" }, { status: 400 });
     if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    // ── Parse Product Library filters ──
+    const num = (k: string): number | undefined => {
+      const v = searchParams.get(k);
+      if (v === null || v === "") return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const flag = (k: string): boolean | undefined => {
+      const v = searchParams.get(k);
+      if (v === null || v === "") return undefined;
+      return v === "1" || v === "true";
+    };
+    const query: MarketQuery = {
+      period,
+      region,
+      category,
+      categoryL2: searchParams.get("categoryL2") ?? undefined,
+      categoryL3: searchParams.get("categoryL3") ?? undefined,
+      limit,
+      priceMin: num("priceMin"),
+      priceMax: num("priceMax"),
+      commissionMin: num("commissionMin"),
+      commissionMax: num("commissionMax"),
+      influencersMin: num("influencersMin"),
+      influencersMax: num("influencersMax"),
+      videosMin: num("videosMin"),
+      videosMax: num("videosMax"),
+      viewsMin: num("viewsMin"),
+      viewsMax: num("viewsMax"),
+      ratingMin: num("ratingMin"),
+      ratingMax: num("ratingMax"),
+      reviewsMin: num("reviewsMin"),
+      reviewsMax: num("reviewsMax"),
+      salesMin: num("salesMin"),
+      salesMax: num("salesMax"),
+      sales30dMin: num("sales30dMin"),
+      sales30dMax: num("sales30dMax"),
+      gmvMin: num("gmvMin"),
+      gmvMax: num("gmvMax"),
+      gmv30dMin: num("gmv30dMin"),
+      gmv30dMax: num("gmv30dMax"),
+      salesTrend: (num("salesTrend") as 0 | 1 | 2 | undefined),
+      isSShop: flag("sShop"),
+      freeShipping: flag("freeShipping"),
+      brandStore: flag("brandStore"),
+      fromFlag: (num("fromFlag") as 1 | 2 | undefined),
+      isHot: flag("hot"),
+      onSaleOnly: flag("onSaleOnly") ?? false,
+      salesFlag: (num("salesFlag") as 1 | 2 | undefined),
+      newProductsDays: num("newProductsDays"),
+      sortField: (searchParams.get("sortField") as MarketQuery["sortField"]) ?? undefined,
+      sortType: (searchParams.get("sortType") as MarketQuery["sortType"]) ?? undefined,
+    };
+    const hasFilters = [
+      query.priceMin, query.priceMax, query.commissionMin, query.commissionMax,
+      query.influencersMin, query.influencersMax, query.videosMin, query.videosMax,
+      query.viewsMin, query.viewsMax, query.ratingMin, query.ratingMax,
+      query.reviewsMin, query.reviewsMax, query.salesMin, query.salesMax,
+      query.sales30dMin, query.sales30dMax, query.gmvMin, query.gmvMax,
+      query.gmv30dMin, query.gmv30dMax, query.salesTrend, query.isSShop,
+      query.freeShipping, query.brandStore, query.fromFlag, query.isHot,
+      query.onSaleOnly, query.salesFlag, query.newProductsDays,
+      query.categoryL2, query.categoryL3,
+      query.sortField != null && query.sortField !== "sales30d", query.sortType,
+    ].some((v) => v !== undefined && v !== null && v !== false);
+
     const today = new Date().toISOString().slice(0, 10);
 
-    if (refresh) {
-      const { rows: fetched, dryRun } = await fetchWinningProducts(source, {
-        period,
-        region,
-        category,
-        limit,
-        minSales30d,
-        maxSales30d,
-        minPrice,
-        maxPrice,
-        brandOnly,
-      });
+    if (refresh || hasFilters) {
+      const { rows: fetched, dryRun } = await fetchWinningProducts(source, query);
 
-      if (!dryRun) {
-        // Upsert with momentum computation (rank trajectory vs prior snapshots).
+      // Filtered library searches are exploratory — never stored as snapshots.
+      if (!dryRun && !hasFilters) {
         await ingestMarketRows(workspaceId, source, fetched);
       }
 
@@ -103,12 +145,26 @@ export async function GET(request: Request) {
         )
         .orderBy(desc(orderByCol));
 
-      const outRows = dryRun ? fetched : stored;
+      // Filtered results keep their fresh panorama; attach stored id/productId
+      // when today's snapshot already knows the product (enables adopt/watch).
+      if (hasFilters && stored.length > 0) {
+        const bySpid = new Map(stored.map((s) => [s.sourceProductId, s]));
+        for (const row of fetched) {
+          const known = bySpid.get(row.sourceProductId);
+          if (known) {
+            row.id = known.id;
+            row.productId = known.productId;
+          }
+        }
+      }
+
+      const outRows = dryRun ? fetched : hasFilters ? fetched : stored;
       return NextResponse.json({
         rows: outRows,
         source,
         dryRun,
-        stored: !dryRun,
+        stored: !dryRun && !hasFilters,
+        filtered: hasFilters,
         notice: dryRun ? "Sample data — set source credentials for real data (or MARKET_DRY_RUN=0)." : undefined,
       });
     }

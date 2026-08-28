@@ -26,6 +26,7 @@ import {
   Check,
   Share2,
   Download,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -2265,6 +2266,48 @@ interface MarketRow {
   isHot: boolean;
   momentumScore: number | null;
   productId: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+interface MarketAnalyticsRow {
+  productId: string;
+  name: string | null;
+  imageUrl: string | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  commissionRate: number | null;
+  rating: number | null;
+  reviewCount: number | null;
+  sellerId: string | null;
+  salesTrend: number | null;
+  firstCrawlDate: string | null;
+  isSShop: boolean;
+  freeShipping: boolean;
+  brandStore: boolean;
+  fromFlag: number | null;
+  totalSales: number | null;
+  totalGmv: number | null;
+  panorama: {
+    period: number;
+    sales: number | null;
+    gmv: number | null;
+    videoCnt: number | null;
+    videoSales: number | null;
+    liveCnt: number | null;
+    liveSales: number | null;
+    influencers: number | null;
+  }[];
+  trend: {
+    date: string;
+    price: number | null;
+    influencers: number | null;
+    liveCount: number | null;
+    videoCount: number | null;
+    sales1d: number | null;
+    salesTotal: number | null;
+    gmv1d: number | null;
+    gmvTotal: number | null;
+  }[];
 }
 
 interface MarketCreatorRow {
@@ -2293,6 +2336,150 @@ interface WatchedRow {
   lastSnapshot: string | null;
 }
 
+interface FilterFieldProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  step?: string;
+  placeholder?: string;
+}
+
+function FilterField({ label, value, onChange, type = "text", step, placeholder }: FilterFieldProps) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+      {label}
+      <Input
+        type={type}
+        step={step}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 text-sm"
+      />
+    </label>
+  );
+}
+
+function AnalyticsPanel({ a }: { a: MarketAnalyticsRow | undefined }) {
+  if (!a) return null;
+  const periods = a.panorama ?? [];
+  const trend = a.trend ?? [];
+  const maxGmv = Math.max(...trend.map((t) => t.gmv1d ?? 0), 1);
+  const maxSales = Math.max(...trend.map((t) => t.sales1d ?? 0), 1);
+  const sparkPoints = trend.map((t) => t.sales1d ?? 0);
+  const sparkMax = Math.max(...sparkPoints, 1);
+  const sparkPath =
+    sparkPoints.length > 1
+      ? sparkPoints
+          .map((v, i) => {
+            const x = (i / (sparkPoints.length - 1)) * 100;
+            const y = 40 - (v / sparkMax) * 36;
+            return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+          })
+          .join(" ")
+      : "";
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div>
+        <p className="mb-1 text-xs font-medium text-muted-foreground">Business panorama</p>
+        <div className="mb-2 flex flex-wrap gap-1.5 text-[11px]">
+          {a.rating != null && <Badge className="bg-slate-100 text-slate-700">★ {a.rating.toFixed(1)}</Badge>}
+          {a.reviewCount != null && <Badge className="bg-slate-100 text-slate-700">💬 {a.reviewCount.toLocaleString()}</Badge>}
+          {a.isSShop && <Badge className="bg-violet-100 text-violet-700">S-shop</Badge>}
+          {a.brandStore && <Badge className="bg-blue-100 text-blue-700">Brand store</Badge>}
+          {a.freeShipping && <Badge className="bg-emerald-100 text-emerald-700">Free ship</Badge>}
+          {a.fromFlag === 1 && <Badge className="bg-slate-100 text-slate-600">Local</Badge>}
+          {a.fromFlag === 2 && <Badge className="bg-slate-100 text-slate-600">Cross-border</Badge>}
+          {a.salesTrend === 1 && <Badge className="bg-green-100 text-green-700">Sales ↑ 7d</Badge>}
+          {a.salesTrend === 0 && <Badge className="bg-slate-100 text-slate-600">Sales → 7d</Badge>}
+          {a.salesTrend === 2 && <Badge className="bg-red-100 text-red-700">Sales ↓ 7d</Badge>}
+        </div>
+        <div className="overflow-x-auto rounded-md border">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b bg-muted/50 text-left text-[11px] text-muted-foreground">
+                <th className="px-2 py-1.5">Period</th>
+                <th className="px-2 py-1.5">Sales</th>
+                <th className="px-2 py-1.5">GMV</th>
+                <th className="px-2 py-1.5">Videos</th>
+                <th className="px-2 py-1.5">Video sales</th>
+                <th className="px-2 py-1.5">Lives</th>
+                <th className="px-2 py-1.5">Live sales</th>
+                <th className="px-2 py-1.5">Influencers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {periods.map((p) => (
+                <tr key={p.period} className="border-b last:border-0">
+                  <td className="px-2 py-1.5 font-mono text-muted-foreground">
+                    {p.period === 1 ? "1d" : `${p.period}d`}
+                  </td>
+                  <td className="px-2 py-1.5">{p.sales != null ? p.sales.toLocaleString() : "—"}</td>
+                  <td className="px-2 py-1.5">{p.gmv != null ? `$${Math.round(p.gmv).toLocaleString()}` : "—"}</td>
+                  <td className="px-2 py-1.5">{p.videoCnt != null ? p.videoCnt.toLocaleString() : "—"}</td>
+                  <td className="px-2 py-1.5">{p.videoSales != null ? p.videoSales.toLocaleString() : "—"}</td>
+                  <td className="px-2 py-1.5">{p.liveCnt != null ? p.liveCnt.toLocaleString() : "—"}</td>
+                  <td className="px-2 py-1.5">{p.liveSales != null ? p.liveSales.toLocaleString() : "—"}</td>
+                  <td className="px-2 py-1.5">{p.influencers != null ? p.influencers.toLocaleString() : "—"}</td>
+                </tr>
+              ))}
+              {periods.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-2 py-4 text-center text-muted-foreground">
+                    No panorama data.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <p className="mb-1 text-xs font-medium text-muted-foreground">180-day sales trend</p>
+        {sparkPath ? (
+          <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="h-24 w-full rounded-md border bg-background">
+            <path d={sparkPath} fill="none" stroke="currentColor" strokeWidth="1.5" className="text-blue-600" />
+            {trend.length > 0 && (
+              <text x="1" y="8" fontSize="5" className="fill-muted-foreground">
+                {trend[trend.length - 1].date} · 1d sales {trend[trend.length - 1].sales1d?.toLocaleString() ?? "—"}
+              </text>
+            )}
+          </svg>
+        ) : (
+          <p className="rounded-md border bg-background px-3 py-6 text-center text-xs text-muted-foreground">
+            No trend data yet.
+          </p>
+        )}
+        <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-md border bg-background p-2">
+            <p className="text-[11px] text-muted-foreground">Total sales</p>
+            <p className="text-sm font-medium">{a.totalSales != null ? a.totalSales.toLocaleString() : "—"}</p>
+          </div>
+          <div className="rounded-md border bg-background p-2">
+            <p className="text-[11px] text-muted-foreground">Total GMV</p>
+            <p className="text-sm font-medium">{a.totalGmv != null ? `$${Math.round(a.totalGmv).toLocaleString()}` : "—"}</p>
+          </div>
+          <div className="rounded-md border bg-background p-2">
+            <p className="text-[11px] text-muted-foreground">Price</p>
+            <p className="text-sm font-medium">
+              {a.priceMin != null
+                ? `$${a.priceMin}${a.priceMax && a.priceMax !== a.priceMin ? `–$${a.priceMax}` : ""}`
+                : "—"}
+            </p>
+          </div>
+        </div>
+        {maxGmv > 1 && maxSales > 1 && (
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Peak 1-day: {Math.round(maxSales).toLocaleString()} sales · ${Math.round(maxGmv).toLocaleString()} GMV
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MarketTab({
   workspaceId,
   onAdopted,
@@ -2315,11 +2502,22 @@ function MarketTab({
   const [watched, setWatched] = useState<WatchedRow[]>([]);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
   const [watching, setWatching] = useState<string | null>(null);
-  const [minSales30d, setMinSales30d] = useState("100");
-  const [maxSales30d, setMaxSales30d] = useState("20000");
-  const [minPrice, setMinPrice] = useState("50");
-  const [maxPrice, setMaxPrice] = useState("100");
-  const [brandOnly, setBrandOnly] = useState(true);
+  // ── Products Library filters (EchoTik product/list surface) ──
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [analyticsFor, setAnalyticsFor] = useState<string | null>(null);
+  const [analytics, setAnalytics] = useState<Record<string, MarketAnalyticsRow>>({});
+  const [analyticsLoading, setAnalyticsLoading] = useState<string | null>(null);
+
+  const setFilter = (key: string, value: string) =>
+    setFilters((prev) => ({ ...prev, [key]: value }));
+
+  const clearFilters = () => {
+    setFilters({});
+    setShowFilters(false);
+  };
+
+  const activeFilterCount = Object.values(filters).filter((v) => v !== "").length;
 
   const loadStored = useCallback(async () => {
     setLoading(true);
@@ -2337,23 +2535,24 @@ function MarketTab({
       if (!res.ok) throw new Error(data.error ?? "Failed to load market data");
       setRows(data.rows ?? []);
       if (data.notice) setNotice(data.notice);
+      if (data.filtered) setNotice("Filtered live search — results are not stored as snapshots.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load market data");
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, source, period, sort]);
+  }, [workspaceId, source, period, sort, filters]);
 
   const refreshMarket = useCallback(async () => {
     setLoading(true);
     setNotice(null);
     try {
       const params = new URLSearchParams({ workspaceId, source, period, sort, limit: "50", refresh: "1" });
-      if (minSales30d) params.set("minSales30d", minSales30d);
-      if (maxSales30d) params.set("maxSales30d", maxSales30d);
-      if (minPrice) params.set("minPrice", minPrice);
-      if (maxPrice) params.set("maxPrice", maxPrice);
-      if (brandOnly) params.set("brandOnly", "1");
+      for (const [k, v] of Object.entries(filters)) {
+        if (v === "") continue;
+        // commission stored as % in the UI, sent as fraction to the API.
+        params.set(k, k.startsWith("commission") ? String(Number(v) / 100) : v);
+      }
       const res = await fetch(`/api/market/products?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to refresh market data");
@@ -2364,7 +2563,7 @@ function MarketTab({
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, source, period, sort, minSales30d, maxSales30d, minPrice, maxPrice, brandOnly]);
+  }, [workspaceId, source, period, sort, filters]);
 
   useEffect(() => {
     void loadStored();
@@ -2416,14 +2615,19 @@ function MarketTab({
   };
 
   const adopt = async (row: MarketRow) => {
-    if (!row.id) return;
-    setAdopting(row.id);
+    setAdopting(row.id ?? row.sourceProductId);
     try {
-      const res = await fetch(`/api/market/products/${row.id}/adopt`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspaceId }),
-      });
+      const res = row.id
+        ? await fetch(`/api/market/products/${row.id}/adopt`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ workspaceId }),
+          })
+        : await fetch(`/api/market/products/adopt`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ workspaceId, row }),
+          });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to adopt");
       toast.success(`"${data.product.name}" added to Products`);
@@ -2458,6 +2662,30 @@ function MarketTab({
       setCreatorsFor(null);
     } finally {
       setCreatorsLoading(null);
+    }
+  };
+
+  const toggleAnalytics = async (row: MarketRow) => {
+    const key = row.id ?? `live:${row.sourceProductId}`;
+    if (analyticsFor === key) {
+      setAnalyticsFor(null);
+      return;
+    }
+    setAnalyticsFor(key);
+    setAnalyticsLoading(key);
+    try {
+      const url = row.id
+        ? `/api/market/products/${row.id}/analytics?workspaceId=${workspaceId}`
+        : `/api/market/products/analytics?workspaceId=${workspaceId}&source=${row.source}&sourceProductId=${row.sourceProductId}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load analytics");
+      setAnalytics((prev) => ({ ...prev, [key]: data.analytics }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load analytics");
+      setAnalyticsFor(null);
+    } finally {
+      setAnalyticsLoading(null);
     }
   };
 
@@ -2499,38 +2727,142 @@ function MarketTab({
         <Button size="sm" variant={view === "watched" ? "default" : "outline"} onClick={() => setView(view === "watched" ? "discover" : "watched")}>
           <Star className="h-4 w-4" /> Watched ({watched.length})
         </Button>
+        <Button
+          size="sm"
+          variant={showFilters || activeFilterCount > 0 ? "default" : "outline"}
+          onClick={() => setShowFilters((v) => !v)}
+          className="gap-1"
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+          Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+        </Button>
         <Button size="sm" variant="outline" onClick={() => void refreshMarket()} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
           {loading ? "Fetching…" : "Refresh"}
         </Button>
         <span className="text-xs text-muted-foreground">
-          Winning products — who climbed fastest this {period}.
+          {activeFilterCount > 0
+            ? "Products Library — filtered live search (not stored)."
+            : `Winning products — who climbed fastest this ${period}.`}
         </span>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/30 p-3">
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground">30d units min</span>
-          <Input className="h-8 w-28" inputMode="numeric" value={minSales30d} onChange={(e) => setMinSales30d(e.target.value)} />
-        </label>
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground">30d units max</span>
-          <Input className="h-8 w-28" inputMode="numeric" value={maxSales30d} onChange={(e) => setMaxSales30d(e.target.value)} />
-        </label>
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground">Price min ($)</span>
-          <Input className="h-8 w-24" inputMode="decimal" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} />
-        </label>
-        <label className="space-y-1 text-xs">
-          <span className="text-muted-foreground">Price max ($)</span>
-          <Input className="h-8 w-24" inputMode="decimal" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
-        </label>
-        <label className="flex h-8 items-center gap-2 text-sm">
-          <input type="checkbox" checked={brandOnly} onChange={(e) => setBrandOnly(e.target.checked)} />
-          Proven brand shops only
-        </label>
-        <span className="text-xs text-muted-foreground">Ads-as-top-driver: awaiting a real EchoTik attribution field.</span>
-      </div>
+      {showFilters && (
+        <Card>
+          <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <FilterField label="Price min ($)" value={filters.priceMin ?? ""} onChange={(v) => setFilter("priceMin", v)} type="number" />
+            <FilterField label="Price max ($)" value={filters.priceMax ?? ""} onChange={(v) => setFilter("priceMax", v)} type="number" />
+            <FilterField label="Commission min (%)" value={filters.commissionMin ?? ""} onChange={(v) => setFilter("commissionMin", v)} type="number" />
+            <FilterField label="Commission max (%)" value={filters.commissionMax ?? ""} onChange={(v) => setFilter("commissionMax", v)} type="number" />
+            <FilterField label="Influencers min" value={filters.influencersMin ?? ""} onChange={(v) => setFilter("influencersMin", v)} type="number" />
+            <FilterField label="Videos min" value={filters.videosMin ?? ""} onChange={(v) => setFilter("videosMin", v)} type="number" />
+            <FilterField label="Video views min" value={filters.viewsMin ?? ""} onChange={(v) => setFilter("viewsMin", v)} type="number" />
+            <FilterField label="Rating min (0–5)" value={filters.ratingMin ?? ""} onChange={(v) => setFilter("ratingMin", v)} type="number" step="0.1" />
+            <FilterField label="Comments min" value={filters.reviewsMin ?? ""} onChange={(v) => setFilter("reviewsMin", v)} type="number" />
+            <FilterField label="Total sales min" value={filters.salesMin ?? ""} onChange={(v) => setFilter("salesMin", v)} type="number" />
+            <FilterField label="30d sales min" value={filters.sales30dMin ?? ""} onChange={(v) => setFilter("sales30dMin", v)} type="number" />
+            <FilterField label="GMV min ($)" value={filters.gmvMin ?? ""} onChange={(v) => setFilter("gmvMin", v)} type="number" />
+            <FilterField label="30d GMV min ($)" value={filters.gmv30dMin ?? ""} onChange={(v) => setFilter("gmv30dMin", v)} type="number" />
+            <FilterField label="New products (days)" value={filters.newProductsDays ?? ""} onChange={(v) => setFilter("newProductsDays", v)} type="number" placeholder="e.g. 7" />
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Sales trend
+              <select
+                value={filters.salesTrend ?? ""}
+                onChange={(e) => setFilter("salesTrend", e.target.value)}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              >
+                <option value="">Any</option>
+                <option value="1">Up (7d)</option>
+                <option value="0">Flat (7d)</option>
+                <option value="2">Down (7d)</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Shop type
+              <select
+                value={filters.fromFlag ?? ""}
+                onChange={(e) => setFilter("fromFlag", e.target.value)}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              >
+                <option value="">Any</option>
+                <option value="1">Local (本土)</option>
+                <option value="2">Cross-border</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Main sales method
+              <select
+                value={filters.salesFlag ?? ""}
+                onChange={(e) => setFilter("salesFlag", e.target.value)}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              >
+                <option value="">Any</option>
+                <option value="1">Video</option>
+                <option value="2">Live</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Sort by
+              <select
+                value={filters.sortField ?? ""}
+                onChange={(e) => setFilter("sortField", e.target.value)}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              >
+                <option value="">Rank default</option>
+                <option value="sales">Total sales</option>
+                <option value="gmv">Total GMV</option>
+                <option value="sales7d">Sales 7d</option>
+                <option value="sales30d">Sales 30d</option>
+                <option value="gmv7d">GMV 7d</option>
+                <option value="gmv30d">GMV 30d</option>
+                <option value="price">Price</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Sort direction
+              <select
+                value={filters.sortType ?? ""}
+                onChange={(e) => setFilter("sortType", e.target.value)}
+                className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+              >
+                <option value="">Default</option>
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </label>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input type="checkbox" checked={filters.sShop === "1"} onChange={(e) => setFilter("sShop", e.target.checked ? "1" : "")} className="h-3.5 w-3.5" />
+                S-shop (full-managed)
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input type="checkbox" checked={filters.brandStore === "1"} onChange={(e) => setFilter("brandStore", e.target.checked ? "1" : "")} className="h-3.5 w-3.5" />
+                Brand store
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input type="checkbox" checked={filters.freeShipping === "1"} onChange={(e) => setFilter("freeShipping", e.target.checked ? "1" : "")} className="h-3.5 w-3.5" />
+                Free shipping
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input type="checkbox" checked={filters.hot === "1"} onChange={(e) => setFilter("hot", e.target.checked ? "1" : "")} className="h-3.5 w-3.5" />
+                Hot 🔥
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input type="checkbox" checked={filters.onSaleOnly === "1"} onChange={(e) => setFilter("onSaleOnly", e.target.checked ? "1" : "")} className="h-3.5 w-3.5" />
+                On sale only
+              </label>
+            </div>
+            <div className="flex items-end gap-2">
+              <Button size="sm" onClick={() => void refreshMarket()} disabled={loading}>
+                Apply filters
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearFilters}>
+                Clear
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {notice && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
@@ -2722,14 +3054,37 @@ function MarketTab({
                           )}
                           Creators
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="gap-1"
+                          onClick={() => toggleAnalytics(row)}
+                          disabled={analyticsLoading === (row.id ?? `live:${row.sourceProductId}`)}
+                        >
+                          {analyticsLoading === (row.id ?? `live:${row.sourceProductId}`) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <TrendingUp className="h-3.5 w-3.5" />
+                          )}
+                          Analytics
+                        </Button>
                         {row.productId ? (
                           <Badge className="bg-green-100 text-green-700">in Products</Badge>
-                        ) : row.id ? (
-                          <Button size="sm" variant="outline" disabled={adopting === row.id} onClick={() => adopt(row)}>
-                            {adopting === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={adopting === (row.id ?? row.sourceProductId)}
+                            onClick={() => adopt(row)}
+                          >
+                            {adopting === (row.id ?? row.sourceProductId) ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Plus className="h-3.5 w-3.5" />
+                            )}
                             Add
                           </Button>
-                        ) : null}
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -2781,6 +3136,19 @@ function MarketTab({
                             </p>
                           )}
                         </div>
+                      </td>
+                    </tr>
+                  )}
+                  {analyticsFor === (row.id ?? `live:${row.sourceProductId}`) && (
+                    <tr className="border-b bg-muted/30">
+                      <td colSpan={11} className="px-4 py-3">
+                        {analyticsLoading === (row.id ?? `live:${row.sourceProductId}`) ? (
+                          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" /> Loading business panorama…
+                          </div>
+                        ) : (
+                          <AnalyticsPanel a={analytics[row.id ?? `live:${row.sourceProductId}`]} />
+                        )}
                       </td>
                     </tr>
                   )}

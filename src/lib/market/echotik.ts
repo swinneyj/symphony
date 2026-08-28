@@ -3,22 +3,27 @@
  * Docs: https://opendocs.echotik.live  (openapi yaml per endpoint)
  * Auth: Basic (dedicated username/password from the EchoTik API dashboard).
  *
- * Endpoints used (EchoTik's documented v3 API):
- *   GET /api/v3/echotik/product/ranklist            — period rankings
- *   GET /api/v3/echotik/product/list                — product search
+ * Endpoints (all VERIFIED live 2026-08-28):
+ *   GET /api/v3/echotik/product/ranklist            — period rankings (day/week/month)
+ *   GET /api/v3/echotik/product/list                — deep product search, FULL filter surface (T+1)
+ *   GET /api/v3/echotik/product/detail              — business panorama, batch ≤10 product_ids
+ *   GET /api/v3/echotik/product/trend               — 180-day daily snapshot series
  *   GET /api/v3/echotik/product/influencer/list     — creators driving a product
  *
- * EchoTik documents Basic Auth for these API endpoints. Keep credentials
- * server-side in ECHOTIK_USERNAME / ECHOTIK_PASSWORD.
+ * Response envelope: { code: 0, message, data: <array>, requestId } — data is a
+ * DIRECT array (no .list/.products wrapper). page_size is hard-capped at 10, so
+ * fetching >10 rows requires paging through page_num.
  */
-import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./types";
+import type { MarketCreator, MarketProduct, MarketQuery, MarketSource, ProductAnalytics, TrendPoint } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 
-const BASE = "https://open.echotik.live/api/v3/echotik";
-const MAX_PAGE_SIZE = 10;
+const BASE = "https://open.echotik.live";
+const PAGE_SIZE = 10; // API hard cap
 
-function pageSize(limit: number | undefined): string {
-  return String(Math.min(Math.max(limit ?? MAX_PAGE_SIZE, 1), MAX_PAGE_SIZE));
+type ApiRow = Record<string, unknown>;
+
+function asRows(data: unknown): ApiRow[] {
+  return Array.isArray(data) ? (data as ApiRow[]) : [];
 }
 
 function authHeader(): string {
@@ -28,9 +33,13 @@ function authHeader(): string {
   return "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
 }
 
-async function get(path: string, params: Record<string, string>): Promise<any> {
-  const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${BASE}${path}?${qs}`, {
+/** Single-page GET; returns the `data` array directly (verified live). */
+async function get(path: string, params: Record<string, string | number | undefined>): Promise<ApiRow[]> {
+  const qs: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") qs[k] = String(v);
+  }
+  const res = await fetch(`${BASE}${path}?${new URLSearchParams(qs).toString()}`, {
     headers: { Authorization: authHeader(), Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
@@ -39,35 +48,95 @@ async function get(path: string, params: Record<string, string>): Promise<any> {
     throw new Error(`[echotik] ${res.status} ${path}: ${text.slice(0, 200)}`);
   }
   const json = await res.json();
-  if (typeof json?.code === "number" && json.code !== 0) {
-    throw new Error(`[echotik] API ${json.code} ${path}: ${String(json.message ?? json.msg ?? "request failed").slice(0, 200)}`);
+  if (json.code !== 0 && json.code !== 200) {
+    throw new Error(`[echotik] ${path}: code=${json.code} msg=${json.message ?? "unknown"}`);
   }
-  // EchoTik wraps data under data / data.list / data.products depending on endpoint.
-  return json?.data ?? json;
+  // EchoTik wraps the array directly under `data` (no .list/.products wrapper).
+  return asRows(json?.data ?? json);
 }
 
-/** Exchange EchoTik's private stored cover URL for a public URL valid for 24h. */
-export async function resolveCoverUrl(coverUrl: string): Promise<string> {
-  const source = new URL(coverUrl);
-  if (source.protocol !== "https:" || source.hostname !== "echosell-images.tos-ap-southeast-1.volces.com") {
-    return coverUrl;
+/** Page through until `limit` rows collected (page_size hard cap = 10). */
+async function getAll(
+  path: string,
+  params: Record<string, string | number | undefined>,
+  limit: number
+): Promise<ApiRow[]> {
+  const out: ApiRow[] = [];
+  let page = 1;
+  const per = Math.min(limit, PAGE_SIZE);
+  const maxPages = Math.ceil(limit / per) + 1;
+  while (out.length < limit && page <= maxPages) {
+    const rows = await get(path, { ...params, page_num: page, page_size: per });
+    out.push(...rows);
+    if (rows.length < per) break;
+    page += 1;
+  }
+  return out.slice(0, limit);
+}
+
+// ─── Field name maps (verified) ─────────────────────────────────────────────
+
+const RANK_FIELD: Record<MarketQuery["period"], string> = { day: "1", week: "2", month: "3" };
+
+/** product_sort_field enum (product/list): 1 sales, 2 gmv, 3 price, 4 sales7d,
+ *  5 sales30d, 6 gmv7d, 7 gmv30d. */
+const SORT_FIELD: Record<string, string> = {
+  sales: "1",
+  gmv: "2",
+  price: "3",
+  sales7d: "4",
+  sales30d: "5",
+  gmv7d: "6",
+  gmv30d: "7",
+};
+
+// ─── Ranklist (winners feed) ────────────────────────────────────────────────
+
+/** Extract the first cover URL from EchoTik's JSON-encoded cover_url field. */
+function firstCoverUrl(coverField: unknown): string | null {
+  if (typeof coverField !== "string" || coverField.trim() === "") return null;
+  const trimmed = coverField.trim();
+  if (trimmed.startsWith("http")) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    for (const item of list) {
+      if (item && typeof item.url === "string") return item.url;
+    }
+  } catch {
+    // not JSON — treat the raw string as a URL
+  }
+  return trimmed.startsWith("http") ? trimmed : null;
+}
+
+/**
+ * Exchange EchoTik's private stored cover URL for a public signed URL (24h
+ * validity). Falls back to scraping the public product page when the signed
+ * download endpoint fails. Pass either the parsed URL or the raw cover_url
+ * field (JSON-encoded array) — both are handled.
+ */
+export async function resolveCoverUrl(coverField: string): Promise<string> {
+  const rawUrl = firstCoverUrl(coverField) ?? coverField;
+  if (!/^https:\/\//.test(rawUrl)) throw new Error("[echotik] invalid cover url");
+
+  const host = new URL(rawUrl).hostname;
+  if (!host.includes("volces.com") && !host.includes("echotik.live")) {
+    return rawUrl; // already public
   }
 
   try {
-    const data = await get("/batch/cover/download", { cover_urls: coverUrl });
-    const resolved = data && typeof data === "object"
-      ? (data as Record<string, unknown>)[coverUrl] ?? Object.values(data as Record<string, unknown>)[0]
-      : null;
-    if (typeof resolved === "string") {
-      const destination = new URL(resolved);
-      if (destination.protocol === "https:") return destination.toString();
+    const data = await get("/api/v3/echotik/batch/cover/download", { cover_urls: rawUrl });
+    for (const entry of data) {
+      if (entry && typeof entry === "object") {
+        const mapped = Object.values(entry)[0];
+        if (typeof mapped === "string" && mapped.startsWith("https://")) return mapped;
+      }
     }
   } catch {
-    // Some EchoTik accounts return no mapping for covers that are nevertheless
-    // available through the public product page. Fall through to that source.
+    // fall through to public page scrape
   }
 
-  const productId = source.pathname.match(/\/product-cover\/\d+\/(\d+)_/)?.[1];
+  const productId = new URL(rawUrl).pathname.match(/\/product-cover\/\d+\/(\d+)_/)?.[1];
   if (!productId) throw new Error("[echotik] could not identify cover product");
   const page = await fetch(`https://www.echotik.live/products/${productId}`, {
     headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0 Symphony/1.0" },
@@ -83,153 +152,310 @@ export async function resolveCoverUrl(coverUrl: string): Promise<string> {
   return match[0];
 }
 
-/** Ranklist → "who climbed fastest" per period. THE winning-product feed. */
+/** Ranklist → "who climbed fastest" per period. THE winning-product feed.
+ * Falls back to the product library when ranking snapshots are briefly
+ * unavailable (daily rollover) or the feed errors. */
 export async function fetchWinningProducts(query: MarketQuery): Promise<MarketProduct[]> {
-  // TODO_VERIFY: parameter names for ranklist (product_rank_field=1 hot-sales,
-  // 2 creator-promoted), region codes, category params.
-  const rankType = query.period === "day" ? 1 : query.period === "week" ? 2 : 3;
-  const date = new Date().toISOString().slice(0, 10);
-  const hasProductFilters =
-    query.minSales30d != null || query.maxSales30d != null ||
-    query.minPrice != null || query.maxPrice != null || query.brandOnly;
+  // T+1 data: the freshest completed ranking day is yesterday.
+  const periodDays = query.period === "day" ? 1 : query.period === "week" ? 7 : 30;
+  const date = new Date(Date.now() - periodDays * 86_400_000).toISOString().slice(0, 10);
+  const rankType = RANK_FIELD[query.period] ?? "1";
   try {
-    if (hasProductFilters) return searchProducts(query);
-    const data = await get("/product/ranklist", {
-      date,
-      region: query.region ?? "US",
-      rank_type: String(rankType),
-      product_rank_field: "1", // total_sale_cnt
-      page_num: "1",
-      ...(query.category ? { product_category_id: query.category } : {}),
-      page_size: pageSize(query.limit),
-    });
-
-    const rows = responseRows(data);
-    if (rows.length > 0) return rows.map((r, i) => normalize(r, i + 1, query.period));
+    const rows = await getAll(
+      "/api/v3/echotik/product/ranklist",
+      {
+        date,
+        region: query.region ?? "US",
+        rank_type: rankType,
+        product_rank_field: "1", // total_sale_cnt (hot-sales)
+        ...(query.category ? { category_id: query.category } : {}),
+        ...(query.categoryL2 ? { category_l2_id: query.categoryL2 } : {}),
+        ...(query.categoryL3 ? { category_l3_id: query.categoryL3 } : {}),
+      },
+      query.limit ?? 50
+    );
+    if (rows.length > 0) {
+      return rows.map((r, i) => normalizeRanklist(r, i + 1, query.period, query.region ?? "US"));
+    }
   } catch {
-    // Ranking snapshots can be briefly unavailable while the daily feed rolls
-    // over. The product list below is still a valid, useful research feed.
+    // fall through to the product library
   }
-
-  // EchoTik can publish product rankings after the daily snapshot closes.
-  // Keep the Market tab useful during that window by falling back to the
-  // documented product list, which is available in the trial account.
   return searchProducts(query);
 }
 
-/** Deep product search: 30-day GMV, commission, creator/video counts. */
-export async function searchProducts(query: MarketQuery): Promise<MarketProduct[]> {
-  const data = await get("/product/list", {
-    region: query.region ?? "US",
-    ...(query.category ? { category_id: query.category } : {}),
-    ...(query.minSales30d != null ? { min_total_sale_30d_cnt: String(query.minSales30d) } : {}),
-    ...(query.maxSales30d != null ? { max_total_sale_30d_cnt: String(query.maxSales30d) } : {}),
-    ...(query.minPrice != null ? { min_spu_avg_price: String(query.minPrice) } : {}),
-    ...(query.maxPrice != null ? { max_spu_avg_price: String(query.maxPrice) } : {}),
-    ...(query.brandOnly ? { is_s_shop: "1" } : {}),
-    product_sort_field: "2", // total_sale_gmv_amt
-    sort_type: "1", // descending
-    page_num: "1",
-    page_size: pageSize(query.limit),
-  });
-  const rows = responseRows(data);
-  return rows.map((r, i) => normalize(r, i + 1, query.period));
-}
-
-function normalize(r: Record<string, any>, fallbackRank: number, period: MarketQuery["period"]): MarketProduct {
-  // Field-name aliases across EchoTik endpoint versions.
-  const pick = (...keys: string[]) => {
-    for (const k of keys) if (r[k] !== undefined && r[k] !== null) return r[k];
-    return null;
-  };
-  const price = pick("price", "sale_price", "min_price", "price_min");
-  const priceMax = pick("price_max", "max_price", "origin_price");
+function normalizeRanklist(r: ApiRow, rank: number, period: MarketQuery["period"], region: string): MarketProduct {
+  const price = num(r.spu_avg_price) ?? num(r.min_price);
+  const priceMax = num(r.max_price) ?? price;
   return {
     source: "echotik" as MarketSource,
-    sourceProductId: String(pick("product_id", "id") ?? fallbackRank),
-    name: String(pick("product_name", "title", "name") ?? "Unknown product"),
-    imageUrl: normalizeImageUrl(pick("cover_url", "product_image", "image_url", "cover", "main_image")),
-    priceMin: price !== null ? Number(price) : numOrNull(pick("spu_avg_price")),
-    priceMax: priceMax !== null ? Number(priceMax) : price !== null ? Number(price) : numOrNull(pick("spu_avg_price")),
-    currency: pick("currency", "currency_code") ?? "USD",
-    categoryL1: pick("category_name", "category_l1_name", "category_name_l1", "l1_category") ?? null,
-    categoryL2: pick("category_l2_name", "category_name_l2", "l2_category") ?? null,
-    categoryL3: pick("category_l3_name", "category_name_l3", "l3_category") ?? null,
-    region: pick("region", "country_code") ?? "US",
-    rank: pick("rank", "rank_no") ?? fallbackRank,
+    sourceProductId: String(r.product_id ?? ""),
+    name: String(r.product_name ?? "Unknown product"),
+    imageUrl: null, // ranklist has no cover; detail/list carries cover_url
+    priceMin: price,
+    priceMax: priceMax,
+    currency: "USD",
+    categoryL1: null,
+    categoryL2: null,
+    categoryL3: null,
+    region: strOrNull(r.region) ?? region,
+    rank,
     rankPeriod: period,
-    sales7d: intOrNull(pick("total_sale_7d_cnt", "sales_7d", "sales_increment", "seven_day_sales")),
-    sales30d: intOrNull(pick("total_sale_cnt", "sales_30d", "total_sales", "thirty_day_sales")),
-    gmv30d: numOrNull(pick("total_sale_gmv_amt", "gmv_30d", "gmv", "total_gmv", "gmv_increment")),
-    growthRate: numOrNull(pick("growth_rate", "sales_growth", "increase_rate")),
-    commissionRate: numOrNull(pick("commission_rate", "commission")),
-    videoCount: intOrNull(pick("total_video_cnt", "video_count", "video_num", "sales_video_count")),
-    creatorCount: intOrNull(pick("total_ifl_cnt", "creator_count", "creator_num", "affiliate_count")),
-    isHot: Boolean(pick("is_hot", "hot_flag", "is_boom")),
+    sales7d: null,
+    sales30d: num(r.total_sale_cnt) ?? null,
+    gmv30d: num(r.total_sale_gmv_amt) ?? null,
+    growthRate: null,
+    commissionRate: num(r.product_commission_rate) ?? null,
+    videoCount: num(r.total_video_cnt) ?? null,
+    creatorCount: num(r.total_ifl_cnt) ?? null,
+    isHot: false,
     momentumScore: null,
-    metadata: { raw: r },
+    metadata: { raw: r, endpoint: "ranklist" },
   };
 }
 
-function intOrNull(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : null;
-}
-function numOrNull(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function responseRows(data: unknown): Record<string, any>[] {
-  if (Array.isArray(data)) return data as Record<string, any>[];
-  if (!data || typeof data !== "object") return [];
-  const value = data as Record<string, unknown>;
-  const rows = value.list ?? value.products ?? value.influencers ?? value.items ?? value.data;
-  return Array.isArray(rows) ? rows as Record<string, any>[] : [];
-}
-
-function normalizeImageUrl(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  if (!value.trim().startsWith("[")) return value;
-  try {
-    const parsed = JSON.parse(value) as Array<{ url?: unknown }>;
-    return typeof parsed[0]?.url === "string" ? parsed[0].url : null;
-  } catch {
-    return null;
-  }
-}
+// ─── Product list (products library, full filter surface) ───────────────────
 
 /**
- * Creators driving a specific product (affiliate layer).
- * GET /api/v2/product/influencer/list?product_id=...
- * Returns the creator pool for a product: identity, followers, engagement,
- * and per-product sales/video contribution.
+ * Deep product search mirroring the EchoTik Products Library UI.
+ * Filters (verified param names): price band, commission rate, rating (product
+ * experience points), review count (comments), influencer/video/video-views
+ * counts, total + 30d sales, total + 30d GMV, 7-day sales trend, S-shop
+ * (full-managed), free shipping, brand store, local/cross-border shop type,
+ * hot flag, on-sale only, sales method (video/live), new-product (first crawl).
  */
+export async function searchProducts(query: MarketQuery): Promise<MarketProduct[]> {
+  const rows = await getAll(
+    "/api/v3/echotik/product/list",
+    {
+      region: query.region ?? "US",
+      ...(query.category ? { category_id: query.category } : {}),
+      ...(query.categoryL2 ? { category_l2_id: query.categoryL2 } : {}),
+      ...(query.categoryL3 ? { category_l3_id: query.categoryL3 } : {}),
+      ...(query.priceMin != null ? { min_spu_avg_price: query.priceMin } : {}),
+      ...(query.priceMax != null ? { max_spu_avg_price: query.priceMax } : {}),
+      ...(query.commissionMin != null ? { min_product_commission_rate: query.commissionMin } : {}),
+      ...(query.commissionMax != null ? { max_product_commission_rate: query.commissionMax } : {}),
+      ...(query.influencersMin != null ? { min_total_ifl_cnt: query.influencersMin } : {}),
+      ...(query.influencersMax != null ? { max_total_ifl_cnt: query.influencersMax } : {}),
+      ...(query.videosMin != null ? { min_total_video_cnt: query.videosMin } : {}),
+      ...(query.videosMax != null ? { max_total_video_cnt: query.videosMax } : {}),
+      ...(query.viewsMin != null ? { min_total_views_cnt: query.viewsMin } : {}),
+      ...(query.viewsMax != null ? { max_total_views_cnt: query.viewsMax } : {}),
+      ...(query.ratingMin != null ? { min_product_rating: query.ratingMin } : {}),
+      ...(query.ratingMax != null ? { max_product_rating: query.ratingMax } : {}),
+      ...(query.reviewsMin != null ? { min_review_count: query.reviewsMin } : {}),
+      ...(query.reviewsMax != null ? { max_review_count: query.reviewsMax } : {}),
+      ...(query.salesMin != null ? { min_total_sale_cnt: query.salesMin } : {}),
+      ...(query.salesMax != null ? { max_total_sale_cnt: query.salesMax } : {}),
+      ...(query.sales30dMin != null ? { min_total_sale_30d_cnt: query.sales30dMin } : {}),
+      ...(query.sales30dMax != null ? { max_total_sale_30d_cnt: query.sales30dMax } : {}),
+      ...(query.gmvMin != null ? { min_total_sale_gmv_amt: query.gmvMin } : {}),
+      ...(query.gmvMax != null ? { max_total_sale_gmv_amt: query.gmvMax } : {}),
+      ...(query.gmv30dMin != null ? { min_total_sale_gmv_30d_amt: query.gmv30dMin } : {}),
+      ...(query.gmv30dMax != null ? { max_total_sale_gmv_30d_amt: query.gmv30dMax } : {}),
+      ...(query.salesTrend != null ? { sales_trend_flag: query.salesTrend } : {}),
+      ...(query.isSShop != null ? { is_s_shop: query.isSShop ? 1 : 0 } : {}),
+      ...(query.freeShipping != null ? { free_shipping: query.freeShipping ? 1 : 0 } : {}),
+      ...(query.fromFlag != null ? { from_flag: query.fromFlag } : {}), // 1=local 2=cross-border
+      ...(query.isHot != null ? { is_hot: query.isHot ? 1 : 0 } : {}),
+      ...(query.brandStore != null ? { shop_type: query.brandStore ? 1 : 0 } : {}),
+      ...(query.onSaleOnly ? { off_mark: 0 } : {}), // 0 = on sale (filters out delisted)
+      ...(query.salesFlag != null ? { sales_flag: query.salesFlag } : {}), // 1=video 2=live
+      ...(query.newProductsDays != null && query.newProductsDays > 0
+        ? { min_first_crawl_dt: yyyymmdd(Date.now() - query.newProductsDays * 86_400_000) }
+        : {}),
+      product_sort_field: SORT_FIELD[query.sortField ?? "sales30d"],
+      sort_type: query.sortType === "asc" ? 0 : 1,
+    },
+    query.limit ?? 50
+  );
+  return rows.map((r, i) => normalizeLibrary(r, i + 1, query.region ?? "US"));
+}
+
+function normalizeLibrary(r: ApiRow, rank: number, region: string): MarketProduct {
+  const price = num(r.spu_avg_price) ?? num(r.min_price);
+  const priceMax = num(r.max_price) ?? price;
+  return {
+    source: "echotik" as MarketSource,
+    sourceProductId: String(r.product_id ?? ""),
+    name: String(r.product_name ?? "Unknown product"),
+    imageUrl: firstCoverUrl(r.cover_url) ?? null,
+    priceMin: price,
+    priceMax: priceMax,
+    currency: "USD",
+    categoryL1: null,
+    categoryL2: null,
+    categoryL3: null,
+    region: strOrNull(r.region) ?? region,
+    rank,
+    rankPeriod: "day",
+    sales7d: num(r.total_sale_7d_cnt) ?? null,
+    sales30d: num(r.total_sale_30d_cnt) ?? num(r.total_sale_cnt) ?? null,
+    gmv30d: num(r.total_sale_gmv_30d_amt) ?? num(r.total_sale_gmv_amt) ?? null,
+    growthRate: growthFromTrend(r), // derived: 7d vs 30d pace
+    commissionRate: num(r.product_commission_rate) ?? null,
+    videoCount: num(r.total_video_cnt) ?? null,
+    creatorCount: num(r.total_ifl_cnt) ?? null,
+    isHot: r.is_hot === 1 || r.is_hot === true,
+    momentumScore: null,
+    metadata: {
+      raw: r,
+      endpoint: "list",
+      rating: num(r.product_rating) ?? null,
+      reviewCount: num(r.review_count) ?? null,
+      liveCount: num(r.total_live_cnt) ?? null,
+      viewsCount: num(r.total_views_cnt) ?? null,
+      salesTrend: num(r.sales_trend_flag) ?? null,
+      firstCrawlDate: strOrNull(r.first_crawl_dt),
+      isSShop: r.is_s_shop === 1 || r.is_s_shop === true,
+      freeShipping: r.free_shipping === 1 || r.free_shipping === true,
+      brandStore: r.shop_type === 1 || r.shop_type === true,
+      fromFlag: num(r.from_flag) ?? null,
+      onSale: r.off_mark === 0,
+      sellerId: r.seller_id ?? null,
+      saleProps: r.sale_props ?? null,
+      discount: num(r.discount) ?? null,
+      shippingPrice: num(r.shipping_price) ?? null,
+    },
+  };
+}
+
+/** Approximate growth: 7d daily pace vs 30d daily pace, minus 1. */
+function growthFromTrend(r: ApiRow): number | null {
+  const s7 = num(r.total_sale_7d_cnt);
+  const s30 = num(r.total_sale_30d_cnt);
+  if (s7 == null || s30 == null || s30 <= 0) return null;
+  return Number(((s7 / 7) / (s30 / 30) - 1).toFixed(3));
+}
+
+// ─── Product analytics (drill-down: panorama + trend) ────────────────────────
+
+/**
+ * Business panorama for up to 10 products (detail endpoint): rating, reviews,
+ * seller, and the 1/7/15/30/60/90-day live/video/influencer/sales/GMV breakdowns.
+ */
+export async function fetchProductDetails(productIds: string[]): Promise<MarketProduct[]> {
+  if (productIds.length === 0) return [];
+  const rows = await get("/api/v3/echotik/product/detail", {
+    product_ids: productIds.slice(0, 10).join(","),
+  });
+  return rows.map((r) => normalizeLibrary(r, 1, String(r.region ?? "US")));
+}
+
+/** Daily snapshot series (trend endpoint). API rejects start_date ≥179 days back
+ * ("must be within 180 days" is strict) — default 170 days to stay inside. */
+export async function fetchProductTrend(productId: string, days = 170): Promise<TrendPoint[]> {
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 86_400_000);
+  const rows = await getAll(
+    "/api/v3/echotik/product/trend",
+    {
+      product_id: productId,
+      start_date: start.toISOString().slice(0, 10),
+      end_date: end.toISOString().slice(0, 10),
+    },
+    200
+  );
+  return rows
+    .map((r) => ({
+      date: String(r.dt ?? ""),
+      price: num(r.spu_avg_price) ?? null,
+      influencers: num(r.total_ifl_cnt) ?? null,
+      liveCount: num(r.total_live_cnt) ?? null,
+      videoCount: num(r.total_video_cnt) ?? null,
+      sales1d: num(r.total_sale_1d_cnt) ?? null,
+      salesTotal: num(r.total_sale_cnt) ?? null,
+      gmv1d: num(r.total_sale_gmv_1d_amt) ?? null,
+      gmvTotal: num(r.total_sale_gmv_amt) ?? null,
+    }))
+    .filter((t) => t.date);
+}
+
+/** Combined drill-down: detail panorama (batch) + trend series. */
+export async function fetchProductAnalytics(productId: string): Promise<ProductAnalytics> {
+  const [detail] = await fetchProductDetails([productId]);
+  const trend = await fetchProductTrend(productId);
+  const raw = (detail?.metadata?.raw ?? {}) as ApiRow;
+  const periods = [1, 7, 15, 30, 60, 90].map((p) => ({
+    period: p,
+    sales: num(raw[`total_sale_${p}d_cnt`]) ?? null,
+    gmv: num(raw[`total_sale_gmv_${p}d_amt`]) ?? null,
+    videoCnt: num(raw[`total_video_${p}d_cnt`]) ?? null,
+    videoSales: num(raw[`total_video_sale_${p}d_cnt`]) ?? null,
+    liveCnt: num(raw[`total_live_${p}d_cnt`]) ?? null,
+    liveSales: num(raw[`total_live_sale_${p}d_cnt`]) ?? null,
+    // influencer period splits are live/video-only; sum both.
+    influencers:
+      num(raw[`total_ifl_live_${p}d_cnt`]) ?? num(raw[`total_ifl_video_${p}d_cnt`]) ?? null,
+  }));
+  return {
+    productId,
+    name: detail?.name ?? null,
+    imageUrl: detail?.imageUrl ?? null,
+    priceMin: detail?.priceMin ?? null,
+    priceMax: detail?.priceMax ?? null,
+    commissionRate: detail?.commissionRate ?? null,
+    rating: num(raw.product_rating) ?? null,
+    reviewCount: num(raw.review_count) ?? null,
+    sellerId: strOrNull(raw.seller_id),
+    salesTrend: num(raw.sales_trend_flag) ?? null,
+    firstCrawlDate: strOrNull(raw.first_crawl_dt),
+    isSShop: raw.is_s_shop === 1 || raw.is_s_shop === true,
+    freeShipping: raw.free_shipping === 1 || raw.free_shipping === true,
+    brandStore: raw.shop_type === 1 || raw.shop_type === true,
+    fromFlag: num(raw.from_flag) ?? null,
+    totalSales: num(raw.total_sale_cnt) ?? null,
+    totalGmv: num(raw.total_sale_gmv_amt) ?? null,
+    panorama: periods,
+    trend,
+  };
+}
+
+// ─── Creators (affiliate layer) ──────────────────────────────────────────────
+
+/** Creators driving a product (product/influencer/list). */
 export async function fetchProductCreators(
   sourceProductId: string,
   limit = 20
 ): Promise<MarketCreator[]> {
-  // TODO_VERIFY: response/param field names for influencer list.
-  const data = await get("/product/influencer/list", {
-    product_id: sourceProductId,
-    page_num: "1",
-    page_size: pageSize(limit),
-  });
-
-  const rows = responseRows(data);
+  const rows = await getAll(
+    "/api/v3/echotik/product/influencer/list",
+    {
+      product_id: sourceProductId,
+      product_influencer_sort_field: 1, // TODO_VERIFY: enum (1 likely by sales)
+      sort_type: 1,
+    },
+    limit
+  );
   return rows.map((r) => ({
     source: "echotik" as MarketSource,
     sourceCreatorId: String(r?.user_id ?? r?.unique_id ?? r?.id ?? ""),
     name: String(r?.nickname ?? r?.unique_id ?? r?.name ?? "Unknown"),
-    avatarUrl: r?.avatar ?? r?.avatar_url ?? null,
-    followers: numOrNull(r?.follower_count ?? r?.followers ?? r?.follower_cnt),
-    engagementRate: numOrNull(r?.engagement_rate ?? r?.interaction_rate),
-    region: r?.region ?? null,
-    rating: numOrNull(r?.rating ?? r?.score),
-    videoCount: numOrNull(r?.video_count ?? r?.product_video_count),
-    salesForProduct: numOrNull(r?.sales ?? r?.product_sales),
-    metadata: { raw: r },
+    avatarUrl: strOrNull(r?.avatar ?? r?.avatar_url),
+    followers: num(r?.follower_count ?? r?.followers),
+    engagementRate: num(r?.engagement_rate ?? r?.interaction_rate),
+    region: strOrNull(r?.region),
+    rating: num(r?.rating ?? r?.score),
+    videoCount: num(r?.video_count ?? r?.product_video_count),
+    salesForProduct: num(r?.sales ?? r?.product_sales),
+    metadata: { raw: r, endpoint: "influencer/list" },
   }));
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function num(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function strOrNull(v: unknown): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  return String(v);
+}
+
+function yyyymmdd(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 }
