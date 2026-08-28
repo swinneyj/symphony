@@ -2541,7 +2541,7 @@ function MarketTab({
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, source, period, sort, filters]);
+  }, [workspaceId, source, period, sort]);
 
   const refreshMarket = useCallback(async () => {
     setLoading(true);

@@ -176,18 +176,82 @@ export async function GET(request: Request) {
       .select()
       .from(marketProducts)
       .where(
-        and(eq(marketProducts.workspaceId, workspaceId), eq(marketProducts.source, source))
+        and(
+          eq(marketProducts.workspaceId, workspaceId),
+          eq(marketProducts.source, source),
+          // Latest snapshot only — mixing dates shows the same product twice.
+          eq(
+            marketProducts.snapshotDate,
+            db
+              .select({ d: marketProducts.snapshotDate })
+              .from(marketProducts)
+              .where(
+                and(
+                  eq(marketProducts.workspaceId, workspaceId),
+                  eq(marketProducts.source, source)
+                )
+              )
+              .orderBy(desc(marketProducts.snapshotDate))
+              .limit(1)
+          )
+        )
       )
-      .orderBy(desc(marketProducts.snapshotDate), desc(orderByCol))
+      .orderBy(desc(orderByCol))
       .limit(limit);
     return NextResponse.json({ rows, source, dryRun: false });
   } catch (error) {
     console.error("Error in market products:", error);
     const msg = error instanceof Error ? error.message : "Internal server error";
-    // Credential gaps are expected until Slippaz provisions sources — surface
+    // Credential gaps are expected until sources are provisioned — surface
     // them as 200-with-notice so the UI can guide, not crash.
     if (msg.includes("credentials missing")) {
       return NextResponse.json({ rows: [], notice: msg }, { status: 200 });
+    }
+    // EchoTik daily usage quota: live search/refresh can't run. Fall back to
+    // the latest stored snapshot so the page stays usable until the limit
+    // resets (daily), instead of a hard 500.
+    if (/usage limit|quota/i.test(msg)) {
+      const fbParams = new URL(request.url).searchParams;
+      const fbWs = fbParams.get("workspaceId");
+      const fbSource = (fbParams.get("source") ?? "echotik") as MarketSource;
+      const fbLimit = Math.min(parseInt(fbParams.get("limit") ?? "50", 10), 100);
+      if (fbWs) {
+        const fallback = await db
+          .select()
+          .from(marketProducts)
+          .where(
+            and(
+              eq(marketProducts.workspaceId, fbWs),
+              eq(marketProducts.source, fbSource),
+              eq(
+                marketProducts.snapshotDate,
+                db
+                  .select({ d: marketProducts.snapshotDate })
+                  .from(marketProducts)
+                  .where(
+                    and(
+                      eq(marketProducts.workspaceId, fbWs),
+                      eq(marketProducts.source, fbSource)
+                    )
+                  )
+                  .orderBy(desc(marketProducts.snapshotDate))
+                  .limit(1)
+              )
+            )
+          )
+          .orderBy(desc(marketProducts.rank))
+          .limit(fbLimit);
+        return NextResponse.json(
+          {
+            rows: fallback,
+            source: fbSource,
+            dryRun: false,
+            stored: true,
+            notice: "EchoTik daily usage limit reached — showing the latest stored data. The limit resets daily; try again later.",
+          },
+          { status: 200 }
+        );
+      }
     }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
