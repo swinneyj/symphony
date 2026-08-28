@@ -2547,7 +2547,7 @@ function MarketTab({
     setLoading(true);
     setNotice(null);
     try {
-      const params = new URLSearchParams({ workspaceId, source, period, sort, limit: "50", refresh: "1" });
+      const params = new URLSearchParams({ workspaceId, source, period, sort, limit: "20", refresh: "1" });
       for (const [k, v] of Object.entries(filters)) {
         if (v === "") continue;
         // commission stored as % in the UI, sent as fraction to the API.
