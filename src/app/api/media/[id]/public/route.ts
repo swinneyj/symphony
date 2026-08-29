@@ -28,17 +28,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (asset.url.startsWith("https://") && asset.url.includes("blob.vercel-storage.com")) {
     const token = blobToken();
     if (!token) return new Response("Blob token missing", { status: 500 });
-    const upstream = await fetch(asset.url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!upstream.ok) return new Response("Upstream error", { status: 502 });
+    const upstreamHeaders: Record<string, string> = { Authorization: `Bearer ${token}` };
+    // Forward Range (video playback/seeking needs 206 partial content).
+    const range = request.headers.get("range");
+    if (range) upstreamHeaders["Range"] = range;
+    const upstream = await fetch(asset.url, { headers: upstreamHeaders });
+    if (!upstream.ok && upstream.status !== 206) return new Response("Upstream error", { status: 502 });
+    const respHeaders: Record<string, string> = {
+      "Content-Type": asset.mimeType ?? "application/octet-stream",
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=86400",
+    };
+    const contentRange = upstream.headers.get("content-range");
+    if (contentRange) respHeaders["Content-Range"] = contentRange;
+    const contentLength = upstream.headers.get("content-length") ?? String(asset.fileSize ?? "");
+    if (contentLength) respHeaders["Content-Length"] = contentLength;
     return new Response(upstream.body, {
-      status: 200,
-      headers: {
-        "Content-Type": asset.mimeType ?? "application/octet-stream",
-        "Content-Length": String(upstream.headers.get("content-length") ?? asset.fileSize ?? ""),
-        "Cache-Control": "public, max-age=86400",
-      },
+      status: range ? 206 : 200,
+      headers: respHeaders,
     });
   }
 

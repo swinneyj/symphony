@@ -57,7 +57,7 @@ function formatDate(iso: string | null | undefined): string {
 
 function previewUrl(item: MediaItem): string | null {
   // Private Blob assets are served through the authenticated public proxy.
-  if (item.mediaType === "image" && item.id) return `/api/media/${item.id}/public`;
+  if (item.id) return `/api/media/${item.id}/public`;
   return null;
 }
 
@@ -370,7 +370,16 @@ export default function MediaPage() {
                   className="w-full text-left"
                 >
                   <div className="aspect-square relative bg-muted">
-                    {preview ? (
+                    {preview && isVideo(item) ? (
+                      <video
+                        src={preview}
+                        muted
+                        loop
+                        playsInline
+                        preload="metadata"
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                    ) : preview ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={preview}
@@ -429,7 +438,16 @@ export default function MediaPage() {
               className="flex w-full items-center gap-4 border-b last:border-b-0 px-4 py-3 text-left transition-colors hover:bg-accent/50"
             >
               <div className="h-12 w-12 shrink-0 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
-                {previewUrl(item) ? (
+                {previewUrl(item) && isVideo(item) ? (
+                  <video
+                    src={previewUrl(item)!}
+                    muted
+                    loop
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full object-cover"
+                  />
+                ) : previewUrl(item) ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={previewUrl(item)!}
@@ -469,7 +487,14 @@ export default function MediaPage() {
             <div className="grid gap-6 sm:grid-cols-2">
               {/* Preview */}
               <div className="aspect-square rounded-lg bg-muted flex items-center justify-center overflow-hidden">
-                {previewUrl(selectedMedia) ? (
+                {selectedMedia.mediaType === "video" && selectedMedia.id ? (
+                  <video
+                    src={previewUrl(selectedMedia)!}
+                    controls
+                    playsInline
+                    className="h-full w-full object-contain"
+                  />
+                ) : previewUrl(selectedMedia) ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={previewUrl(selectedMedia)!}

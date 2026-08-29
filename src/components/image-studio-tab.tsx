@@ -24,6 +24,7 @@ import {
   Wand2,
   X,
   Download,
+  Library,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -159,6 +160,41 @@ function useBatchPoll(batchId: string | null, donePredicate: (b: BatchDetail) =>
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchId]);
+}
+
+// ─── Media library save ─────────────────────────────────────────────────────
+
+/** Registers an Image Studio asset in the workspace media library (dedup by URL). */
+async function saveToLibrary(opts: {
+  workspaceId: string;
+  url: string;
+  kind: "scene" | "footage" | "final";
+  productName?: string;
+}): Promise<boolean> {
+  try {
+    const isVideo = opts.kind !== "scene";
+    const res = await fetch("/api/media", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceId: opts.workspaceId,
+        fileName: `${opts.productName ? `${opts.productName.replace(/[^\w\- ]+/g, "").trim().slice(0, 40)} — ` : ""}${opts.kind === "scene" ? "AI scene image" : opts.kind === "footage" ? "AI video" : "Final video (reverse + text)"}.${isVideo ? "mp4" : "png"}`,
+        mediaType: isVideo ? "video" : "image",
+        mimeType: isVideo ? "video/mp4" : "image/png",
+        url: opts.url,
+        duration: isVideo ? undefined : undefined,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      console.warn("media save failed", res.status, data);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn("media save error", e);
+    return false;
+  }
 }
 
 // ─── Main tab ───────────────────────────────────────────────────────────────
@@ -483,6 +519,27 @@ export function ImageStudioTab({
                             <Download className="h-3.5 w-3.5" /> Download
                           </a>
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="w-full"
+                          onClick={async () => {
+                            if (
+                              await saveToLibrary({
+                                workspaceId,
+                                url: j.sceneImageUrl!,
+                                kind: "scene",
+                                productName: product?.name,
+                              })
+                            ) {
+                              toast.success("Saved to media library");
+                            } else {
+                              toast.error("Failed to save — already in library?");
+                            }
+                          }}
+                        >
+                          <Library className="h-3.5 w-3.5" /> Save to library
+                        </Button>
                       </>
                     ) : (
                       <div className="flex aspect-[9/16] w-full items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">
@@ -639,6 +696,27 @@ export function ImageStudioTab({
                                 <Download className="h-3.5 w-3.5" /> Download
                               </a>
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="w-full"
+                              onClick={async () => {
+                                if (
+                                  await saveToLibrary({
+                                    workspaceId,
+                                    url: j.footageUrl!,
+                                    kind: "footage",
+                                    productName: product?.name,
+                                  })
+                                ) {
+                                  toast.success("Saved to media library");
+                                } else {
+                                  toast.error("Failed to save — already in library?");
+                                }
+                              }}
+                            >
+                              <Library className="h-3.5 w-3.5" /> Save to library
+                            </Button>
                           </>
                         ) : (
                           <div className="flex aspect-[9/16] w-full items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">
@@ -746,6 +824,26 @@ export function ImageStudioTab({
                       <a href={`/api/image-studio/jobs/${asmResult.id}/asset?kind=final&download=1`}>
                         <Download className="h-3.5 w-3.5" /> Download
                       </a>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        if (
+                          await saveToLibrary({
+                            workspaceId,
+                            url: asmResult.finalUrl!,
+                            kind: "final",
+                            productName: product?.name,
+                          })
+                        ) {
+                          toast.success("Saved to media library");
+                        } else {
+                          toast.error("Failed to save — already in library?");
+                        }
+                      }}
+                    >
+                      <Library className="h-3.5 w-3.5" /> Save to library
                     </Button>
                   </div>
                 </div>
