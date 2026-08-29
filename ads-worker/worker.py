@@ -102,6 +102,12 @@ def mark_transcribing(cur, source_id):
     )
 
 
+class TikTokLinkError(RuntimeError):
+    """Definitive TikTok link problem (product page, no video id) — NOT a
+    transient network failure. Re-raise instead of falling back to yt-dlp,
+    whose bot-wall errors (curl 28 etc.) mask the real reason."""
+
+
 def download_tiktok_direct(url, workdir):
     """TikTok video download that works from datacenter IPs.
 
@@ -123,13 +129,13 @@ def download_tiktok_direct(url, workdir):
     resp = session.get(url, timeout=30)
     resp.raise_for_status()
     if "/view/product/" in resp.url:
-        raise RuntimeError(
-            "This is a TikTok Shop product link, not a video — product resolution "
-            "isn't wired up yet. Paste an ad video URL or upload the file."
+        raise TikTokLinkError(
+            "This is a TikTok Shop product link, not a video — paste the "
+            "video link instead, or use the Shop import flow."
         )
     m = re.search(r"/video/(\d+)", resp.url)
     if not m:
-        raise RuntimeError(f"no TikTok video id found at {resp.url[:120]}")
+        raise TikTokLinkError(f"no TikTok video id found at {resp.url[:120]}")
     page = resp.text
     if m.group(1) not in page:  # short-link interstitial — refetch canonical page
         page = session.get(resp.url, timeout=30).text
@@ -226,6 +232,10 @@ def download_video(url, workdir, platform, blob_token):
         # direct page-parse path works (see download_tiktok_direct).
         try:
             return download_tiktok_direct(url, workdir)
+        except TikTokLinkError:
+            # Definitive link problem — surface the real reason, don't mask
+            # it with yt-dlp's bot-wall curl error.
+            raise
         except Exception as direct_err:  # noqa: BLE001 — fall back to yt-dlp
             print(
                 f"[ads-worker] direct tiktok download failed, falling back to yt-dlp: {direct_err}",
@@ -444,6 +454,17 @@ def extract_mp3(video_path, workdir):
     return mp3_path
 
 
+def strip_audio(video_path, workdir):
+    """ffmpeg: video → same video, no audio track (fast, stream-copied video)."""
+    muted_path = os.path.join(workdir, "muted.mp4")
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", video_path, "-an",
+         "-c:v", "copy", "-movflags", "+faststart", muted_path],
+        check=True, timeout=300,
+    )
+    return muted_path
+
+
 def detect_platform(url):
     if "tiktok.com" in url:
         return "tiktok"
@@ -494,7 +515,7 @@ def claim_downloads(cur, limit):
           LIMIT %s
           FOR UPDATE SKIP LOCKED
         )
-        RETURNING id, workspace_id, source_url, platform, want_audio, created_by_id
+        RETURNING id, workspace_id, source_url, platform, want_audio, mute_video, created_by_id
         """,
         (limit,),
     )
@@ -515,16 +536,19 @@ def requeue_stale_downloads(cur):
     return cur.rowcount
 
 
-def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio, created_by):
+def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio, mute_video, created_by):
     workdir = tempfile.mkdtemp(prefix="dl-worker-")
     try:
         # TikTok → DC-safe direct path; other platforms → yt-dlp impersonation.
         video_path, title, author = download_video(source_url, workdir, platform, BLOB_TOKEN)
-        video_url = blob_put(f"downloads/{dl_id}.mp4", open(video_path, "rb").read(), "video/mp4")
         audio_url = None
         if want_audio:
             mp3_path = extract_mp3(video_path, workdir)
             audio_url = blob_put(f"downloads/{dl_id}.mp3", open(mp3_path, "rb").read(), "audio/mpeg")
+        if mute_video:
+            # Strip audio from the stored mp4 (MP3 above keeps the sound).
+            video_path = strip_audio(video_path, workdir)
+        video_url = blob_put(f"downloads/{dl_id}.mp4", open(video_path, "rb").read(), "video/mp4")
         cur.execute(
             """
             UPDATE media_downloads
@@ -591,8 +615,8 @@ def tick():
             conn.commit()
         dl_rows = claim_downloads(cur, CONCURRENCY)
         conn.commit()
-        for dl_id, ws, url, platform, want_audio, created_by in dl_rows:
-            process_download(conn, cur, dl_id, ws, url, platform, want_audio, created_by)
+        for dl_id, ws, url, platform, want_audio, mute_video, created_by in dl_rows:
+            process_download(conn, cur, dl_id, ws, url, platform, want_audio, mute_video, created_by)
     finally:
         conn.close()
 

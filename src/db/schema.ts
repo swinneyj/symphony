@@ -495,6 +495,7 @@ export const mediaDownloads = pgTable("media_downloads", {
   sourceUrl: text("source_url").notNull(),
   platform: text("platform").notNull().default("tiktok"),
   wantAudio: boolean("want_audio").notNull().default(false),
+  muteVideo: boolean("mute_video").notNull().default(false),
   status: text("status").notNull().default("queued"),
   title: text("title"),
   authorName: text("author_name"),

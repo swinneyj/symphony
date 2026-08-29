@@ -472,8 +472,13 @@ export default function StealThisAdPage() {
             {detail.status === "failed" && (
               <Card className="border-red-500/30">
                 <CardContent className="p-4 text-sm text-red-400">
-                  Failed: {detail.error ?? "unknown error"}. The download may be
-                  blocked by TikTok — try a different ad URL.
+                  Failed: {detail.error ?? "unknown error"}.{" "}
+                  {detail.error?.toLowerCase().includes("product link") ? (
+                    <span>That link points to a TikTok Shop product page, not a
+                    video — try a video link instead.</span>
+                  ) : (
+                    <span>The download may be blocked by TikTok — try a different ad URL.</span>
+                  )}
                 </CardContent>
               </Card>
             )}

@@ -21,10 +21,11 @@ export async function POST(request: Request) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const { workspaceId, sourceUrl, wantAudio } = (await request.json()) as {
+    const { workspaceId, sourceUrl, wantAudio, muteVideo } = (await request.json()) as {
       workspaceId?: string;
       sourceUrl?: string;
       wantAudio?: boolean;
+      muteVideo?: boolean;
     };
     if (!workspaceId || !sourceUrl?.trim()) {
       return NextResponse.json({ error: "workspaceId and sourceUrl are required" }, { status: 400 });
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
         sourceUrl: sourceUrl.trim(),
         platform: detectPlatform(sourceUrl),
         wantAudio: Boolean(wantAudio),
+        muteVideo: Boolean(muteVideo),
       })
       .returning();
 

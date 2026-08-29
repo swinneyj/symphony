@@ -4523,6 +4523,7 @@ interface DownloadRow {
 function DownloaderTab({ workspaceId }: { workspaceId: string }) {
   const [url, setUrl] = useState("");
   const [wantAudio, setWantAudio] = useState(false);
+  const [muteVideo, setMuteVideo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState<DownloadRow[]>([]);
 
@@ -4547,7 +4548,7 @@ function DownloaderTab({ workspaceId }: { workspaceId: string }) {
       const res = await fetch("/api/media-download", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspaceId, sourceUrl: url.trim(), wantAudio }),
+        body: JSON.stringify({ workspaceId, sourceUrl: url.trim(), wantAudio, muteVideo }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || "Download failed");
@@ -4589,6 +4590,15 @@ function DownloaderTab({ workspaceId }: { workspaceId: string }) {
               className="h-4 w-4"
             />
             Also grab MP3
+          </label>
+          <label className="flex h-9 cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={muteVideo}
+              onChange={(e) => setMuteVideo(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Mute video (no sound in the mp4)
           </label>
           <Button onClick={onSubmit} disabled={!url.trim() || busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
