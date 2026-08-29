@@ -3903,6 +3903,16 @@ function PostQueueTab({ workspaceId }: { workspaceId: string }) {
 }
 
 // ─── Clone tab (V2V, backlog row 9) ──────────────────────────────────────────
+/** Exact fal Kling i2v audio-off rates ($/s), verified on fal 2026-08-29.
+ *  v3 defaults generate_audio=true (+50%) — worker forces it off. */
+const MODEL_RATE_S: Record<string, number> = {
+  "kling-pro": 0.112,
+  "kling-standard": 0.084,
+  "kling-turbo": 0.07,
+  "kling-1.5-pro": 0.1,
+  "kling-v1": 0.045,
+};
+
 function CloneTab({ workspaceId }: { workspaceId: string }) {
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -3948,8 +3958,9 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
       <CardHeader>
         <CardTitle>Video Clone</CardTitle>
         <CardDescription>
-          Upload a video (or paste a direct mp4 URL) and describe the change —
-          new background, on-screen text swap — Kling re-animates it. ~$0.15–0.50 per clone.
+          Upload a video (or paste a TikTok / direct mp4 URL) and describe the
+          change — new background, on-screen text swap — Kling re-animates it.
+          Exact re-animate cost shown per model below.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -4006,13 +4017,13 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
               onChange={(e) => setModel(e.target.value)}
               className="flex h-9 w-48 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              <option value="kling-pro">Kling 3.0 Pro (~$0.30)</option>
-              <option value="kling-standard">Kling 3.0 Standard (~$0.15)</option>
-              <option value="kling-turbo">Kling 2.5 Turbo Pro (~$0.35)</option>
-              <option value="kling-1.5-pro">Kling 1.5 Pro (~$0.20)</option>
-              <option value="kling-v1">Kling 1.0 Standard (~$0.10)</option>
+              <option value="kling-pro">Kling 3.0 Pro ($0.112/s)</option>
+              <option value="kling-standard">Kling 3.0 Standard ($0.084/s)</option>
+              <option value="kling-turbo">Kling 2.5 Turbo Pro ($0.07/s)</option>
+              <option value="kling-1.5-pro">Kling 1.5 Pro ($0.10/s)</option>
+              <option value="kling-v1">Kling 1.0 Standard ($0.045/s)</option>
               <option value="sora">Sora 2 (OpenAI credits)</option>
-              <option value="veo" disabled>Veo 3.1 (needs Gemini prepay)</option>
+              <option value="veo" disabled>Veo 3.1 (disabled)</option>
             </select>
           </div>
           <div className="space-y-1.5">
@@ -4025,6 +4036,16 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
               <option value="5">5s</option>
               <option value="10">10s</option>
             </select>
+          </div>
+          <div className="ml-auto text-right text-xs text-muted-foreground">
+            <div>
+              {MODEL_RATE_S[model]
+                ? `Re-animate ≈ $${(MODEL_RATE_S[model] * Number(durationSec)).toFixed(2)}`
+                : model === "sora"
+                  ? "Re-animate: Sora credits"
+                  : "Re-animate: —"}
+            </div>
+            <div>+ frame edit ~$0.08</div>
           </div>
           <Button onClick={onSubmit} disabled={!canSubmit} className="ml-auto">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}

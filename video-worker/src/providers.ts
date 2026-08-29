@@ -336,6 +336,10 @@ export async function generateCloneVideo(
     [imageField]: startImageUrl,
     prompt,
     duration: String(Math.min(Math.max(durationSec, 5), 10)),
+    // Kling v3 defaults generate_audio=true (+50% rate, e.g. pro $0.168/s vs
+    // $0.112/s). The clone re-animates a keyframe — original audio can't
+    // follow anyway — so keep it off unless explicitly requested.
+    ...(queueId.includes("/v3/") ? { generate_audio: false } : {}),
   });
 }
 
