@@ -23,6 +23,7 @@ import {
   Sparkles,
   Wand2,
   X,
+  Download,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,12 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -194,6 +201,8 @@ export function ImageStudioTab({
   const [asmBatchId, setAsmBatchId] = useState<string | null>(null);
   const [asmResult, setAsmResult] = useState<BatchJob | null>(null);
   const [asmBusy, setAsmBusy] = useState(false);
+  /** Expandable playback: {url, title} of the video being watched full-size. */
+  const [playingVideo, setPlayingVideo] = useState<{ url: string; title: string } | null>(null);
 
   const product = products.find((p) => p.id === productId);
   const sourceImage = product?.sceneImageUrl ?? product?.processedImageUrl ?? product?.originalImageUrl ?? null;
@@ -469,6 +478,11 @@ export function ImageStudioTab({
                           {approvedImage === j.sceneImageUrl && <CheckCircle2 className="h-3.5 w-3.5" />}
                           {approvedImage === j.sceneImageUrl ? "Approved" : "Use this"}
                         </Button>
+                        <Button size="sm" variant="ghost" className="w-full" asChild>
+                          <a href={`/api/image-studio/jobs/${j.id}/asset?kind=scene&download=1`}>
+                            <Download className="h-3.5 w-3.5" /> Download
+                          </a>
+                        </Button>
                       </>
                     ) : (
                       <div className="flex aspect-[9/16] w-full items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">
@@ -580,20 +594,37 @@ export function ImageStudioTab({
                       <div key={j.id} className="space-y-1.5">
                         {j.footageUrl ? (
                           <>
-                            <video
-                              src={`/api/image-studio/jobs/${j.id}/asset?kind=footage`}
-                              className={cn(
-                                "aspect-[9/16] w-full cursor-pointer rounded-md border-2 bg-black object-contain transition",
-                                approvedVideo === j.footageUrl
-                                  ? "border-blue-600 ring-2 ring-blue-600/30"
-                                  : "border-border hover:border-blue-400"
-                              )}
-                              muted
-                              loop
-                              playsInline
-                              preload="metadata"
-                              onClick={() => setApprovedVideo(j.footageUrl)}
-                            />
+                            <div className="group relative">
+                              <video
+                                src={`/api/image-studio/jobs/${j.id}/asset?kind=footage`}
+                                className={cn(
+                                  "aspect-[9/16] w-full cursor-pointer rounded-md border-2 bg-black object-contain transition",
+                                  approvedVideo === j.footageUrl
+                                    ? "border-blue-600 ring-2 ring-blue-600/30"
+                                    : "border-border hover:border-blue-400"
+                                )}
+                                muted
+                                loop
+                                playsInline
+                                preload="metadata"
+                                onClick={() => setApprovedVideo(j.footageUrl)}
+                              />
+                              <button
+                                type="button"
+                                title="Play full size"
+                                onClick={() =>
+                                  setPlayingVideo({
+                                    url: `/api/image-studio/jobs/${j.id}/asset?kind=footage`,
+                                    title: `Kling ${videoType === "01" ? "1.0" : "3.0"} — render ${i + 1}`,
+                                  })
+                                }
+                                className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100"
+                              >
+                                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/60 text-white">
+                                  <Play className="h-6 w-6 fill-current" />
+                                </span>
+                              </button>
+                            </div>
                             <Button
                               size="sm"
                               variant={approvedVideo === j.footageUrl ? "default" : "outline"}
@@ -602,6 +633,11 @@ export function ImageStudioTab({
                             >
                               {approvedVideo === j.footageUrl && <CheckCircle2 className="h-3.5 w-3.5" />}
                               {approvedVideo === j.footageUrl ? "Approved" : "Use this"}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="w-full" asChild>
+                              <a href={`/api/image-studio/jobs/${j.id}/asset?kind=footage&download=1`}>
+                                <Download className="h-3.5 w-3.5" /> Download
+                              </a>
                             </Button>
                           </>
                         ) : (
@@ -676,16 +712,39 @@ export function ImageStudioTab({
               {asmResult?.finalUrl && (
                 <div className="space-y-2">
                   <Label>Final video</Label>
-                  <video
-                    src={`/api/image-studio/jobs/${asmResult.id}/asset?kind=final`}
-                    className="aspect-[9/16] w-64 rounded-md border bg-black object-contain"
-                    controls
-                    playsInline
-                  />
+                  <div className="group relative w-64">
+                    <video
+                      src={`/api/image-studio/jobs/${asmResult.id}/asset?kind=final`}
+                      className="aspect-[9/16] w-full rounded-md border bg-black object-contain"
+                      controls
+                      playsInline
+                      preload="metadata"
+                    />
+                    <button
+                      type="button"
+                      title="Play full size"
+                      onClick={() =>
+                        setPlayingVideo({
+                          url: `/api/image-studio/jobs/${asmResult.id}/asset?kind=final`,
+                          title: "Final video",
+                        })
+                      }
+                      className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100"
+                    >
+                      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/60 text-white">
+                        <Play className="h-7 w-7 fill-current" />
+                      </span>
+                    </button>
+                  </div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" asChild>
                       <a href={`/api/image-studio/jobs/${asmResult.id}/asset?kind=final`} target="_blank" rel="noreferrer">
                         Open full size
+                      </a>
+                    </Button>
+                    <Button size="sm" variant="default" asChild>
+                      <a href={`/api/image-studio/jobs/${asmResult.id}/asset?kind=final&download=1`}>
+                        <Download className="h-3.5 w-3.5" /> Download
                       </a>
                     </Button>
                   </div>
@@ -698,6 +757,30 @@ export function ImageStudioTab({
           )}
         </CardContent>
       </Card>
+
+      {/* Expandable full-size player */}
+      <Dialog
+        open={playingVideo !== null}
+        onOpenChange={(open) => {
+          if (!open) setPlayingVideo(null);
+        }}
+      >
+        <DialogContent className="max-w-3xl border-border bg-background">
+          <DialogHeader>
+            <DialogTitle>{playingVideo?.title ?? "Video"}</DialogTitle>
+          </DialogHeader>
+          {playingVideo && (
+            <video
+              key={playingVideo.url}
+              src={playingVideo.url}
+              className="max-h-[70vh] w-full rounded-md border bg-black object-contain"
+              controls
+              autoPlay
+              playsInline
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
