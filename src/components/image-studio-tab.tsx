@@ -432,7 +432,7 @@ export function ImageStudioTab({
 
           {sourceImage && (
             <div className="flex items-center gap-3 rounded-md border p-3">
-              <img src={sourceImage} alt="" className="h-16 w-16 rounded object-cover" />
+              <img src={`/api/products/${product!.id}/image`} alt="" className="h-16 w-16 rounded object-cover" />
               <div className="text-xs text-muted-foreground">
                 <p className="font-medium text-foreground">{product?.name}</p>
                 <p>Used as reference only (scale + dimensions).</p>
@@ -450,7 +450,7 @@ export function ImageStudioTab({
                     {j.sceneImageUrl ? (
                       <>
                         <img
-                          src={j.sceneImageUrl}
+                          src={`/api/image-studio/jobs/${j.id}/asset?kind=scene`}
                           alt={`render ${i + 1}`}
                           className={cn(
                             "aspect-[9/16] w-full cursor-pointer rounded-md border-2 object-cover transition",
@@ -581,7 +581,7 @@ export function ImageStudioTab({
                         {j.footageUrl ? (
                           <>
                             <video
-                              src={j.footageUrl}
+                              src={`/api/image-studio/jobs/${j.id}/asset?kind=footage`}
                               className={cn(
                                 "aspect-[9/16] w-full cursor-pointer rounded-md border-2 bg-black object-contain transition",
                                 approvedVideo === j.footageUrl
@@ -677,14 +677,14 @@ export function ImageStudioTab({
                 <div className="space-y-2">
                   <Label>Final video</Label>
                   <video
-                    src={asmResult.finalUrl}
+                    src={`/api/image-studio/jobs/${asmResult.id}/asset?kind=final`}
                     className="aspect-[9/16] w-64 rounded-md border bg-black object-contain"
                     controls
                     playsInline
                   />
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" asChild>
-                      <a href={asmResult.finalUrl} target="_blank" rel="noreferrer">
+                      <a href={`/api/image-studio/jobs/${asmResult.id}/asset?kind=final`} target="_blank" rel="noreferrer">
                         Open full size
                       </a>
                     </Button>
