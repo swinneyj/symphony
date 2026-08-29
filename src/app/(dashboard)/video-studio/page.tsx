@@ -36,6 +36,7 @@ import {
   User,
   Megaphone,
   Info,
+  Clock,
 } from "lucide-react";
 import type { MarketProductVideo } from "@/lib/market/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -118,6 +119,8 @@ export default function VideoStudioPage() {
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("products");
+  // Product ids pre-checked in the Batch tab (Market → "Generate videos for these").
+  const [batchPreselect, setBatchPreselect] = useState<string[] | null>(null);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
@@ -271,6 +274,8 @@ export default function VideoStudioPage() {
             batches={batches}
             onBatchesChanged={() => loadBatches(workspaceId!)}
             onProductsChanged={() => loadProducts(workspaceId!)}
+            preselectProductIds={batchPreselect}
+            onPreselectConsumed={() => setBatchPreselect(null)}
           />
         </TabsContent>
 
@@ -278,6 +283,10 @@ export default function VideoStudioPage() {
           <MarketTab
             workspaceId={workspaceId!}
             onAdopted={() => loadProducts(workspaceId!)}
+            onGenerate={(ids) => {
+              setBatchPreselect(ids);
+              setActiveTab("batches");
+            }}
           />
         </TabsContent>
 
@@ -1882,7 +1891,6 @@ const BATCH_STATUS_STYLE: Record<string, string> = {
   partial: "bg-orange-100 text-orange-700",
   failed: "bg-red-100 text-red-700",
 };
-
 function BatchStudioTab({
   workspaceId,
   products,
@@ -1890,6 +1898,8 @@ function BatchStudioTab({
   voices,
   batches,
   onBatchesChanged,
+  preselectProductIds,
+  onPreselectConsumed,
 }: {
   workspaceId: string;
   products: Product[];
@@ -1898,6 +1908,8 @@ function BatchStudioTab({
   batches: BatchSummary[];
   onBatchesChanged: () => void;
   onProductsChanged: () => void;
+  preselectProductIds?: string[] | null;
+  onPreselectConsumed?: () => void;
 }) {
   const [name, setName] = useState("");
   const [formulaId, setFormulaId] = useState("");
@@ -1936,6 +1948,17 @@ function BatchStudioTab({
       cancelled = true;
     };
   }, [workspaceId]);
+
+  // "Generate videos for these" jump-in: pre-check the adopted product ids
+  // (from Market → bulk adopt) once they exist in the products list.
+  useEffect(() => {
+    if (!preselectProductIds || preselectProductIds.length === 0) return;
+    const available = preselectProductIds.filter((id) => products.some((p) => p.id === id));
+    if (available.length === 0) return; // products not loaded yet — wait for them
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- prop-driven jump-in (matches file pattern)
+    setSelected((prev) => Array.from(new Set([...prev, ...available])));
+    onPreselectConsumed?.();
+  }, [preselectProductIds, products, onPreselectConsumed]);
 
   const toggleProduct = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
@@ -3002,9 +3025,11 @@ function ProductDetailDialog({
 function MarketTab({
   workspaceId,
   onAdopted,
+  onGenerate,
 }: {
   workspaceId: string;
   onAdopted: () => void;
+  onGenerate?: (productIds: string[]) => void;
 }) {
   const [source, setSource] = useState("echotik");
   const [period, setPeriod] = useState("week");
@@ -3042,6 +3067,14 @@ function MarketTab({
   // ── Influencer / shop drill-down results (products they promote) ──
   const [drillResults, setDrillResults] = useState<Record<string, MarketRow[]>>({});
   const [drillLoading, setDrillLoading] = useState<string | null>(null);
+  // ── "Last N days" recency extract (what a creator is pushing right now) ──
+  const [recentFor, setRecentFor] = useState<string | null>(null); // drill key
+  const [recentRows, setRecentRows] = useState<MarketRow[]>([]);
+  const [recentLoading, setRecentLoading] = useState(false);
+  const [recentSelected, setRecentSelected] = useState<string[]>([]); // sourceProductIds
+  const [recentNotice, setRecentNotice] = useState<string | null>(null);
+  const [bulkAdopting, setBulkAdopting] = useState(false);
+  const [recentAdoptedIds, setRecentAdoptedIds] = useState<string[]>([]); // DB product ids just added
 
   const setFilter = (key: string, value: string) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -3126,6 +3159,32 @@ function MarketTab({
     [workspaceId]
   );
 
+  /** Normalize a live EchoTik product row (API JSON) → UI MarketRow. */
+  const mapLiveRow = (p: Record<string, unknown>, i: number): MarketRow => ({
+    id: undefined,
+    source: "echotik" as const,
+    sourceProductId: String(p.sourceProductId ?? ""),
+    name: String(p.name ?? "Untitled"),
+    imageUrl: p.imageUrl ? String(p.imageUrl) : null,
+    priceMin: p.priceMin != null ? Number(p.priceMin) : null,
+    priceMax: p.priceMax != null ? Number(p.priceMax) : null,
+    currency: "USD",
+    categoryL1: p.categoryL1 ? String(p.categoryL1) : null,
+    rank: p.rank != null ? Number(p.rank) : i + 1,
+    rankPeriod: "day",
+    sales7d: p.sales7d != null ? Number(p.sales7d) : null,
+    sales30d: p.sales30d != null ? Number(p.sales30d) : null,
+    gmv30d: p.gmv30d != null ? Number(p.gmv30d) : null,
+    growthRate: p.growthRate != null ? Number(p.growthRate) : null,
+    commissionRate: p.commissionRate != null ? Number(p.commissionRate) : null,
+    videoCount: p.videoCount != null ? Number(p.videoCount) : null,
+    creatorCount: p.creatorCount != null ? Number(p.creatorCount) : null,
+    isHot: Boolean(p.isHot),
+    momentumScore: p.momentumScore != null ? Number(p.momentumScore) : null,
+    productId: p.productId ? String(p.productId) : null,
+    metadata: (p.metadata as Record<string, unknown> | undefined) ?? undefined,
+  });
+
   /** Drill into an influencer's or shop's products (rows from live API). */
   const drillProducts = async (kind: "influencer" | "shop", id: string) => {
     const key = `${kind}:${id}`;
@@ -3146,35 +3205,78 @@ function MarketTab({
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load products");
-      const rows: MarketRow[] = (data.products ?? []).map((p: Record<string, unknown>, i: number) => ({
-        id: undefined,
-        source: "echotik" as const,
-        sourceProductId: String(p.sourceProductId ?? ""),
-        name: String(p.name ?? "Untitled"),
-        imageUrl: p.imageUrl ? String(p.imageUrl) : null,
-        priceMin: p.priceMin != null ? Number(p.priceMin) : null,
-        priceMax: p.priceMax != null ? Number(p.priceMax) : null,
-        currency: "USD",
-        categoryL1: p.categoryL1 ? String(p.categoryL1) : null,
-        rank: p.rank != null ? Number(p.rank) : i + 1,
-        rankPeriod: "day",
-        sales7d: p.sales7d != null ? Number(p.sales7d) : null,
-        sales30d: p.sales30d != null ? Number(p.sales30d) : null,
-        gmv30d: p.gmv30d != null ? Number(p.gmv30d) : null,
-        growthRate: p.growthRate != null ? Number(p.growthRate) : null,
-        commissionRate: p.commissionRate != null ? Number(p.commissionRate) : null,
-        videoCount: p.videoCount != null ? Number(p.videoCount) : null,
-        creatorCount: p.creatorCount != null ? Number(p.creatorCount) : null,
-        isHot: Boolean(p.isHot),
-        momentumScore: p.momentumScore != null ? Number(p.momentumScore) : null,
-        productId: p.productId ? String(p.productId) : null,
-      }));
+      const rows: MarketRow[] = (data.products ?? []).map(mapLiveRow);
       setDrillResults((prev) => ({ ...prev, [key]: rows }));
       if (data.notice) setSearchNotice(data.notice);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load products");
     } finally {
       setDrillLoading(null);
+    }
+  };
+
+  /** "What are they pushing right now": last 14 days of products from their videos. */
+  const pullRecent = async (kind: "influencer", id: string, key: string) => {
+    if (recentFor === key) {
+      setRecentFor(null);
+      setRecentRows([]);
+      setRecentSelected([]);
+      return;
+    }
+    setRecentLoading(true);
+    setRecentNotice(null);
+    setRecentAdoptedIds([]);
+    try {
+      const url =
+        kind === "influencer"
+          ? `/api/market/products/influencer-products?workspaceId=${workspaceId}&influencerId=${id}&days=14`
+          : "";
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load recent products");
+      setRecentFor(key);
+      setRecentRows((data.products ?? []).map(mapLiveRow));
+      setRecentSelected([]);
+      if (data.notice) setRecentNotice(data.notice);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load recent products");
+    } finally {
+      setRecentLoading(false);
+    }
+  };
+
+  const toggleRecent = (sourceProductId: string) =>
+    setRecentSelected((prev) =>
+      prev.includes(sourceProductId) ? prev.filter((s) => s !== sourceProductId) : [...prev, sourceProductId]
+    );
+
+  const selectAllRecent = () => setRecentSelected(recentRows.map((r) => r.sourceProductId));
+
+  /** Bulk-adopt every checked recent product, then hand the new DB ids to the
+   *  batch pipeline ("generate videos for these"). */
+  const bulkAddRecent = async () => {
+    const selected = recentRows.filter((r) => recentSelected.includes(r.sourceProductId));
+    if (selected.length === 0) return;
+    setBulkAdopting(true);
+    try {
+      const res = await fetch(`/api/market/products/bulk-adopt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, rows: selected }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Bulk adopt failed");
+      const addedIds: string[] = (data.results ?? [])
+        .filter((r: { alreadyAdopted?: boolean; productId?: string | null }) => !r.alreadyAdopted && r.productId)
+        .map((r: { productId: string }) => r.productId);
+      setRecentAdoptedIds(addedIds);
+      toast.success(`Added ${data.added} · already in library ${data.already}${data.failed ? ` · ${data.failed} failed` : ""}`);
+      onAdopted();
+      await loadStored();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bulk adopt failed");
+    } finally {
+      setBulkAdopting(false);
     }
   };
 
@@ -3632,9 +3734,27 @@ function MarketTab({
                   <p className="text-xs font-medium text-muted-foreground">
                     {key.startsWith("influencer:") ? "Influencer's products" : "Shop's products"} ({prows.length})
                   </p>
-                  <Button size="sm" variant="ghost" onClick={() => setDrillResults((prev) => { const n = { ...prev }; delete n[key]; return n; })}>
-                    Close
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {key.startsWith("influencer:") && (
+                      <Button
+                        size="sm"
+                        variant={recentFor === key ? "secondary" : "outline"}
+                        disabled={recentLoading}
+                        onClick={() => void pullRecent("influencer", key.slice("influencer:".length), key)}
+                        title="What they've pushed in the last 14 days (from their recent videos)"
+                      >
+                        {recentLoading && recentFor === key ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Clock className="h-3.5 w-3.5" />
+                        )}
+                        {recentFor === key ? "Hide recent" : "Last 14 days"}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => setDrillResults((prev) => { const n = { ...prev }; delete n[key]; return n; })}>
+                      Close
+                    </Button>
+                  </div>
                 </div>
                 <div className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3">
                   {prows.map((p) => (
@@ -3658,6 +3778,93 @@ function MarketTab({
                     </div>
                   ))}
                 </div>
+
+                {recentFor === key && (
+                  <div className="border-t bg-muted/30 px-3 py-3">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold">
+                        Last 14 days — what they&rsquo;re pushing {recentLoading ? "" : `(${recentRows.length})`}
+                      </p>
+                      {!recentLoading && recentRows.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={selectAllRecent}>All</Button>
+                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setRecentSelected([])}>None</Button>
+                        </div>
+                      )}
+                    </div>
+
+                    {recentLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Pulling their recent videos…
+                      </div>
+                    ) : recentRows.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        {recentNotice ?? "No products in the last 14 days."}
+                      </p>
+                    ) : (
+                      <>
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {recentRows.map((p) => {
+                            const m = (p.metadata ?? {}) as {
+                              videoSales?: number | null;
+                              videoGmv?: number | null;
+                              promotedAt?: string | null;
+                            };
+                            return (
+                              <label
+                                key={p.sourceProductId}
+                                className={`flex cursor-pointer items-center gap-2 rounded-md border p-2 ${recentSelected.includes(p.sourceProductId) ? "border-primary bg-primary/5" : ""}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="h-3.5 w-3.5 shrink-0 accent-[var(--primary)]"
+                                  checked={recentSelected.includes(p.sourceProductId)}
+                                  onChange={() => toggleRecent(p.sourceProductId)}
+                                />
+                                {p.imageUrl ? (
+                                  <img src={p.imageUrl} alt="" className="h-10 w-10 rounded-md border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                                ) : (
+                                  <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-muted">
+                                    <Package className="h-4 w-4 text-muted-foreground" />
+                                  </div>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-xs font-medium">{p.name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {p.priceMin ? `$${p.priceMin}` : "—"} · {fmt(p.sales30d)} sales
+                                    {p.commissionRate != null ? ` · ${Math.round(p.commissionRate * 100)}% comm` : ""}
+                                    {m.promotedAt ? ` · ${m.promotedAt}` : ""}
+                                  </p>
+                                  {m.videoSales != null && (
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Last video: {fmt(m.videoSales)} sales · {money(m.videoGmv ?? null)}
+                                    </p>
+                                  )}
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <Button size="sm" onClick={() => void bulkAddRecent()} disabled={bulkAdopting || recentSelected.length === 0}>
+                            {bulkAdopting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                            Add {recentSelected.length} to Products
+                          </Button>
+                          {recentAdoptedIds.length > 0 && onGenerate && (
+                            <Button size="sm" variant="secondary" onClick={() => onGenerate(recentAdoptedIds)}>
+                              Generate videos for {recentAdoptedIds.length} added →
+                            </Button>
+                          )}
+                          {recentAdoptedIds.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              Added — pick a formula in the Batches tab (or jump straight there).
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </CardContent>

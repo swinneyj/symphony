@@ -56,6 +56,8 @@ const CACHE_TTL_SECONDS: Record<string, number> = {
   "/search/sellers": 30 * 60,
   "/search/videos": 30 * 60,
   "/influencers/{id}/products": 6 * 3600,
+  // Recency pull ("what are they pushing now") — short TTL keeps it fresh.
+  "/influencers/{id}/videos": 30 * 60,
 };
 
 type ApiRow = Record<string, unknown>;
@@ -540,6 +542,100 @@ export async function searchVideos(keyword: string, region = "US", limit = 20): 
 export async function fetchInfluencerProducts(influencerId: string, limit = 24): Promise<MarketProduct[]> {
   const rows = await getAll(`/influencers/${influencerId}/products`, { region: "US" }, limit);
   return rows.map((r, i) => normalizeLeaderboard(r, i + 1, "day", "US"));
+}
+
+// ─── Recency pull ("what are they pushing right now") ───────────────────────
+
+/**
+ * Normalize the nested `product` object carried on influencer video rows
+ * (verified live 2026-08-29): product_id, product_name, cover_url,
+ * min/max/avg_price, commission ("22%"), product_rating, review_count,
+ * total_sale_cnt, total_gmv_amt. The video's own sales/gmv ride along in
+ * metadata so the UI can show "video drove $X".
+ */
+function normalizeVideoProduct(
+  p: ApiRow,
+  rank: number,
+  videoSales: number | null,
+  videoGmv: number | null,
+  promotedAt: string | null
+): MarketProduct {
+  const price = parseNum(p.min_price) ?? parseNum(p.avg_price);
+  const priceMax = parseNum(p.max_price) ?? price;
+  return {
+    source: "echotik" as MarketSource,
+    sourceProductId: String(p.product_id ?? ""),
+    name: String(p.product_name ?? "Unknown product"),
+    imageUrl: str(p.cover_url) ?? null,
+    priceMin: price,
+    priceMax: priceMax,
+    currency: "USD",
+    categoryL1: str(p.category_name) ?? null,
+    categoryL2: null,
+    categoryL3: null,
+    region: "US",
+    rank,
+    rankPeriod: "day",
+    sales7d: null,
+    sales30d: parseNum(p.total_sale_cnt) ?? null,
+    gmv30d: parseNum(p.total_gmv_amt) ?? null,
+    growthRate: null,
+    commissionRate: parsePct(p.commission),
+    videoCount: null,
+    creatorCount: null,
+    isHot: false,
+    momentumScore: null,
+    metadata: {
+      raw: p,
+      endpoint: "site/influencer/videos",
+      reviewCount: parseNum(p.review_count),
+      productRating: parseNum(p.product_rating),
+      videoSales,
+      videoGmv,
+      promotedAt,
+    },
+  };
+}
+
+/**
+ * Products a creator has promoted in the last `days` days — the "what are
+ * they trying to sell lately" extract. The influencer catalog endpoint has no
+ * recency filter, but /influencers/{id}/videos is publish-date-desc and each
+ * row carries the nested product → walk pages newest-first until we pass the
+ * cutoff, dedupe by product_id (first occurrence = most recent video).
+ */
+export async function fetchRecentInfluencerProducts(
+  influencerId: string,
+  days = 14,
+  limit = 100
+): Promise<MarketProduct[]> {
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const out: MarketProduct[] = [];
+  const seen = new Set<string>();
+  let page = 1;
+  const per = 50;
+  while (page <= 10 && out.length < limit) {
+    const { rows } = await get(`/influencers/${influencerId}/videos`, { page, per_page: per });
+    if (rows.length === 0) break;
+    let pastCutoff = false;
+    for (const r of rows) {
+      const pubDay = str(r.publish_time)?.slice(0, 10) ?? "";
+      if (pubDay && pubDay < cutoff) {
+        pastCutoff = true;
+        break;
+      }
+      const p = typeof r.product === "object" && r.product ? (r.product as ApiRow) : null;
+      if (!p) continue;
+      const pid = String(p.product_id ?? "");
+      if (!pid || seen.has(pid)) continue;
+      seen.add(pid);
+      out.push(normalizeVideoProduct(p, out.length + 1, parseNum(r.sales), parseNum(r.gmv), pubDay || null));
+      if (out.length >= limit) break;
+    }
+    if (pastCutoff || rows.length < per) break;
+    page += 1;
+  }
+  return out;
 }
 
 // ─── Cover resolution ───────────────────────────────────────────────────────

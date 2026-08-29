@@ -333,6 +333,20 @@ export async function fetchInfluencerProducts(influencerId: string, limit = 24) 
 }
 
 /**
+ * Products a creator promoted in the last `days` days ("what are they pushing
+ * right now") — walks their recent videos, dedupes the nested products.
+ * Requires the website-session adapter (ECHOTIK_WEB_TOKEN).
+ */
+export async function fetchRecentInfluencerProducts(influencerId: string, days = 14, limit = 60) {
+  if (dryRunEnabled()) return { rows: [], dryRun: true };
+  const impl = echotikImpl();
+  if (!("fetchRecentInfluencerProducts" in impl)) {
+    throw new Error(`[market] recent influencer products not implemented for source: echotik (API adapter)`);
+  }
+  return { rows: await impl.fetchRecentInfluencerProducts(influencerId, days, limit), dryRun: false };
+}
+
+/**
  * Persists creator profiles + product↔creator junction for a market product
  * (upsert by source+id+date / creator+product+date). Returns rows persisted.
  */
