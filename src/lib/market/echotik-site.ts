@@ -1,0 +1,476 @@
+/**
+ * EchoTik WEBSITE adapter — the replacement for the paid API platform.
+ *
+ * The user pays for the EchoTik website plan ($9.9/mo), NOT the API platform
+ * ($139/mo). The site's internal API (echotik.live/api/v1/data/*) exposes the
+ * same data — product detail, video lists with Promote (is_promote), influencer
+ * lists, seller/brand products, leaderboards, search — authenticated with the
+ * website session token instead of API Basic auth.
+ *
+ * AUTH (verified live 2026-08-29):
+ *   Authorization: Bearer <token>   — token is the site's `token` cookie,
+ *                                     URL-decoded (cookie stores %7C for |)
+ *   x-lang: en, x-currency: USD, x-region: US
+ *   No cookies needed. No Cloudflare wall on these endpoints.
+ *
+ * Envelope: { code: 0, msg: "ok", data: <array|object>, meta: { total,
+ *   current_page, last_page, per_page } }. Detail endpoints return `data` as a
+ *   single OBJECT (not array). Values are FORMATTED STRINGS ("159.71K",
+ *   "$1.26M", "5.0", "0%") — parsed back to numbers here.
+ *
+ * Endpoints (all VERIFIED live 2026-08-29):
+ *   GET /api/v1/data/products/leaderboard/top-sold     — winners feed (days=1/7/30)
+ *   GET /api/v1/data/products/leaderboard/hot-sell     — hot products (days=1/7/30)
+ *   GET /api/v1/data/products/leaderboard/news-burst   — new products (days=1/7/30)
+ *   GET /api/v1/data/products                          — library search + filters
+ *   GET /api/v1/data/search/products?keyword=          — keyword search
+ *   GET /api/v1/data/products/{id}                     — product detail (OBJECT)
+ *   GET /api/v1/data/products/{id}/videos              — videos w/ is_promote + is_ai_video
+ *   GET /api/v1/data/products/{id}/influencers         — creators driving the product
+ *   GET /api/v1/data/sellers/{id}/products             — brand → all products
+ *
+ * Field names differ from the API platform (open.echotik.live) — everything is
+ * normalized to the shared Market* types so the UI/routes/DB are unchanged.
+ */
+import type { MarketCreator, MarketProduct, MarketProductVideo, MarketQuery, MarketSource, ProductAnalytics, TrendPoint } from "./types";
+import { MissingSourceCredentialsError } from "./types";
+import { cacheGet, cacheSet, cacheKey } from "./cache";
+
+const BASE = "https://echotik.live/api/v1/data";
+
+/** 1/7/30d leaderboard scopes — matches the site's day/week/month tabs. */
+const DAYS: Record<MarketQuery["period"], number> = { day: 1, week: 7, month: 30 };
+
+/** Site API is fast and quota-free (website plan) — moderate TTLs keep it fresh. */
+const CACHE_TTL_SECONDS: Record<string, number> = {
+  "/products/leaderboard/top-sold": 4 * 3600,
+  "/products/leaderboard/hot-sell": 4 * 3600,
+  "/products/leaderboard/news-burst": 4 * 3600,
+  "/products": 10 * 60,
+  "/search/products": 10 * 60,
+  "/products/{id}": 6 * 3600,
+  "/products/{id}/videos": 6 * 3600,
+  "/products/{id}/influencers": 6 * 3600,
+  "/sellers/{id}/products": 6 * 3600,
+};
+
+type ApiRow = Record<string, unknown>;
+
+/** Parse the site's formatted numbers: "159.71K" → 159710, "$1.26M" → 1260000,
+ *  "5.0" → 5, "0%" → 0, "1,200" → 1200, "560" → 560. Returns null on junk. */
+function parseNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const s = String(v).trim().replace(/[$,\s]/g, "").replace(/%$/, "");
+  if (s === "" || s === "-" || s === "N/A") return null;
+  const m = s.match(/^(-?\d+(?:\.\d+)?)([KMB]?)$/i);
+  if (!m) {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  const mult = m[2] ? { K: 1e3, M: 1e6, B: 1e9 }[m[2].toUpperCase()]! : 1;
+  const n = Number(m[1]) * mult;
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Parse "15%" → 0.15 (fraction, matching the app's commissionRate convention). */
+function parsePct(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const s = String(v).trim().replace(/%$/, "");
+  if (s === "" || s === "-" || s === "N/A") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n / 100 : null;
+}
+
+function str(v: unknown): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  return String(v);
+}
+
+/** Site region values are objects { id, name, key } — pull the key ("US"). */
+function regionKey(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const r = v as Record<string, unknown>;
+    return str(r.key) ?? str(r.id) ?? null;
+  }
+  return null;
+}
+
+/** "Beauty & Personal Care/Fragrance/Unisex Fragrance" → [L1, L2, L3]. */
+function splitCategories(v: unknown): [string | null, string | null, string | null] {
+  const s = str(v);
+  if (!s) return [null, null, null];
+  const parts = s.split("/").map((p) => p.trim()).filter(Boolean);
+  return [parts[0] ?? null, parts[1] ?? null, parts[2] ?? null];
+}
+
+function authHeaders(): Record<string, string> {
+  const token = process.env.ECHOTIK_WEB_TOKEN;
+  if (!token) {
+    throw new MissingSourceCredentialsError("echotik", ["ECHOTIK_WEB_TOKEN"]);
+  }
+  return {
+    Authorization: `Bearer ${token}`,
+    "x-lang": "en",
+    "x-currency": "USD",
+    "x-region": "US",
+    Accept: "application/json",
+  };
+}
+
+/** Single-page GET; `data` may be an array (lists) or object (detail). Cached. */
+async function get(
+  path: string,
+  params: Record<string, string | number | undefined>
+): Promise<{ rows: ApiRow[]; object: ApiRow | null; meta: Record<string, unknown> }> {
+  const qs: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") qs[k] = String(v);
+  }
+  const query = new URLSearchParams(qs).toString();
+  const ttl = CACHE_TTL_SECONDS[path];
+  if (ttl) {
+    const cached = await cacheGet<{ rows: ApiRow[]; object: ApiRow | null; meta: Record<string, unknown> }>(
+      cacheKey("echotik-site", `${path}?${query}`)
+    );
+    if (cached) return cached;
+  }
+
+  const res = await fetch(`${BASE}${path}?${query}`, {
+    headers: authHeaders(),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`[echotik-site] ${res.status} ${path}: ${text.slice(0, 200)}`);
+  }
+  const json = await res.json();
+  if (json.code !== 0) {
+    // 100004 = session expired/unauthorized — the user must re-export the cookie.
+    if (json.code === 100004) {
+      throw new Error("[echotik-site] session expired — re-export the EchoTik website cookie (ECHOTIK_WEB_TOKEN)");
+    }
+    throw new Error(`[echotik-site] ${path}: code=${json.code} msg=${json.msg ?? "unknown"}`);
+  }
+  const rows = Array.isArray(json.data) ? (json.data as ApiRow[]) : [];
+  const object = json.data && typeof json.data === "object" && !Array.isArray(json.data) ? (json.data as ApiRow) : null;
+  const meta = (json.meta ?? {}) as Record<string, unknown>;
+  if (ttl && (rows.length > 0 || object)) {
+    await cacheSet(cacheKey("echotik-site", `${path}?${query}`), { rows, object, meta }, ttl);
+  }
+  return { rows, object, meta };
+}
+
+/** Page through until `limit` rows collected (per_page up to 50 verified). */
+async function getAll(
+  path: string,
+  params: Record<string, string | number | undefined>,
+  limit: number
+): Promise<ApiRow[]> {
+  const out: ApiRow[] = [];
+  let page = 1;
+  const per = Math.min(Math.max(limit, 10), 50);
+  while (out.length < limit && page <= 20) {
+    const { rows } = await get(path, { ...params, page, per_page: per });
+    out.push(...rows);
+    if (rows.length < per) break;
+    page += 1;
+  }
+  return out.slice(0, limit);
+}
+
+// ─── Winners feed (leaderboard) ─────────────────────────────────────────────
+
+/** Normalize a leaderboard row (top-sold/hot-sell/news-burst all share shape). */
+function normalizeLeaderboard(r: ApiRow, rank: number, period: MarketQuery["period"], region: string): MarketProduct {
+  const price = parseNum(r.avg_price) ?? parseNum(r.real_price) ?? parseNum(r.min_price);
+  const priceMax = parseNum(r.max_price) ?? price;
+  const [catL1, catL2, catL3] = splitCategories(r.categories ?? r.category);
+  const seller = typeof r.seller === "object" && r.seller ? (r.seller as Record<string, unknown>) : null;
+  return {
+    source: "echotik" as MarketSource,
+    sourceProductId: String(r.product_id ?? ""),
+    name: String(r.product_name ?? "Unknown product"),
+    imageUrl: str(r.cover_url) ?? null, // site covers are already public CDN URLs
+    priceMin: price,
+    priceMax: priceMax,
+    currency: "USD",
+    categoryL1: catL1,
+    categoryL2: catL2,
+    categoryL3: catL3,
+    region: regionKey(r.region) ?? region,
+    rank,
+    rankPeriod: period,
+    sales7d: null,
+    sales30d: parseNum(r.total_sale_cnt) ?? null,
+    gmv30d: parseNum(r.total_gmv_amt) ?? parseNum(r.total_sale_gmv_amt) ?? null,
+    growthRate: null,
+    commissionRate: parsePct(r.commission),
+    videoCount: parseNum(r.total_video_cnt) ?? null,
+    creatorCount: parseNum(r.influencers_count) ?? parseNum(r.total_ifl_cnt) ?? null,
+    isHot: r.is_hot === 1 || r.is_hot === true,
+    momentumScore: null,
+    metadata: {
+      raw: r,
+      endpoint: "site/leaderboard",
+      sellerId: seller ? str(seller.seller_id) : null,
+      sellerName: seller ? str(seller.seller_name) : null,
+      reviewCount: parseNum(r.review_count),
+      productRating: parseNum(r.product_rating),
+      conversionRate: parsePct(r.conversion_rate),
+    },
+  };
+}
+
+/** Winners feed: top-sold by period (day/week/month → days=1/7/30). */
+export async function fetchWinningProducts(query: MarketQuery): Promise<MarketProduct[]> {
+  const days = DAYS[query.period] ?? 7;
+  const rows = await getAll(
+    `/products/leaderboard/top-sold`,
+    {
+      region: query.region ?? "US",
+      days,
+      ...(query.category ? { category_id: query.category } : {}),
+    },
+    query.limit ?? 50
+  );
+  return rows.map((r, i) => normalizeLeaderboard(r, i + 1, query.period, query.region ?? "US"));
+}
+
+// ─── Product library (search + filters) ─────────────────────────────────────
+
+/**
+ * Product library mirroring the site's Products page. Supports keyword search
+ * (via /search/products) plus the verified filter params: category_id,
+ * min_price/max_price, sort/order (total_sale_cnt, total_gmv_amt,
+ * total_video_cnt, influencers_count — sale_30d/gmv_30d sort verified absent).
+ */
+export async function searchProducts(query: MarketQuery): Promise<MarketProduct[]> {
+  const region = query.region ?? "US";
+  const sortOrder =
+    query.sortField === "sales" ? "total_sale_cnt" :
+    query.sortField === "gmv" ? "total_gmv_amt" :
+    query.sortField === "price" ? "avg_price" :
+    query.sortField === "sales7d" ? "total_sale_cnt" :
+    query.sortField === "gmv7d" ? "total_gmv_amt" : "total_sale_cnt";
+
+  // Keyword search is a separate endpoint; everything else uses the library.
+  if (query.keyword) {
+    const rows = await getAll(
+      "/search/products",
+      { keyword: query.keyword, region },
+      query.limit ?? 50
+    );
+    return rows.map((r, i) => normalizeLeaderboard(r, i + 1, query.period ?? "day", region));
+  }
+
+  const rows = await getAll(
+    "/products",
+    {
+      region,
+      ...(query.category ? { category_id: query.category } : {}),
+      ...(query.priceMin != null ? { min_price: query.priceMin } : {}),
+      ...(query.priceMax != null ? { max_price: query.priceMax } : {}),
+      sort: query.sortType === "asc" ? "asc" : "desc",
+      order: sortOrder,
+    },
+    query.limit ?? 50
+  );
+  return rows.map((r, i) => normalizeLeaderboard(r, i + 1, query.period ?? "day", region));
+}
+
+// ─── Product detail + analytics ─────────────────────────────────────────────
+
+function normalizeDetail(d: ApiRow): ProductAnalytics {
+  const [catL1, catL2, catL3] = splitCategories(d.categories);
+  const seller = typeof d.seller === "object" && d.seller ? (d.seller as Record<string, unknown>) : null;
+  const labels = typeof d.labels === "object" && d.labels ? (d.labels as Record<string, unknown>) : null;
+  const images = Array.isArray(d.images) ? (d.images as unknown[]) : [];
+
+  // Panorama: the site detail carries total + 30d breakdowns (not 1/7/15/60/90).
+  const panorama: ProductAnalytics["panorama"] = [
+    {
+      period: 0,
+      sales: parseNum(d.sale_cnt),
+      gmv: parseNum(d.gmv_amt),
+      videoCnt: parseNum(d.total_video_cnt),
+      videoSales: null,
+      liveCnt: parseNum(d.total_live_cnt),
+      liveSales: null,
+      influencers: parseNum(d.total_ifl_cnt),
+    },
+    {
+      period: 30,
+      sales: parseNum(d.sale_30d_cnt),
+      gmv: parseNum(d.gmv_30d_amt),
+      videoCnt: parseNum(d.video_30d_cnt),
+      videoSales: null,
+      liveCnt: null,
+      liveSales: null,
+      influencers: parseNum(d.ifl_30d_cnt),
+    },
+  ];
+
+  return {
+    productId: String(d.product_id ?? ""),
+    name: str(d.product_name),
+    imageUrl: typeof images[0] === "string" ? images[0] : null,
+    priceMin: parseNum(d.min_price) ?? parseNum(d.price),
+    priceMax: parseNum(d.max_price) ?? parseNum(d.price),
+    commissionRate: parsePct(d.commission),
+    rating: parseNum(labels?.rating ?? d.product_rating),
+    reviewCount: parseNum(d.review_count),
+    sellerId: seller ? str(seller.seller_id) : null,
+    salesTrend: null,
+    firstCrawlDate: str(d.first_time)?.slice(0, 10).replace(/-/g, "") ?? null,
+    isSShop: d.is_s_shop === "1" || d.is_s_shop === 1 || d.is_s_shop === true,
+    freeShipping: labels?.is_free_shipping === 1 || labels?.is_free_shipping === "1",
+    brandStore: false,
+    fromFlag: null,
+    totalSales: parseNum(d.sale_cnt),
+    totalGmv: parseNum(d.gmv_amt),
+    panorama,
+    trend: [] as TrendPoint[], // site API has no 180-day series; app builds its own
+  };
+}
+
+/** Product detail (business panorama). */
+export async function fetchProductDetails(ids: string[]): Promise<ProductAnalytics[]> {
+  const out: ProductAnalytics[] = [];
+  for (const id of ids.slice(0, 10)) {
+    const { object } = await get(`/products/${id}`, {});
+    if (object) out.push(normalizeDetail(object));
+  }
+  return out;
+}
+
+/** Per-product drill-down: detail (site API has no trend series endpoint). */
+export async function fetchProductAnalytics(sourceProductId: string): Promise<ProductAnalytics> {
+  const { object } = await get(`/products/${sourceProductId}`, {});
+  if (!object) throw new Error(`[echotik-site] product detail empty for ${sourceProductId}`);
+  return normalizeDetail(object);
+}
+
+// ─── Creators ───────────────────────────────────────────────────────────────
+
+function normalizeCreator(r: ApiRow): MarketCreator {
+  const region = regionKey(r.region);
+  return {
+    source: "echotik" as MarketSource,
+    sourceCreatorId: String(r.influencer_id ?? ""),
+    name: str(r.unique_id) ?? str(r.influencer_name) ?? "Unknown creator",
+    avatarUrl: str(r.avatar_url) ?? null,
+    followers: parseNum(r.follower_count) ?? null,
+    engagementRate: parsePct(r.engagement_rate),
+    region,
+    rating: parseNum(r.certificate_type) ?? null,
+    videoCount: parseNum(r.video_count) ?? null,
+    salesForProduct: parseNum(r.sales) ?? null,
+    metadata: { raw: r, endpoint: "site/product/influencers", gmv: parseNum(r.gmv) },
+  };
+}
+
+/** Creators driving a product (product detail → influencers tab). */
+export async function fetchProductCreators(sourceProductId: string, limit = 24): Promise<MarketCreator[]> {
+  const rows = await getAll(
+    `/products/${sourceProductId}/influencers`,
+    { sort: "desc", order: "sales" },
+    limit
+  );
+  return rows.map(normalizeCreator);
+}
+
+// ─── Videos (content layer w/ Promote) ──────────────────────────────────────
+
+function normalizeVideo(r: ApiRow): MarketProductVideo {
+  const influencer =
+    typeof r.influencer === "object" && r.influencer ? (r.influencer as Record<string, unknown>) : null;
+  const title = str(r.video_title) ?? "";
+  const hashTags = title
+    .split(/\s+/)
+    .filter((t) => t.startsWith("#"))
+    .slice(0, 8) ?? null;
+  return {
+    videoId: String(r.video_id ?? ""),
+    creatorName: str(influencer?.unique_id) ?? str(r.influencer_name) ?? null,
+    creatorId: str(r.influencer_id) ?? null,
+    description: title || null,
+    coverUrl: str(r.cover_url) ?? null,
+    playUrl: str(r.video_url) ?? str(r.share_url) ?? null,
+    createTime: str(r.publish_time) ?? null,
+    duration: parseNum(r.duration),
+    region: regionKey(influencer?.region) ?? null,
+    views: parseNum(r.views_count) ?? parseNum(r.play_count),
+    views1d: null,
+    views7d: null,
+    views30d: null,
+    diggs: parseNum(r.digg_count),
+    diggs1d: null,
+    diggs7d: null,
+    diggs30d: null,
+    comments: parseNum(r.comment_count),
+    shares: parseNum(r.share_count),
+    favorites: null,
+    sales: parseNum(r.sales),
+    gmv: parseNum(r.gmv),
+    isAd: r.is_promote === true || r.is_promote === 1 || r.is_promote === "1",
+    isAi: r.is_ai_video === 1 || r.is_ai_video === "1" ? true : r.is_ai_video === 0 || r.is_ai_video === "0" ? false : null,
+    salesFlag: null,
+    hashTags: hashTags.length > 0 ? hashTags : null,
+    metadata: {
+      raw: r,
+      endpoint: "site/product/videos",
+      engagementRate: parsePct(r.engagement_rate),
+      likesPerViews: parsePct(r.likes_per_views),
+      awemeType: r.aweme_type ?? null,
+    },
+  };
+}
+
+/**
+ * Videos featuring a product — sorted by video sales, each row carries
+ * is_promote (the "Promote" badge) + is_ai_video flags natively. No batch
+ * enrichment call needed (unlike the API adapter).
+ */
+export async function fetchProductVideos(sourceProductId: string, limit = 10): Promise<MarketProductVideo[]> {
+  const rows = await getAll(
+    `/products/${sourceProductId}/videos`,
+    { sort: "desc", order: "sales" },
+    limit
+  );
+  return rows.map(normalizeVideo).filter((v) => v.videoId);
+}
+
+// ─── Seller / brand products ────────────────────────────────────────────────
+
+/** Every product sold by a seller/brand — "click a brand → all their products". */
+export async function fetchSellerProducts(sellerId: string, limit = 24): Promise<MarketProduct[]> {
+  const rows = await getAll(
+    `/sellers/${sellerId}/products`,
+    { region: "US" },
+    limit
+  );
+  return rows.map((r, i) => normalizeLeaderboard(r, i + 1, "day", "US"));
+}
+
+// ─── Cover resolution ───────────────────────────────────────────────────────
+
+/**
+ * Site cover_url values are already public CDN URLs (cdn.echotik.live) — no
+ * signed-download exchange needed. Pass-through for the image proxy routes.
+ */
+export async function resolveCoverUrl(coverField: string): Promise<string> {
+  if (/^https:\/\//.test(coverField)) return coverField;
+  // Fall back to the legacy JSON-encoded shape if it ever appears.
+  try {
+    const parsed = JSON.parse(coverField);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    for (const item of list) {
+      if (item && typeof item.url === "string" && item.url.startsWith("https://")) return item.url;
+    }
+  } catch {
+    // not JSON
+  }
+  throw new Error("[echotik-site] invalid cover url");
+}

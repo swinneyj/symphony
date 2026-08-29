@@ -10,6 +10,7 @@ export type RankPeriod = "day" | "week" | "month";
 export interface MarketQuery {
   period: RankPeriod;
   region?: string;        // "US" default
+  keyword?: string;       // free-text search (EchoTik site search/products)
   category?: string;      // L1 category id
   categoryL2?: string;    // L2 category id
   categoryL3?: string;    // L3 category id

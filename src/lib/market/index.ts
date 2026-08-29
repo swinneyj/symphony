@@ -10,15 +10,25 @@
 import type { MarketCreator, MarketProduct, MarketProductVideo, MarketQuery, MarketSource, ProductAnalytics } from "./types";
 import { dryRunEnabled } from "./types";
 import * as echotik from "./echotik";
+import * as echotikSite from "./echotik-site";
 import * as fastmoss from "./fastmoss";
 import { db } from "@/db";
 import { marketProducts, marketCreators, marketProductCreators } from "@/db/schema";
 import { eq, and, inArray, lt, desc } from "drizzle-orm";
 
 const ADAPTERS: Record<MarketSource, (q: MarketQuery) => Promise<MarketProduct[]>> = {
-  echotik: echotik.fetchWinningProducts,
+  echotik: (q) => echotikImpl().fetchWinningProducts(q),
   fastmoss: fastmoss.fetchWinningProducts,
 };
+
+/**
+ * Pick the EchoTik implementation: the website-session adapter (ECHOTIK_WEB_TOKEN,
+ * the $9.9/mo website plan) is PRIMARY; the paid API platform adapter
+ * (ECHOTIK_USERNAME/PASSWORD, $139/mo) is the fallback when no web token is set.
+ */
+function echotikImpl(): typeof echotik | typeof echotikSite {
+  return process.env.ECHOTIK_WEB_TOKEN ? echotikSite : echotik;
+}
 
 /** True when any Product Library filter is set (routes to search, not ranklist). */
 function hasLibraryFilters(q: MarketQuery): boolean {
@@ -38,6 +48,7 @@ function hasLibraryFilters(q: MarketQuery): boolean {
     q.brandStore != null || q.fromFlag != null || q.isHot != null ||
     q.onSaleOnly || q.salesFlag != null || q.newProductsDays != null ||
     q.categoryL2 != null || q.categoryL3 != null ||
+    q.keyword != null ||
     (q.sortField != null && q.sortField !== "sales30d")
   );
 }
@@ -52,7 +63,7 @@ export async function fetchWinningProducts(
   // Filtered queries use the Products Library search surface (product/list);
   // unfiltered uses the period rankings (ranklist) — the winners feed.
   if (source === "echotik" && hasLibraryFilters(query)) {
-    return { rows: await echotik.searchProducts(query), dryRun: false };
+    return { rows: await echotikImpl().searchProducts(query), dryRun: false };
   }
   const adapter = ADAPTERS[source];
   if (!adapter) throw new Error(`[market] unknown source: ${source}`);
@@ -234,7 +245,7 @@ export async function fetchCreators(
     return { rows: sampleCreators(), dryRun: true };
   }
   if (source === "echotik") {
-    return { rows: await echotik.fetchProductCreators(sourceProductId), dryRun: false };
+    return { rows: await echotikImpl().fetchProductCreators(sourceProductId), dryRun: false };
   }
   throw new Error(`[market] creator feed not implemented for source: ${source}`);
 }
@@ -247,7 +258,7 @@ export async function fetchProductAnalytics(
   if (source !== "echotik") {
     throw new Error(`[market] analytics not implemented for source: ${source}`);
   }
-  return echotik.fetchProductAnalytics(sourceProductId);
+  return echotikImpl().fetchProductAnalytics(sourceProductId);
 }
 
 /**
@@ -261,7 +272,7 @@ export async function fetchProductVideos(
 ): Promise<{ rows: MarketProductVideo[]; dryRun: boolean }> {
   if (dryRunEnabled()) return { rows: [], dryRun: true };
   if (source === "echotik") {
-    return { rows: await echotik.fetchProductVideos(sourceProductId, limit), dryRun: false };
+    return { rows: await echotikImpl().fetchProductVideos(sourceProductId, limit), dryRun: false };
   }
   throw new Error(`[market] product videos not implemented for source: ${source}`);
 }
@@ -277,7 +288,7 @@ export async function fetchSellerProducts(
 ): Promise<{ rows: MarketProduct[]; dryRun: boolean }> {
   if (dryRunEnabled()) return { rows: [], dryRun: true };
   if (source === "echotik") {
-    return { rows: await echotik.fetchSellerProducts(sellerId, limit), dryRun: false };
+    return { rows: await echotikImpl().fetchSellerProducts(sellerId, limit), dryRun: false };
   }
   throw new Error(`[market] seller products not implemented for source: ${source}`);
 }

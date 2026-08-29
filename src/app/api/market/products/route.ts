@@ -58,6 +58,7 @@ export async function GET(request: Request) {
     const query: MarketQuery = {
       period,
       region,
+      keyword: searchParams.get("keyword") ?? undefined,
       category,
       categoryL2: searchParams.get("categoryL2") ?? undefined,
       categoryL3: searchParams.get("categoryL3") ?? undefined,
