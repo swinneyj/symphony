@@ -16,12 +16,15 @@ import {
   FileImage,
   FileVideo,
   Loader2,
+  Download,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -55,6 +58,14 @@ function formatDate(iso: string | null | undefined): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "—";
+  const s = Math.round(seconds);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
 function previewUrl(item: MediaItem): string | null {
   // Private Blob assets are served through the authenticated public proxy.
   if (item.id) return `/api/media/${item.id}/public`;
@@ -77,6 +88,7 @@ export default function MediaPage() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadMedia = useCallback(async (wsId: string) => {
@@ -184,6 +196,18 @@ export default function MediaPage() {
 
   const isVideo = (item: MediaItem) => item.mediaType === "video";
   const isAudio = (item: MediaItem) => item.mediaType === "audio";
+  const canZoom = (item: MediaItem | null) =>
+    !!item && (item.mediaType === "image" || item.mediaType === "video") && !!previewUrl(item);
+  const ZOOM_MIN = 0.25;
+  const ZOOM_MAX = 4;
+  const zoomBy = (dir: number) =>
+    setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((z + 0.25 * dir) * 100) / 100)));
+
+  // Reset zoom whenever a different asset is opened
+  useEffect(() => {
+    setZoom(1);
+  }, [selectedMedia?.id]);
+
   const ext = (item: MediaItem) =>
     item.fileName.includes(".") ? item.fileName.split(".").pop()!.toUpperCase() : "FILE";
 
@@ -479,36 +503,104 @@ export default function MediaPage() {
       {/* Detail Dialog */}
       <Dialog open={!!selectedMedia} onOpenChange={() => setSelectedMedia(null)}>
         {selectedMedia && (
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{selectedMedia.fileName}</DialogTitle>
-              <DialogDescription>Media file details</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-6 sm:grid-cols-2">
-              {/* Preview */}
-              <div className="aspect-square rounded-lg bg-muted flex items-center justify-center overflow-hidden">
-                {selectedMedia.mediaType === "video" && selectedMedia.id ? (
-                  <video
-                    src={previewUrl(selectedMedia)!}
-                    controls
-                    playsInline
-                    className="h-full w-full object-contain"
-                  />
-                ) : previewUrl(selectedMedia) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={previewUrl(selectedMedia)!}
-                    alt={selectedMedia.alt ?? selectedMedia.fileName}
-                    className="h-full w-full object-contain"
-                  />
-                ) : selectedMedia.mediaType === "video" ? (
-                  <Film className="h-16 w-16 text-muted-foreground" />
-                ) : (
-                  <Image className="h-16 w-16 text-muted-foreground" />
-                )}
+          <DialogContent className="flex max-h-[90vh] w-full max-w-6xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-3 border-b px-5 py-3 pr-12">
+              <div className="min-w-0">
+                <DialogTitle className="truncate">{selectedMedia.fileName}</DialogTitle>
+                <DialogDescription className="mt-0.5 text-xs">
+                  {selectedMedia.mediaType} · {formatDate(selectedMedia.createdAt)}
+                </DialogDescription>
               </div>
+              <Badge variant="secondary" className="shrink-0">
+                {ext(selectedMedia)}
+              </Badge>
+            </div>
+
+            {/* Body */}
+            <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+              {/* Preview */}
+              <div className="relative h-[55vh] shrink-0 border-b lg:h-auto lg:min-w-0 lg:flex-1 lg:border-b-0">
+                {canZoom(selectedMedia) && (
+                  <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-full border bg-background/95 px-1.5 py-1 shadow-sm">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 px-0"
+                      onClick={() => zoomBy(-1)}
+                      disabled={zoom <= ZOOM_MIN}
+                      aria-label="Zoom out"
+                    >
+                      <ZoomOut className="h-4 w-4" />
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => setZoom(1)}
+                      title="Reset zoom"
+                      className="w-12 rounded-md px-1 py-0.5 text-center text-xs font-medium tabular-nums hover:bg-accent"
+                    >
+                      {Math.round(zoom * 100)}%
+                    </button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 px-0"
+                      onClick={() => zoomBy(1)}
+                      disabled={zoom >= ZOOM_MAX}
+                      aria-label="Zoom in"
+                    >
+                      <ZoomIn className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+                <div
+                  className={cn(
+                    "flex h-full w-full overflow-auto bg-muted/40",
+                    canZoom(selectedMedia) && (zoom === 1 ? "cursor-zoom-in" : "cursor-zoom-out")
+                  )}
+                  title={canZoom(selectedMedia) ? "Double-click to zoom" : undefined}
+                  onDoubleClick={() => canZoom(selectedMedia) && setZoom((z) => (z === 1 ? 2 : 1))}
+                >
+                  {selectedMedia.mediaType === "video" && previewUrl(selectedMedia) ? (
+                    <video
+                      src={previewUrl(selectedMedia)!}
+                      controls
+                      playsInline
+                      className="m-auto block rounded-md bg-black shadow-sm"
+                      style={
+                        zoom <= 1
+                          ? { width: "auto", height: "auto", maxWidth: "100%", maxHeight: "100%" }
+                          : { width: `${100 * zoom}%`, height: "auto", transition: "width 150ms ease" }
+                      }
+                    />
+                  ) : previewUrl(selectedMedia) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={previewUrl(selectedMedia)!}
+                      alt={selectedMedia.alt ?? selectedMedia.fileName}
+                      className="m-auto block rounded-md bg-black shadow-sm"
+                      style={
+                        zoom <= 1
+                          ? { width: "auto", height: "auto", maxWidth: "100%", maxHeight: "100%" }
+                          : { width: `${100 * zoom}%`, height: "auto", transition: "width 150ms ease" }
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center">
+                      {selectedMedia.mediaType === "video" ? (
+                        <Film className="h-16 w-16 text-muted-foreground" />
+                      ) : isAudio(selectedMedia) ? (
+                        <FileImage className="h-16 w-16 text-muted-foreground" />
+                      ) : (
+                        <Image className="h-16 w-16 text-muted-foreground" />
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Details */}
-              <div className="space-y-4">
+              <div className="min-h-0 w-full shrink-0 space-y-4 overflow-y-auto p-5 lg:w-72">
                 <div>
                   <p className="text-xs text-muted-foreground">File Name</p>
                   <p className="text-sm font-medium break-all">{selectedMedia.fileName}</p>
@@ -517,6 +609,7 @@ export default function MediaPage() {
                   <p className="text-xs text-muted-foreground">Type</p>
                   <Badge variant="secondary" className="mt-1 capitalize">
                     {selectedMedia.mediaType}
+                    {selectedMedia.mimeType ? ` · ${selectedMedia.mimeType}` : ""}
                   </Badge>
                 </div>
                 <div>
@@ -527,6 +620,12 @@ export default function MediaPage() {
                       : "—"}
                   </p>
                 </div>
+                {selectedMedia.mediaType === "video" && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Duration</p>
+                    <p className="text-sm">{formatDuration(selectedMedia.duration)}</p>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs text-muted-foreground">File Size</p>
                   <p className="text-sm">{formatBytes(selectedMedia.fileSize)}</p>
@@ -540,6 +639,14 @@ export default function MediaPage() {
                   <p className="text-sm">{selectedMedia.alt ?? "—"}</p>
                 </div>
                 <div className="flex gap-2 pt-2">
+                  {previewUrl(selectedMedia) && (
+                    <Button asChild size="sm" variant="outline" className="flex-1">
+                      <a href={previewUrl(selectedMedia)!} download={selectedMedia.fileName}>
+                        <Download className="h-4 w-4 mr-1" />
+                        Download
+                      </a>
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="destructive"
