@@ -33,6 +33,9 @@ import {
   ShoppingCart,
   DollarSign,
   Store,
+  User,
+  Megaphone,
+  Info,
 } from "lucide-react";
 import type { MarketProductVideo } from "@/lib/market/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -3028,6 +3031,17 @@ function MarketTab({
   const [analyticsFor, setAnalyticsFor] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<Record<string, MarketAnalyticsRow>>({});
   const [analyticsLoading, setAnalyticsLoading] = useState<string | null>(null);
+  // ── Global search (products / influencers / shops / videos) ──
+  const [searchType, setSearchType] = useState<"product" | "influencer" | "shop" | "video">("product");
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<
+    Array<Record<string, unknown>> | null
+  >(null);
+  const [searchNotice, setSearchNotice] = useState<string | null>(null);
+  // ── Influencer / shop drill-down results (products they promote) ──
+  const [drillResults, setDrillResults] = useState<Record<string, MarketRow[]>>({});
+  const [drillLoading, setDrillLoading] = useState<string | null>(null);
 
   const setFilter = (key: string, value: string) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -3088,6 +3102,81 @@ function MarketTab({
   useEffect(() => {
     void loadStored();
   }, [loadStored]);
+
+  const runSearch = useCallback(
+    async (type: "product" | "influencer" | "shop" | "video", keyword: string) => {
+      const kw = keyword.trim();
+      if (!kw) return;
+      setSearching(true);
+      setSearchNotice(null);
+      try {
+        const params = new URLSearchParams({ workspaceId, type, keyword: kw, limit: "20" });
+        const res = await fetch(`/api/market/search?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Search failed");
+        setSearchResults(data.rows ?? []);
+        setSearchType(type);
+        if (data.notice) setSearchNotice(data.notice);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Search failed");
+      } finally {
+        setSearching(false);
+      }
+    },
+    [workspaceId]
+  );
+
+  /** Drill into an influencer's or shop's products (rows from live API). */
+  const drillProducts = async (kind: "influencer" | "shop", id: string) => {
+    const key = `${kind}:${id}`;
+    if (drillResults[key]) {
+      setDrillResults((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    setDrillLoading(key);
+    try {
+      const url =
+        kind === "influencer"
+          ? `/api/market/products/influencer-products?workspaceId=${workspaceId}&influencerId=${id}`
+          : `/api/market/products/seller-products?workspaceId=${workspaceId}&sellerId=${id}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load products");
+      const rows: MarketRow[] = (data.products ?? []).map((p: Record<string, unknown>, i: number) => ({
+        id: undefined,
+        source: "echotik" as const,
+        sourceProductId: String(p.sourceProductId ?? ""),
+        name: String(p.name ?? "Untitled"),
+        imageUrl: p.imageUrl ? String(p.imageUrl) : null,
+        priceMin: p.priceMin != null ? Number(p.priceMin) : null,
+        priceMax: p.priceMax != null ? Number(p.priceMax) : null,
+        currency: "USD",
+        categoryL1: p.categoryL1 ? String(p.categoryL1) : null,
+        rank: p.rank != null ? Number(p.rank) : i + 1,
+        rankPeriod: "day",
+        sales7d: p.sales7d != null ? Number(p.sales7d) : null,
+        sales30d: p.sales30d != null ? Number(p.sales30d) : null,
+        gmv30d: p.gmv30d != null ? Number(p.gmv30d) : null,
+        growthRate: p.growthRate != null ? Number(p.growthRate) : null,
+        commissionRate: p.commissionRate != null ? Number(p.commissionRate) : null,
+        videoCount: p.videoCount != null ? Number(p.videoCount) : null,
+        creatorCount: p.creatorCount != null ? Number(p.creatorCount) : null,
+        isHot: Boolean(p.isHot),
+        momentumScore: p.momentumScore != null ? Number(p.momentumScore) : null,
+        productId: p.productId ? String(p.productId) : null,
+      }));
+      setDrillResults((prev) => ({ ...prev, [key]: rows }));
+      if (data.notice) setSearchNotice(data.notice);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load products");
+    } finally {
+      setDrillLoading(null);
+    }
+  };
 
   const loadWatched = useCallback(async () => {
     try {
@@ -3281,6 +3370,299 @@ function MarketTab({
             : `Winning products — who climbed fastest this ${period}.`}
         </span>
       </div>
+
+      {/* ── Global search: products / influencers / shops / videos ── */}
+      <Card className="p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-md border bg-muted/40 p-1">
+            {(["product", "influencer", "shop", "video"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setSearchType(t)}
+                className={`rounded px-2.5 py-1 text-xs font-medium capitalize transition ${
+                  searchType === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t === "product" ? "Products" : t === "influencer" ? "Influencers" : t === "shop" ? "Shops" : "Videos"}
+              </button>
+            ))}
+          </div>
+          <input
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void runSearch(searchType, searchKeyword)}
+            placeholder={
+              searchType === "influencer"
+                ? "Enter nickname, TikTok ID, email or video hashtag…"
+                : searchType === "shop"
+                  ? "Search shops / sellers…"
+                  : searchType === "video"
+                    ? "Search videos by keyword…"
+                    : "Search products by name or keyword…"
+            }
+            className="h-9 min-w-[240px] flex-1 rounded-md border bg-background px-3 text-sm"
+          />
+          <Button size="sm" onClick={() => void runSearch(searchType, searchKeyword)} disabled={searching || !searchKeyword.trim()}>
+            {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Search
+          </Button>
+          {searchResults && (
+            <Button size="sm" variant="ghost" onClick={() => { setSearchResults(null); setSearchNotice(null); setDrillResults({}); }}>
+              Clear results
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      {searchNotice && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          {searchNotice}
+        </p>
+      )}
+
+      {searchResults && (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2">{searchType === "product" ? "Product" : searchType === "influencer" ? "Influencer" : searchType === "shop" ? "Shop" : "Video"}</th>
+                    {searchType === "influencer" && (
+                      <>
+                        <th className="px-3 py-2">Followers</th>
+                        <th className="px-3 py-2">GMV</th>
+                        <th className="px-3 py-2">Sales</th>
+                        <th className="px-3 py-2">Videos</th>
+                      </>
+                    )}
+                    {searchType === "shop" && (
+                      <>
+                        <th className="px-3 py-2">Followers</th>
+                        <th className="px-3 py-2">Products</th>
+                        <th className="px-3 py-2">GMV</th>
+                        <th className="px-3 py-2">Sales</th>
+                      </>
+                    )}
+                    {searchType === "video" && (
+                      <>
+                        <th className="px-3 py-2">Creator</th>
+                        <th className="px-3 py-2">Views</th>
+                        <th className="px-3 py-2">Sales</th>
+                        <th className="px-3 py-2">GMV</th>
+                      </>
+                    )}
+                    {searchType === "product" && (
+                      <>
+                        <th className="px-3 py-2">Price</th>
+                        <th className="px-3 py-2">Comm</th>
+                        <th className="px-3 py-2">Sales 30d</th>
+                        <th className="px-3 py-2">GMV 30d</th>
+                      </>
+                    )}
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {searchResults.map((r, i) => {
+                    if (searchType === "influencer") {
+                      const key = `influencer:${String(r.sourceCreatorId ?? "")}`;
+                      return (
+                        <tr key={String(r.sourceCreatorId ?? i)} className="border-b last:border-0">
+                          <td className="max-w-[300px] px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              {r.avatarUrl ? (
+                                <img src={String(r.avatarUrl)} alt="" className="h-9 w-9 rounded-full border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                              ) : (
+                                <div className="flex h-9 w-9 items-center justify-center rounded-full border bg-muted">
+                                  <User className="h-4 w-4 text-muted-foreground" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">@{String(r.name ?? "")}</p>
+                                {r.category ? <p className="truncate text-xs text-muted-foreground">{String(r.category)}</p> : null}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.followers != null ? Number(r.followers) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{money(r.gmv != null ? Number(r.gmv) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.sales != null ? Number(r.sales) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.videoCount != null ? Number(r.videoCount) : null)}</td>
+                          <td className="px-3 py-2">
+                            <Button size="sm" variant="outline" disabled={drillLoading === key} onClick={() => void drillProducts("influencer", String(r.sourceCreatorId ?? ""))}>
+                              {drillLoading === key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}
+                              Products
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    if (searchType === "shop") {
+                      const key = `shop:${String(r.sourceSellerId ?? "")}`;
+                      return (
+                        <tr key={String(r.sourceSellerId ?? i)} className="border-b last:border-0">
+                          <td className="max-w-[300px] px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              {r.coverUrl ? (
+                                <img src={String(r.coverUrl)} alt="" className="h-9 w-9 rounded-md border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                              ) : (
+                                <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-muted">
+                                  <Store className="h-4 w-4 text-muted-foreground" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">{String(r.name)}</p>
+                                {r.category ? <p className="truncate text-xs text-muted-foreground">{String(r.category)}</p> : null}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.followers != null ? Number(r.followers) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.productCount != null ? Number(r.productCount) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{money(r.gmv != null ? Number(r.gmv) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.sales != null ? Number(r.sales) : null)}</td>
+                          <td className="px-3 py-2">
+                            <Button size="sm" variant="outline" disabled={drillLoading === key} onClick={() => void drillProducts("shop", String(r.sourceSellerId ?? ""))}>
+                              {drillLoading === key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}
+                              Products
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    if (searchType === "video") {
+                      const isAd = Boolean(r.isAd);
+                      return (
+                        <tr key={String(r.videoId ?? i)} className="border-b last:border-0">
+                          <td className="max-w-[340px] px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              {r.coverUrl ? (
+                                <img src={String(r.coverUrl)} alt="" className="h-9 w-9 rounded-md border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                              ) : (
+                                <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-muted">
+                                  <Play className="h-4 w-4 text-muted-foreground" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">{String(r.description ?? r.videoId ?? "")}</p>
+                                <div className="flex items-center gap-1.5">
+                                  {isAd && (
+                                    <Badge className="bg-purple-100 text-purple-700">
+                                      <Megaphone className="h-3 w-3" /> Promote
+                                    </Badge>
+                                  )}
+                                  {r.isAi === true && <Badge className="bg-slate-100 text-slate-600">AI</Badge>}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-xs">@{String(r.creatorName ?? "—")}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.views != null ? Number(r.views) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{fmt(r.sales != null ? Number(r.sales) : null)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{money(r.gmv != null ? Number(r.gmv) : null)}</td>
+                          <td className="px-3 py-2">
+                            <Button size="sm" variant="outline" onClick={() => window.open(`https://www.tiktok.com/@${String(r.creatorName ?? "")}/video/${String(r.videoId ?? "")}`, "_blank")}>
+                              <Play className="h-3.5 w-3.5" /> Watch
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    // product search result
+                    const key = `search-product:${String(r.sourceProductId ?? i)}`;
+                    return (
+                      <tr key={key} className="border-b last:border-0">
+                        <td className="max-w-[300px] px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            {r.imageUrl ? (
+                              <img src={String(r.imageUrl)} alt="" className="h-9 w-9 rounded-md border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                            ) : (
+                              <div className="flex h-9 w-9 items-center justify-center rounded-md border bg-muted">
+                                <Package className="h-4 w-4 text-muted-foreground" />
+                              </div>
+                            )}
+                            <p className="truncate font-medium">{String(r.name ?? "")}</p>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {r.priceMin != null ? `$${Number(r.priceMin)}` : "—"}
+                          {r.priceMax != null && Number(r.priceMax) !== Number(r.priceMin) ? `–$${Number(r.priceMax)}` : ""}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{pct(r.commissionRate != null ? Number(r.commissionRate) : null)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{fmt(r.sales30d != null ? Number(r.sales30d) : null)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{money(r.gmv30d != null ? Number(r.gmv30d) : null)}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => openDetail({ id: undefined, source: "echotik", sourceProductId: String(r.sourceProductId ?? ""), name: String(r.name ?? ""), imageUrl: r.imageUrl ? String(r.imageUrl) : null, priceMin: r.priceMin != null ? Number(r.priceMin) : null, priceMax: r.priceMax != null ? Number(r.priceMax) : null, currency: "USD", categoryL1: r.categoryL1 ? String(r.categoryL1) : null, rank: null, rankPeriod: "day", sales7d: null, sales30d: r.sales30d != null ? Number(r.sales30d) : null, gmv30d: r.gmv30d != null ? Number(r.gmv30d) : null, growthRate: null, commissionRate: r.commissionRate != null ? Number(r.commissionRate) : null, videoCount: r.videoCount != null ? Number(r.videoCount) : null, creatorCount: r.creatorCount != null ? Number(r.creatorCount) : null, isHot: false, momentumScore: null, productId: null } as MarketRow)}
+                              title="Details & videos"
+                            >
+                              <Info className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => adopt({ id: undefined, source: "echotik", sourceProductId: String(r.sourceProductId ?? ""), name: String(r.name ?? ""), imageUrl: r.imageUrl ? String(r.imageUrl) : null, priceMin: r.priceMin != null ? Number(r.priceMin) : null, priceMax: r.priceMax != null ? Number(r.priceMax) : null, currency: "USD", categoryL1: r.categoryL1 ? String(r.categoryL1) : null, rank: null, rankPeriod: "day", sales7d: null, sales30d: r.sales30d != null ? Number(r.sales30d) : null, gmv30d: r.gmv30d != null ? Number(r.gmv30d) : null, growthRate: null, commissionRate: r.commissionRate != null ? Number(r.commissionRate) : null, videoCount: r.videoCount != null ? Number(r.videoCount) : null, creatorCount: r.creatorCount != null ? Number(r.creatorCount) : null, isHot: false, momentumScore: null, productId: null } as MarketRow)}
+                              disabled={adopting === `search-product:${String(r.sourceProductId ?? "")}`}
+                              title="Add to Products"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {searchResults.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                        No {searchType} results for “{searchKeyword.trim()}”.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Drill-down products (influencer / shop) */}
+            {Object.entries(drillResults).map(([key, prows]) => (
+              <div key={key} className="border-t">
+                <div className="flex items-center justify-between px-3 py-2">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {key.startsWith("influencer:") ? "Influencer's products" : "Shop's products"} ({prows.length})
+                  </p>
+                  <Button size="sm" variant="ghost" onClick={() => setDrillResults((prev) => { const n = { ...prev }; delete n[key]; return n; })}>
+                    Close
+                  </Button>
+                </div>
+                <div className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {prows.map((p) => (
+                    <div key={p.sourceProductId} className="flex items-center gap-2 rounded-md border p-2">
+                      {p.imageUrl ? (
+                        <img src={p.imageUrl} alt="" className="h-10 w-10 rounded-md border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-muted">
+                          <Package className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {p.priceMin ? `$${p.priceMin}` : "—"} · {fmt(p.sales30d)} sales · {money(p.gmv30d)}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => adopt(p)} disabled={adopting === p.sourceProductId} title="Add to Products">
+                        <Plus className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {showFilters && (
         <Card>
@@ -3916,6 +4298,10 @@ const MODEL_RATE_S: Record<string, number> = {
 function CloneTab({ workspaceId }: { workspaceId: string }) {
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
+  const [libraryVideos, setLibraryVideos] = useState<
+    { id: string; fileName: string; url: string; duration: number | null }[]
+  >([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
   const [editPrompt, setEditPrompt] = useState("");
   const [textChange, setTextChange] = useState("");
   const [motionPrompt, setMotionPrompt] = useState("");
@@ -3924,6 +4310,35 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
   const [busy, setBusy] = useState(false);
 
   const canSubmit = (sourceFile || sourceUrl.trim()) && editPrompt.trim() && !busy;
+
+  // Load workspace video assets for the "from Media Library" source picker.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLibraryLoading(true);
+      try {
+        const res = await fetch(`/api/media?workspaceId=${encodeURIComponent(workspaceId)}`);
+        if (res.ok) {
+          const items = (await res.json()) as {
+            id: string;
+            fileName: string;
+            url: string;
+            duration: number | null;
+            mediaType: string;
+          }[];
+          if (!cancelled)
+            setLibraryVideos(items.filter((i) => i.mediaType === "video"));
+        }
+      } catch {
+        // library picker is optional — leave empty
+      } finally {
+        if (!cancelled) setLibraryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -3981,6 +4396,39 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
             value={sourceUrl}
             onChange={(e) => setSourceUrl(e.target.value)}
           />
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            or from Media Library
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={libraryVideos.find((v) => v.url === sourceUrl)?.id ?? ""}
+              onChange={(e) => {
+                const v = libraryVideos.find((x) => x.id === e.target.value);
+                if (v) {
+                  setSourceUrl(v.url);
+                  setSourceFile(null);
+                }
+              }}
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">
+                {libraryLoading ? "Loading library…" : "Pick a library video…"}
+              </option>
+              {libraryVideos.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.fileName}
+                  {v.duration ? ` (${Math.round(v.duration)}s)` : ""}
+                </option>
+              ))}
+            </select>
+            {libraryVideos.length === 0 && !libraryLoading && (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                No videos yet — download or upload one first
+              </span>
+            )}
+          </div>
         </div>
         <div className="space-y-2">
           <Label>Edit prompt</Label>

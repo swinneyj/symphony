@@ -7,7 +7,7 @@
  * Dry-run (MARKET_DRY_RUN=1): returns realistic sample rows WITHOUT storing
  * them — the DB only ever sees real source data.
  */
-import type { MarketCreator, MarketProduct, MarketProductVideo, MarketQuery, MarketSource, ProductAnalytics } from "./types";
+import type { MarketCreator, MarketInfluencer, MarketProduct, MarketProductVideo, MarketQuery, MarketSearchType, MarketShop, MarketSource, ProductAnalytics } from "./types";
 import { dryRunEnabled } from "./types";
 import * as echotik from "./echotik";
 import * as echotikSite from "./echotik-site";
@@ -291,6 +291,45 @@ export async function fetchSellerProducts(
     return { rows: await echotikImpl().fetchSellerProducts(sellerId, limit), dryRun: false };
   }
   throw new Error(`[market] seller products not implemented for source: ${source}`);
+}
+
+/**
+ * Global search across entity types (products / influencers / shops / videos).
+ * Only the EchoTik site adapter implements this — the paid API platform
+ * adapter has no equivalent surface, and FastMoss isn't wired for it.
+ */
+export async function searchMarketEntities(
+  type: MarketSearchType,
+  keyword: string,
+  region = "US",
+  limit = 20
+): Promise<{ rows: (MarketProduct | MarketInfluencer | MarketShop | MarketProductVideo)[]; dryRun: boolean }> {
+  if (dryRunEnabled()) return { rows: [], dryRun: true };
+  const impl = echotikImpl();
+  switch (type) {
+    case "product":
+      return { rows: await impl.searchProducts({ period: "day", region, keyword, limit }), dryRun: false };
+    case "influencer":
+      if (!("searchInfluencers" in impl)) break;
+      return { rows: await impl.searchInfluencers(keyword, region, limit), dryRun: false };
+    case "shop":
+      if (!("searchShops" in impl)) break;
+      return { rows: await impl.searchShops(keyword, region, limit), dryRun: false };
+    case "video":
+      if (!("searchVideos" in impl)) break;
+      return { rows: await impl.searchVideos(keyword, region, limit), dryRun: false };
+  }
+  throw new Error(`[market] entity search not implemented for source: echotik (API adapter)`);
+}
+
+/** Every product promoted by a creator (influencers/{id}/products). */
+export async function fetchInfluencerProducts(influencerId: string, limit = 24) {
+  if (dryRunEnabled()) return { rows: [], dryRun: true };
+  const impl = echotikImpl();
+  if (!("fetchInfluencerProducts" in impl)) {
+    throw new Error(`[market] influencer products not implemented for source: echotik (API adapter)`);
+  }
+  return { rows: await impl.fetchInfluencerProducts(influencerId, limit), dryRun: false };
 }
 
 /**

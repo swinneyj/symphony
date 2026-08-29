@@ -179,6 +179,49 @@ export interface MarketProductVideo {
   hashTags: string[] | null;
   metadata?: Record<string, unknown>;
 }
+
+/** Entity type for global search (site search/* endpoints). */
+export type MarketSearchType = "product" | "influencer" | "shop" | "video";
+
+/** A shop/seller found via global search (search/sellers). */
+export interface MarketShop {
+  source: MarketSource;
+  sourceSellerId: string;
+  name: string;
+  coverUrl: string | null;
+  category: string | null;
+  region: string | null;
+  /** Shop follower count (site field: followers_count). */
+  followers: number | null;
+  productCount: number | null;
+  videoCount: number | null;
+  liveCount: number | null;
+  sales: number | null;
+  gmv: number | null;
+  rating: number | null;
+  isSShop: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+/** A creator/influencer found via global search (search/influencers). */
+export interface MarketInfluencer {
+  source: MarketSource;
+  sourceCreatorId: string;
+  name: string;
+  avatarUrl: string | null;
+  bio: string | null;
+  followers: number | null;
+  /** Total likes (heart_count / total_digg_cnt). */
+  likes: number | null;
+  videoCount: number | null;
+  liveCount: number | null;
+  sales: number | null;
+  gmv: number | null;
+  category: string | null;
+  region: string | null;
+  rating: number | null;
+  metadata?: Record<string, unknown>;
+}
 export class MissingSourceCredentialsError extends Error {
   constructor(source: MarketSource, keys: string[]) {
     super(

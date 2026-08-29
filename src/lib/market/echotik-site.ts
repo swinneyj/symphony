@@ -32,7 +32,7 @@
  * Field names differ from the API platform (open.echotik.live) — everything is
  * normalized to the shared Market* types so the UI/routes/DB are unchanged.
  */
-import type { MarketCreator, MarketProduct, MarketProductVideo, MarketQuery, MarketSource, ProductAnalytics, TrendPoint } from "./types";
+import type { MarketCreator, MarketInfluencer, MarketProduct, MarketProductVideo, MarketQuery, MarketShop, MarketSource, ProductAnalytics, TrendPoint } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 import { cacheGet, cacheSet, cacheKey } from "./cache";
 
@@ -52,6 +52,10 @@ const CACHE_TTL_SECONDS: Record<string, number> = {
   "/products/{id}/videos": 6 * 3600,
   "/products/{id}/influencers": 6 * 3600,
   "/sellers/{id}/products": 6 * 3600,
+  "/search/influencers": 30 * 60,
+  "/search/sellers": 30 * 60,
+  "/search/videos": 30 * 60,
+  "/influencers/{id}/products": 6 * 3600,
 };
 
 type ApiRow = Record<string, unknown>;
@@ -385,16 +389,19 @@ export async function fetchProductCreators(sourceProductId: string, limit = 24):
 
 function normalizeVideo(r: ApiRow): MarketProductVideo {
   const influencer =
-    typeof r.influencer === "object" && r.influencer ? (r.influencer as Record<string, unknown>) : null;
+    typeof r.influencer === "object" && r.influencer && !Array.isArray(r.influencer)
+      ? (r.influencer as Record<string, unknown>)
+      : null;
   const title = str(r.video_title) ?? "";
   const hashTags = title
     .split(/\s+/)
     .filter((t) => t.startsWith("#"))
     .slice(0, 8) ?? null;
+  const creatorHandle = str(influencer?.unique_id) ?? str(r.influencer_name) ?? null;
   return {
     videoId: String(r.video_id ?? ""),
-    creatorName: str(influencer?.unique_id) ?? str(r.influencer_name) ?? null,
-    creatorId: str(r.influencer_id) ?? null,
+    creatorName: creatorHandle || null,
+    creatorId: str(influencer?.influencer_id) ?? (r.influencer_id && String(r.influencer_id) !== "0" ? str(r.influencer_id) : null) ?? null,
     description: title || null,
     coverUrl: str(r.cover_url) ?? null,
     playUrl: str(r.video_url) ?? str(r.share_url) ?? null,
@@ -451,6 +458,87 @@ export async function fetchSellerProducts(sellerId: string, limit = 24): Promise
     { region: "US" },
     limit
   );
+  return rows.map((r, i) => normalizeLeaderboard(r, i + 1, "day", "US"));
+}
+
+// ─── Global search (search/*) ───────────────────────────────────────────────
+
+/**
+ * Global search across the site's entity types — mirrors the site's search
+ * dropdown (Influencer / Product / Shop / Live / Video / Hash Tag). Verified
+ * live: search/products, search/influencers, search/sellers, search/videos.
+ * (search/shops and search/hashtags 404 server-side — not used.)
+ */
+
+function normalizeInfluencer(r: ApiRow): MarketInfluencer {
+  const region = regionKey(r.region);
+  return {
+    source: "echotik" as MarketSource,
+    sourceCreatorId: String(r.influencer_id ?? ""),
+    name: str(r.unique_id) ?? str(r.influencer_name) ?? "Unknown creator",
+    avatarUrl: str(r.avatar_url) ?? null,
+    bio: str(r.bio) ?? null,
+    followers: parseNum(r.follower_count) ?? parseNum(r.total_followers_cnt) ?? null,
+    likes: parseNum(r.heart_count) ?? parseNum(r.total_digg_cnt) ?? null,
+    videoCount: parseNum(r.video_count) ?? parseNum(r.videos_count) ?? null,
+    liveCount: parseNum(r.live_count) ?? parseNum(r.total_live_cnt) ?? null,
+    sales: parseNum(r.sales) ?? parseNum(r.total_sale_cnt) ?? null,
+    gmv: parseNum(r.gmv) ?? null,
+    category: str(r.category) ?? null,
+    region,
+    rating: parseNum(r.certificate_type) ?? parseNum(r.influencer_level) ?? null,
+    metadata: { raw: r, endpoint: "site/search/influencers", engagementRate: parsePct(r.engagement_rate) },
+  };
+}
+
+/** Search creators/influencers by nickname, TikTok ID, email, or video hashtag. */
+export async function searchInfluencers(keyword: string, region = "US", limit = 20): Promise<MarketInfluencer[]> {
+  const rows = await getAll(`/search/influencers`, { keyword, region }, limit);
+  return rows.map(normalizeInfluencer).filter((c) => c.sourceCreatorId);
+}
+
+function normalizeShop(r: ApiRow): MarketShop {
+  const region = regionKey(r.region);
+  // Search rows zero-out follower/product/video counts (data gap — a shop with
+  // 2.73M sales does not have 0 followers). Treat literal "0" as unknown.
+  const cnt = (v: unknown): number | null => {
+    const n = parseNum(v);
+    return n === 0 ? null : n;
+  };
+  return {
+    source: "echotik" as MarketSource,
+    sourceSellerId: String(r.seller_id ?? ""),
+    name: str(r.seller_name) ?? "Unknown shop",
+    coverUrl: str(r.cover_url) ?? null,
+    category: str(r.category) ?? null,
+    region,
+    followers: cnt(r.followers_count),
+    productCount: cnt(r.total_product_cnt) ?? cnt(r.product_count) ?? cnt(r.total_product_count),
+    videoCount: cnt(r.total_video_cnt) ?? cnt(r.total_video_count),
+    liveCount: cnt(r.total_live_cnt) ?? cnt(r.total_live_count),
+    sales: parseNum(r.total_sale_cnt) ?? null,
+    gmv: parseNum(r.total_gmv_amt) ?? null,
+    rating: parseNum(r.seller_rating) ?? null,
+    isSShop: r.is_s_shop === "1" || r.is_s_shop === 1 || r.is_s_shop === true,
+    metadata: { raw: r, endpoint: "site/search/sellers", salesTrending: str(r.sales_trending) },
+  };
+}
+
+/** Search shops/sellers by name (search/sellers). */
+export async function searchShops(keyword: string, region = "US", limit = 20): Promise<MarketShop[]> {
+  const rows = await getAll(`/search/sellers`, { keyword, region }, limit);
+  return rows.map(normalizeShop).filter((s) => s.sourceSellerId);
+}
+
+/** Search videos by keyword (search/videos) — same normalizeVideo as product videos. */
+export async function searchVideos(keyword: string, region = "US", limit = 20): Promise<MarketProductVideo[]> {
+  const rows = await getAll(`/search/videos`, { keyword, region }, limit);
+  return rows.map(normalizeVideo).filter((v) => v.videoId);
+}
+
+/** Every product promoted by a creator/influencer (influencers/{id}/products). */
+export async function fetchInfluencerProducts(influencerId: string, limit = 24): Promise<MarketProduct[]> {
+  const rows = await getAll(`/influencers/${influencerId}/products`, { region: "US" }, limit);
   return rows.map((r, i) => normalizeLeaderboard(r, i + 1, "day", "US"));
 }
 

@@ -454,6 +454,34 @@ def detect_platform(url):
     return "other"
 
 
+def safe_filename(name, ext):
+    base = re.sub(r"[^\w\- ]+", "_", name or "download").strip("_") or "download"
+    return f"{base[:80]}.{ext}"
+
+
+def probe_video(path):
+    """Best-effort ffprobe → (width, height, duration_s). All None on failure."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-print_format", "json",
+             "-show_streams", "-show_format", path],
+            capture_output=True, text=True, timeout=60, check=True,
+        ).stdout
+        data = json.loads(out)
+        duration = None
+        width = height = None
+        for s in data.get("streams", []):
+            if s.get("codec_type") == "video":
+                width = s.get("width")
+                height = s.get("height")
+                duration = duration or s.get("duration")
+        if not duration:
+            duration = (data.get("format") or {}).get("duration")
+        return width, height, int(float(duration)) if duration else None
+    except Exception:  # noqa: BLE001 — metadata is best-effort
+        return None, None, None
+
+
 def claim_downloads(cur, limit):
     cur.execute(
         """
@@ -466,7 +494,7 @@ def claim_downloads(cur, limit):
           LIMIT %s
           FOR UPDATE SKIP LOCKED
         )
-        RETURNING id, workspace_id, source_url, platform, want_audio
+        RETURNING id, workspace_id, source_url, platform, want_audio, created_by_id
         """,
         (limit,),
     )
@@ -487,7 +515,7 @@ def requeue_stale_downloads(cur):
     return cur.rowcount
 
 
-def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio):
+def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio, created_by):
     workdir = tempfile.mkdtemp(prefix="dl-worker-")
     try:
         # TikTok → DC-safe direct path; other platforms → yt-dlp impersonation.
@@ -506,6 +534,28 @@ def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio):
             WHERE id = %s
             """,
             (title, author, video_url, audio_url, dl_id),
+        )
+        # Also surface it in the Media Library (media_assets) so downloaded
+        # videos are reusable (e.g. as a Video Clone source) without re-upload.
+        width, height, dur = probe_video(video_path)
+        cur.execute(
+            """
+            INSERT INTO media_assets
+              (workspace_id, uploaded_by_id, file_name, file_size, mime_type,
+               media_type, url, width, height, duration, alt)
+            VALUES (%s, %s, %s, %s, 'video/mp4', 'video', %s, %s, %s, %s, %s)
+            """,
+            (
+                _ws,
+                created_by,
+                safe_filename(title or f"download-{dl_id}", "mp4"),
+                os.path.getsize(video_path),
+                video_url,
+                width,
+                height,
+                dur,
+                title or source_url,
+            ),
         )
         conn.commit()
         print(f"[ads-worker] download {dl_id} done → {video_url}" + (" + mp3" if audio_url else ""))
@@ -541,8 +591,8 @@ def tick():
             conn.commit()
         dl_rows = claim_downloads(cur, CONCURRENCY)
         conn.commit()
-        for dl_id, ws, url, platform, want_audio in dl_rows:
-            process_download(conn, cur, dl_id, ws, url, platform, want_audio)
+        for dl_id, ws, url, platform, want_audio, created_by in dl_rows:
+            process_download(conn, cur, dl_id, ws, url, platform, want_audio, created_by)
     finally:
         conn.close()
 
