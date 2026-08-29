@@ -4008,6 +4008,9 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
             >
               <option value="kling-pro">Kling 3.0 Pro (~$0.30)</option>
               <option value="kling-standard">Kling 3.0 Standard (~$0.15)</option>
+              <option value="kling-turbo">Kling 2.5 Turbo Pro (~$0.35)</option>
+              <option value="kling-1.5-pro">Kling 1.5 Pro (~$0.20)</option>
+              <option value="kling-v1">Kling 1.0 Standard (~$0.10)</option>
               <option value="sora">Sora 2 (OpenAI credits)</option>
               <option value="veo" disabled>Veo 3.1 (needs Gemini prepay)</option>
             </select>

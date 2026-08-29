@@ -276,7 +276,31 @@ export async function generateCloneFrameEdit(
 }
 
 /** Models selectable for the clone's re-animate step. */
-export type CloneModel = "kling-pro" | "kling-standard" | "sora" | "veo";
+export type CloneModel =
+  | "kling-pro"
+  | "kling-standard"
+  | "kling-v1"
+  | "kling-1.5-pro"
+  | "kling-turbo"
+  | "sora"
+  | "veo";
+
+/**
+ * Kling i2v queue ids by picker model. Verified live on fal 2026-08-29:
+ * v1/standard, v1.5/pro (v1/pro redirects there), v2.5-turbo/pro and the
+ * v3 pair all exist. Schema split: v3 uses `start_image_url`, older gens
+ * use `image_url`.
+ */
+const KLING_CLONE_QUEUES: Record<
+  Extract<CloneModel, "kling-pro" | "kling-standard" | "kling-v1" | "kling-1.5-pro" | "kling-turbo">,
+  { queueId: string; imageField: "start_image_url" | "image_url" }
+> = {
+  "kling-pro": { queueId: "/fal-ai/kling-video/v3/pro/image-to-video", imageField: "start_image_url" },
+  "kling-standard": { queueId: "/fal-ai/kling-video/v3/standard/image-to-video", imageField: "start_image_url" },
+  "kling-v1": { queueId: "/fal-ai/kling-video/v1/standard/image-to-video", imageField: "image_url" },
+  "kling-1.5-pro": { queueId: "/fal-ai/kling-video/v1.5/pro/image-to-video", imageField: "image_url" },
+  "kling-turbo": { queueId: "/fal-ai/kling-video/v2.5-turbo/pro/image-to-video", imageField: "image_url" },
+};
 
 export async function generateCloneVideo(
   startImageUrl: string,
@@ -307,12 +331,9 @@ export async function generateCloneVideo(
     });
     return r.url;
   }
-  const queueId =
-    model === "kling-standard"
-      ? "/fal-ai/kling-video/v3/standard/image-to-video"
-      : "/fal-ai/kling-video/v3/pro/image-to-video";
+  const { queueId, imageField } = KLING_CLONE_QUEUES[model];
   return falSubmit(queueId, key, {
-    start_image_url: startImageUrl,
+    [imageField]: startImageUrl,
     prompt,
     duration: String(Math.min(Math.max(durationSec, 5), 10)),
   });

@@ -33,7 +33,17 @@ export async function POST(request: Request) {
     const motionPrompt = (form.get("motionPrompt") as string | null)?.trim() || undefined;
     const durationSec = Math.min(Math.max(Number(form.get("durationSec") ?? 5) || 5, 5), 10);
     const model = (form.get("model") as string) || "kling-pro";
-    if (!["kling-pro", "kling-standard", "sora", "veo"].includes(model)) {
+    if (
+      ![
+        "kling-pro",
+        "kling-standard",
+        "kling-v1",
+        "kling-1.5-pro",
+        "kling-turbo",
+        "sora",
+        "veo",
+      ].includes(model)
+    ) {
       return NextResponse.json({ error: "invalid model" }, { status: 400 });
     }
     const file = form.get("source") as File | null;
