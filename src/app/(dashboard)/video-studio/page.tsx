@@ -2402,6 +2402,21 @@ function FilterField({ label, value, onChange, type = "text", step, placeholder 
   );
 }
 
+/** Amber flag for a literal 0% engagement rate — EchoTik itself flags these
+ *  accounts; typically automated mass-posters (e.g. @spongebobprodsz).
+ *  `null` (unknown) and small-but-nonzero rates pass silently. */
+function LowEngagementFlag({ rate }: { rate: number | null }) {
+  if (rate !== 0) return null;
+  return (
+    <Badge
+      className="bg-amber-100 text-amber-700"
+      title="0% engagement rate — possible automated/mass-poster account"
+    >
+      ⚠ 0% eng
+    </Badge>
+  );
+}
+
 function AnalyticsPanel({ a }: { a: MarketAnalyticsRow | undefined }) {
   if (!a) return null;
   const periods = a.panorama ?? [];
@@ -2918,7 +2933,10 @@ function ProductDetailBody({
                         {c.salesForProduct != null && ` · ${compactNum(c.salesForProduct)} sales`}
                       </p>
                     </div>
-                    {c.rating != null && <Badge className="bg-slate-100 text-slate-700">★ {c.rating}</Badge>}
+                    <div className="flex flex-col items-end gap-1">
+                      <LowEngagementFlag rate={c.engagementRate} />
+                      {c.rating != null && <Badge className="bg-slate-100 text-slate-700">★ {c.rating}</Badge>}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -3581,7 +3599,10 @@ function MarketTab({
                                 </div>
                               )}
                               <div className="min-w-0">
-                                <p className="truncate font-medium">@{String(r.name ?? "")}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="truncate font-medium">@{String(r.name ?? "")}</p>
+                                  <LowEngagementFlag rate={r.engagementRate != null ? Number(r.engagementRate) : null} />
+                                </div>
                                 {r.category ? <p className="truncate text-xs text-muted-foreground">{String(r.category)}</p> : null}
                               </div>
                             </div>
@@ -4256,9 +4277,12 @@ function MarketTab({
                                   {c.salesForProduct != null && ` · ${c.salesForProduct.toLocaleString()} sales`}
                                 </p>
                               </div>
-                              {c.rating != null && (
-                                <Badge className="bg-slate-100 text-slate-700">★ {c.rating}</Badge>
-                              )}
+                              <div className="flex flex-col items-end gap-1">
+                                <LowEngagementFlag rate={c.engagementRate} />
+                                {c.rating != null && (
+                                  <Badge className="bg-slate-100 text-slate-700">★ {c.rating}</Badge>
+                                )}
+                              </div>
                             </div>
                           ))}
                           {(creators[row.id] ?? []).length === 0 && !creatorsLoading && (

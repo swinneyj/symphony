@@ -220,6 +220,9 @@ export interface MarketInfluencer {
   category: string | null;
   region: string | null;
   rating: number | null;
+  /** Engagement rate as a fraction (0.15 = 15%). Literal 0 (not null) can
+   *  indicate an automated/mass-poster account — flag in the UI. */
+  engagementRate: number | null;
   metadata?: Record<string, unknown>;
 }
 export class MissingSourceCredentialsError extends Error {

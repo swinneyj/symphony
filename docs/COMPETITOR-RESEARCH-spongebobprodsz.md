@@ -52,6 +52,18 @@ Research date: 2026-08-29 · Source: EchoTik site API (echotik.live) · Data: /o
 - The huge per-product numbers above come from OTHER creators — they just ride trending products with low-effort posts.
 - Note: influencer /videos endpoint ignores order_by — always sorts publish-date desc. To rank by views/sales must fetch pages and sort client-side, or use product-level /products/{id}/videos (which has no such quirk).
 
+## Commission data — the real picture (verified live 2026-08-29, round 2)
+
+- Leaderboard rows carry commission on **30–36%** of products.
+- **Detail endpoint confirmed NOT a fix**: `/products/{id}` returns `commission: ""`
+  for the same missing products — the data genuinely does not exist in EchoTik
+  (their own site shows N/A). Hydrating the feed from detail = +11.7s latency and
+  quota burn for 0 filled cells. **Do not retry this.**
+- The **only** endpoint with near-full coverage is `/influencers/{id}/products`
+  (**19/20 = 95%**), because commission lives on *affiliate/promotable* products,
+  not on every best-seller. Feasible follow-up: when an influencer drill-down is
+  open, use its rows to fill commission for those products. Out of scope for now.
+
 ## What's worth replicating (for Symphony)
 
 1. **Catalog breadth**: 809 products — the "finds" model is mass affiliate on trending products. Not a replicable *earnings* model (their own GMV is small), but the *data* model is: product→videos→influencers drill-down is exactly what Market tab now ships.

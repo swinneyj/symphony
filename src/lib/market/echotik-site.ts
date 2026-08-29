@@ -125,6 +125,18 @@ function authHeaders(): Record<string, string> {
   };
 }
 
+/**
+ * Map a concrete API path back to its `{id}` template so the TTL table
+ * matches detail endpoints. Verified live 2026-08-29: without this, `/products/123`
+ * never matched the `/products/{id}` key → drill-down calls (detail, videos,
+ * creators, seller/influencer products) bypassed KV entirely and re-burned
+ * site quota (1,000 detail views/day) on every click.
+ */
+function ttlFor(path: string): number | undefined {
+  const template = path.replace(/\/\d+/g, "/{id}");
+  return CACHE_TTL_SECONDS[template] ?? CACHE_TTL_SECONDS[path];
+}
+
 /** Single-page GET; `data` may be an array (lists) or object (detail). Cached. */
 async function get(
   path: string,
@@ -135,7 +147,7 @@ async function get(
     if (v !== undefined && v !== null && v !== "") qs[k] = String(v);
   }
   const query = new URLSearchParams(qs).toString();
-  const ttl = CACHE_TTL_SECONDS[path];
+  const ttl = ttlFor(path);
   if (ttl) {
     const cached = await cacheGet<{ rows: ApiRow[]; object: ApiRow | null; meta: Record<string, unknown> }>(
       cacheKey("echotik-site", `${path}?${query}`)
@@ -489,6 +501,7 @@ function normalizeInfluencer(r: ApiRow): MarketInfluencer {
     category: str(r.category) ?? null,
     region,
     rating: parseNum(r.certificate_type) ?? parseNum(r.influencer_level) ?? null,
+    engagementRate: parsePct(r.engagement_rate),
     metadata: { raw: r, endpoint: "site/search/influencers", engagementRate: parsePct(r.engagement_rate) },
   };
 }
