@@ -20,6 +20,10 @@ export interface FootageRequest {
   prompt: string; // scene prompt
   durationSec: number;
   resolution: "480p" | "720p" | "1080p";
+  /** Image Studio: aspect ratio override (Kling supports 16:9 / 9:16 / 1:1). */
+  aspectRatio?: string;
+  /** Image Studio: per-output seed for variation (same image, N outputs). */
+  seed?: number;
 }
 
 export interface FootageResult {
@@ -218,6 +222,9 @@ async function generateKling(req: FootageRequest): Promise<string> {
     start_image_url: req.imageUrl,
     prompt: req.prompt,
     duration: String(Math.min(Math.max(req.durationSec, 5), 10)),
+    ...(req.aspectRatio ? { aspect_ratio: req.aspectRatio } : {}),
+    ...(req.resolution === "1080p" ? { resolution: "1080p" } : {}),
+    ...(req.seed !== undefined ? { seed: req.seed } : {}),
   });
 }
 
@@ -227,7 +234,9 @@ async function generateKlingV1(req: FootageRequest): Promise<string> {
     image_url: req.imageUrl,
     prompt: req.prompt,
     duration: String(Math.min(Math.max(req.durationSec, 5), 10)),
-    aspect_ratio: "9:16",
+    aspect_ratio: req.aspectRatio ?? "9:16",
+    ...(req.resolution === "1080p" ? { resolution: "1080p" } : {}),
+    ...(req.seed !== undefined ? { seed: req.seed } : {}),
   });
 }
 
@@ -317,6 +326,10 @@ export interface SceneRenderRequest {
   /** Scene description, e.g. "dark brown wood vanity table, natural lighting". */
   prompt: string;
   quality: "standard" | "pro";
+  /** Image Studio: output aspect ratio (Gemini imageConfig, e.g. "9:16"). */
+  aspectRatio?: string;
+  /** Image Studio: output resolution — "1K" | "2K" | "4K". */
+  imageSize?: "1K" | "2K" | "4K";
 }
 
 export interface SceneRenderResult {
@@ -403,7 +416,7 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("Missing GEMINI_API_KEY for scene render");
   try {
-    const url = await geminiImageEdit(key, req.imageUrl, req.prompt, req.quality);
+    const url = await geminiImageEdit(key, req.imageUrl, req.prompt, req.quality, req.aspectRatio, req.imageSize);
     return { url, dryRun: false };
   } catch (primaryError) {
     console.warn(
@@ -424,7 +437,7 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
           prompt: req.prompt,
           image_url: req.imageUrl,
           num_images: 1,
-          aspect_ratio: "9:16",
+          aspect_ratio: req.aspectRatio ?? "9:16",
           output_format: "png",
         });
         return { url, dryRun: false };
@@ -444,7 +457,9 @@ async function geminiImageEdit(
   key: string,
   imageUrl: string,
   prompt: string,
-  quality: "standard" | "pro"
+  quality: "standard" | "pro",
+  aspectRatio?: string,
+  imageSize?: "1K" | "2K" | "4K"
 ): Promise<string> {
   const res = await fetch(imageUrl, {
     headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
@@ -469,7 +484,10 @@ async function geminiImageEdit(
         ],
         generationConfig: {
           responseModalities: ["IMAGE"],
-          imageConfig: { aspectRatio: quality === "pro" ? "9:16" : "9:16", imageSize: "2K" },
+          imageConfig: {
+            aspectRatio: aspectRatio ?? "9:16",
+            imageSize: imageSize ?? "2K",
+          },
         },
       }),
     }

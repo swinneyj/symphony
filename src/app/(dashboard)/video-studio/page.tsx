@@ -27,6 +27,7 @@ import {
   Share2,
   Download,
   SlidersHorizontal,
+  ImageIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { MOTION_PRESETS } from "@/lib/video/presets";
 import { formatUsd } from "@/lib/usage-core";
+import { ImageStudioTab } from "@/components/image-studio-tab";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -207,6 +209,9 @@ export default function VideoStudioPage() {
           <TabsTrigger value="clone" className="gap-1.5 shrink-0">
             <Copy className="h-4 w-4" /> Clone
           </TabsTrigger>
+          <TabsTrigger value="image-studio" className="gap-1.5 shrink-0">
+            <ImageIcon className="h-4 w-4" /> Image Studio
+          </TabsTrigger>
           <TabsTrigger value="downloader" className="gap-1.5 shrink-0">
             <Download className="h-4 w-4" /> Downloader
           </TabsTrigger>
@@ -269,6 +274,10 @@ export default function VideoStudioPage() {
 
         <TabsContent value="clone" className="mt-4">
           <CloneTab workspaceId={workspaceId!} />
+        </TabsContent>
+
+        <TabsContent value="image-studio" className="mt-4">
+          <ImageStudioTab workspaceId={workspaceId!} products={products} />
         </TabsContent>
 
         <TabsContent value="downloader" className="mt-4">

@@ -64,7 +64,7 @@ export async function GET(
         productOriginalImage: products.originalImageUrl,
       })
       .from(videoBatchJobs)
-      .innerJoin(products, eq(videoBatchJobs.productId, products.id))
+      .leftJoin(products, eq(videoBatchJobs.productId, products.id))
       .where(eq(videoBatchJobs.batchId, id))
       .orderBy(asc(videoBatchJobs.createdAt));
 
