@@ -142,6 +142,42 @@ export interface MarketCreator {
   salesForProduct: number | null;
   metadata?: Record<string, unknown>;
 }
+
+/** One video featuring a product (product/video/list + video/detail batch). */
+export interface MarketProductVideo {
+  videoId: string;
+  /** Creator's TikTok unique_id (handle, without @). */
+  creatorName: string | null;
+  creatorId: string | null;
+  description: string | null;
+  coverUrl: string | null;
+  /** Direct mp4 URL — EchoTik notes these can expire; falls back to cover. */
+  playUrl: string | null;
+  /** Unix seconds. */
+  createTime: string | null;
+  duration: number | null;
+  region: string | null;
+  views: number | null;
+  views1d: number | null;
+  views7d: number | null;
+  views30d: number | null;
+  diggs: number | null;
+  diggs1d: number | null;
+  diggs7d: number | null;
+  diggs30d: number | null;
+  comments: number | null;
+  shares: number | null;
+  favorites: number | null;
+  sales: number | null;
+  gmv: number | null;
+  /** Paid promotion ("Promote" badge in EchoTik) — video/detail is_ad. */
+  isAd: boolean;
+  isAi: boolean | null;
+  /** Main sales method: 0 = non-product video, 1 = video, 2 = live. */
+  salesFlag: number | null;
+  hashTags: string[] | null;
+  metadata?: Record<string, unknown>;
+}
 export class MissingSourceCredentialsError extends Error {
   constructor(source: MarketSource, keys: string[]) {
     super(

@@ -14,7 +14,7 @@
  * DIRECT array (no .list/.products wrapper). page_size is hard-capped at 10, so
  * fetching >10 rows requires paging through page_num.
  */
-import type { MarketCreator, MarketProduct, MarketQuery, MarketSource, ProductAnalytics, TrendPoint } from "./types";
+import type { MarketCreator, MarketProduct, MarketProductVideo, MarketQuery, MarketSource, ProductAnalytics, TrendPoint } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 import { cacheGet, cacheSet, cacheKey } from "./cache";
 
@@ -30,6 +30,9 @@ const CACHE_TTL_SECONDS: Record<string, number> = {
   "/api/v3/echotik/product/detail": 6 * 3600,
   "/api/v3/echotik/product/trend": 6 * 3600,
   "/api/v3/echotik/product/influencer/list": 6 * 3600,
+  "/api/v3/echotik/product/video/list": 6 * 3600,
+  "/api/v3/echotik/video/detail": 6 * 3600,
+  "/api/v3/echotik/seller/product/list": 6 * 3600,
 };
 
 type ApiRow = Record<string, unknown>;
@@ -464,6 +467,103 @@ export async function fetchProductCreators(
     salesForProduct: num(r?.sales ?? r?.product_sales),
     metadata: { raw: r, endpoint: "influencer/list" },
   }));
+}
+
+// ─── Product videos (content layer) ──────────────────────────────────────────
+
+/** Sort enums for product/video/list: 1=views 2=diggs 3=shares 4=sales 5=GMV 6=time. */
+const VIDEO_SORT_FIELD: Record<string, string> = {
+  views: "1",
+  diggs: "2",
+  shares: "3",
+  sales: "4",
+  gmv: "5",
+  time: "6",
+};
+
+/**
+ * Videos featuring a product (product/video/list), enriched with paid-promotion
+ * and recency deltas from video/detail (batch, ≤10 ids — 2 API calls total).
+ * Videos are returned sorted by estimated video GMV (best content first).
+ */
+export async function fetchProductVideos(
+  sourceProductId: string,
+  limit = 10
+): Promise<MarketProductVideo[]> {
+  const rows = await get("/api/v3/echotik/product/video/list", {
+    product_id: sourceProductId,
+    product_video_sort_field: VIDEO_SORT_FIELD.gmv,
+    sort_type: 1,
+    page_num: 1,
+    page_size: Math.min(limit, PAGE_SIZE),
+  });
+  if (rows.length === 0) return [];
+
+  // Enrich in one batched call: is_ad ("Promote"), 1/7/30d deltas, AI flag.
+  const ids = rows.map((r) => String(r.video_id ?? "")).filter(Boolean);
+  let details: ApiRow[] = [];
+  if (ids.length > 0) {
+    details = await get("/api/v3/echotik/video/detail", {
+      video_ids: ids.join(","),
+    });
+  }
+  const detailById = new Map(details.map((d) => [String(d.video_id ?? ""), d]));
+  return rows
+    .map((r) => normalizeVideo(r, detailById.get(String(r.video_id ?? ""))))
+    .filter((v) => v.videoId);
+}
+
+function normalizeVideo(r: ApiRow, d?: ApiRow): MarketProductVideo {
+  return {
+    videoId: String(r.video_id ?? ""),
+    creatorName: strOrNull(r.unique_id ?? d?.unique_id),
+    creatorId: strOrNull(r.user_id),
+    description: strOrNull(r.video_desc),
+    coverUrl: strOrNull(r.reflow_cover) ?? strOrNull(d?.reflow_cover),
+    playUrl: strOrNull(r.play_addr),
+    createTime: strOrNull(r.create_time),
+    duration: num(r.duration) ?? num(d?.duration),
+    region: strOrNull(r.region) ?? strOrNull(d?.region),
+    views: num(r.total_views_cnt) ?? num(d?.total_views_cnt),
+    views1d: num(d?.total_views_1d_cnt) ?? num(r.total_views_1d_cnt),
+    views7d: num(d?.total_views_7d_cnt) ?? num(r.total_views_7d_cnt),
+    views30d: num(d?.total_views_30d_cnt) ?? num(r.total_views_30d_cnt),
+    diggs: num(r.total_digg_cnt) ?? num(d?.total_digg_cnt),
+    diggs1d: num(d?.total_digg_1d_cnt) ?? num(r.total_digg_1d_cnt),
+    diggs7d: num(d?.total_digg_7d_cnt) ?? num(r.total_digg_7d_cnt),
+    diggs30d: num(d?.total_digg_30d_cnt) ?? num(r.total_digg_30d_cnt),
+    comments: num(r.total_comments_cnt) ?? num(d?.total_comments_cnt),
+    shares: num(r.total_shares_cnt) ?? num(d?.total_shares_cnt),
+    favorites: num(r.total_favorites_cnt) ?? num(d?.total_favorites_cnt),
+    sales: num(r.total_video_sale_cnt) ?? num(d?.total_video_sale_cnt),
+    gmv: num(r.total_video_sale_gmv_amt) ?? num(d?.total_video_sale_gmv_amt),
+    isAd: num(d?.is_ad) === 1 || num(r.is_ad) === 1,
+    isAi: d?.created_by_ai != null ? d.created_by_ai === 1 || d.created_by_ai === "1" : null,
+    salesFlag: num(r.sales_flag) ?? num(d?.sales_flag),
+    hashTags: strOrNull(r.hash_tag)
+      ?.split(/\s+/)
+      .filter((t) => t.startsWith("#")) ?? null,
+    metadata: { raw: r, detail: d ?? null, endpoint: "product/video/list" },
+  };
+}
+
+// ─── Seller / brand products ─────────────────────────────────────────────────
+
+/**
+ * Every product sold by a seller/brand (seller/product/list) — powers the
+ * "click a brand → all their products" drill-down. Same field shape as
+ * product/list, so rows normalize through the library normalizer.
+ */
+export async function fetchSellerProducts(
+  sellerId: string,
+  limit = 24
+): Promise<MarketProduct[]> {
+  const rows = await getAll(
+    "/api/v3/echotik/seller/product/list",
+    { seller_id: sellerId },
+    limit
+  );
+  return rows.map((r, i) => normalizeLibrary(r, i + 1, String(r.region ?? "US")));
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

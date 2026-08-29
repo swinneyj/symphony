@@ -28,14 +28,20 @@ import {
   Download,
   SlidersHorizontal,
   ImageIcon,
+  Eye,
+  Heart,
+  ShoppingCart,
+  DollarSign,
+  Store,
 } from "lucide-react";
+import type { MarketProductVideo } from "@/lib/market/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { MOTION_PRESETS } from "@/lib/video/presets";
@@ -2489,6 +2495,507 @@ function AnalyticsPanel({ a }: { a: MarketAnalyticsRow | undefined }) {
   );
 }
 
+// ─── Product Detail Dialog (EchoTik-style drill-down) ──────────────────────
+// Click a product → full-screen pop-out with tabbed intel:
+//   Overview — business panorama + trend (existing analytics layer)
+//   Videos   — videos featuring the product, with "Promote" (paid) badges
+//   Creators — affiliate creators driving the product
+//   Brand    — every product the seller/brand sells (click to jump)
+
+interface DetailProduct {
+  source: string;
+  sourceProductId: string;
+  name: string;
+  imageUrl: string | null;
+  priceMin: number | null;
+  priceMax: number | null;
+  currency: string;
+  categoryL1: string | null;
+}
+
+function compactNum(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "—";
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+}
+
+function fmtDuration(seconds: number | null | undefined): string {
+  if (!seconds) return "";
+  const s = Math.round(seconds);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function fmtShortDate(ts: number | null | undefined): string {
+  if (!ts) return "";
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function VideoCard({
+  v,
+  playing,
+  onPlay,
+}: {
+  v: MarketProductVideo;
+  playing: boolean;
+  onPlay: () => void;
+}) {
+  const tiktokUrl =
+    v.creatorName && v.videoId
+      ? `https://www.tiktok.com/@${encodeURIComponent(v.creatorName)}/video/${encodeURIComponent(v.videoId)}`
+      : null;
+  return (
+    <div className="overflow-hidden rounded-lg border bg-background">
+      <div className="relative aspect-[9/16] w-full cursor-pointer bg-black" onClick={onPlay}>
+        {playing && v.playUrl ? (
+          <video src={v.playUrl} controls autoPlay playsInline className="h-full w-full object-contain" />
+        ) : v.coverUrl ? (
+          <img
+            src={v.coverUrl}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Clapperboard className="h-8 w-8 text-muted-foreground" />
+          </div>
+        )}
+        {!playing && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/35">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60">
+              <Play className="h-4 w-4 fill-white text-white" />
+            </div>
+          </div>
+        )}
+        {!playing && v.duration != null && (
+          <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1 py-0.5 text-[10px] font-medium text-white">
+            {fmtDuration(v.duration)}
+          </span>
+        )}
+        {v.isAd && (
+          <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-orange-500 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow">
+            <DollarSign className="h-3 w-3" /> Promote
+          </span>
+        )}
+        {!playing && v.salesFlag != null && v.salesFlag > 0 && (
+          <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+            <ShoppingCart className="h-3 w-3" /> Sells
+          </span>
+        )}
+      </div>
+      <div className="space-y-1.5 p-2.5">
+        <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <Eye className="h-3 w-3" /> {compactNum(v.views)}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <Heart className="h-3 w-3" /> {compactNum(v.diggs)}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <ShoppingCart className="h-3 w-3" /> {compactNum(v.sales)}
+          </span>
+          <span className="inline-flex items-center gap-1 font-medium text-emerald-600">
+            ${compactNum(v.gmv)}
+          </span>
+        </div>
+        <p className="line-clamp-2 text-xs text-foreground/90">{v.description || "—"}</p>
+        <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+          <span className="truncate">
+            {v.creatorName ? `@${v.creatorName}` : "Unknown creator"}
+            {v.region ? ` · ${v.region}` : ""}
+          </span>
+          <span className="shrink-0">{v.createTime ? fmtShortDate(Number(v.createTime) * 1000) : ""}</span>
+        </div>
+        {tiktokUrl && (
+          <a
+            href={tiktokUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink className="h-3 w-3" /> View on TikTok
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProductDetailBody({
+  product,
+  workspaceId,
+  initialAnalytics,
+}: {
+  product: DetailProduct;
+  workspaceId: string;
+  initialAnalytics?: MarketAnalyticsRow | null;
+}) {
+  const [viewed, setViewed] = useState<DetailProduct>(product);
+  const [tab, setTab] = useState("overview");
+  const [notice, setNotice] = useState<string | null>(null);
+  // Overview
+  const [analytics, setAnalytics] = useState<MarketAnalyticsRow | null>(initialAnalytics ?? null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  // Videos
+  const [videos, setVideos] = useState<MarketProductVideo[] | null>(null);
+  const [videosLoading, setVideosLoading] = useState(false);
+  const [promoteCount, setPromoteCount] = useState(0);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  // Creators
+  const [creators, setCreators] = useState<MarketCreatorRow[] | null>(null);
+  const [creatorsLoading, setCreatorsLoading] = useState(false);
+  // Brand
+  const [sellerProducts, setSellerProducts] = useState<MarketRow[] | null>(null);
+  const [sellerLoading, setSellerLoading] = useState(false);
+
+  // Navigating to a seller product resets all fetched state.
+  useEffect(() => {
+    setTab("overview");
+    setNotice(null);
+    setAnalytics(null);
+    setVideos(null);
+    setVideosLoading(false);
+    setCreators(null);
+    setSellerProducts(null);
+    setPlayingId(null);
+  }, [viewed.sourceProductId]);
+
+  const qs = `workspaceId=${workspaceId}&source=${encodeURIComponent(viewed.source)}&sourceProductId=${encodeURIComponent(viewed.sourceProductId)}`;
+
+  const loadAnalytics = useCallback(async () => {
+    if (analytics || analyticsLoading) return;
+    setAnalyticsLoading(true);
+    try {
+      const res = await fetch(`/api/market/products/analytics?${qs}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load analytics");
+      if (data.analytics) setAnalytics(data.analytics);
+      else if (data.notice) setNotice(data.notice);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load analytics");
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, [qs, analytics, analyticsLoading]);
+
+  const loadVideos = useCallback(async () => {
+    if (videos || videosLoading) return;
+    setVideosLoading(true);
+    try {
+      const res = await fetch(`/api/market/products/videos?${qs}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load videos");
+      setVideos(data.videos ?? []);
+      setPromoteCount(data.promoteCount ?? 0);
+      if (data.notice) setNotice(data.notice);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load videos");
+    } finally {
+      setVideosLoading(false);
+    }
+  }, [qs, videos, videosLoading]);
+
+  const loadCreators = useCallback(async () => {
+    if (creators || creatorsLoading) return;
+    setCreatorsLoading(true);
+    try {
+      const res = await fetch(`/api/market/products/creators?${qs}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load creators");
+      setCreators(data.rows ?? []);
+      if (data.notice) setNotice(data.notice);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load creators");
+    } finally {
+      setCreatorsLoading(false);
+    }
+  }, [qs, creators, creatorsLoading]);
+
+  const loadSeller = useCallback(async () => {
+    if (sellerProducts || sellerLoading || !analytics?.sellerId) return;
+    setSellerLoading(true);
+    try {
+      const res = await fetch(
+        `/api/market/products/seller-products?workspaceId=${workspaceId}&source=${encodeURIComponent(viewed.source)}&sellerId=${encodeURIComponent(analytics.sellerId)}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load brand products");
+      setSellerProducts(data.products ?? []);
+      if (data.notice) setNotice(data.notice);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load brand products");
+    } finally {
+      setSellerLoading(false);
+    }
+  }, [analytics?.sellerId, sellerProducts, sellerLoading, viewed.source, workspaceId]);
+
+  // Activate the fetch for whichever tab is visible (once).
+  useEffect(() => {
+    if (tab === "overview") loadAnalytics();
+    else if (tab === "videos") loadVideos();
+    else if (tab === "creators") loadCreators();
+    else if (tab === "brand") {
+      if (!analytics) loadAnalytics();
+      else loadSeller();
+    }
+  }, [tab, analytics, loadAnalytics, loadVideos, loadCreators, loadSeller]);
+
+  const openSellerProduct = (p: MarketRow) => {
+    setViewed({
+      source: p.source,
+      sourceProductId: p.sourceProductId,
+      name: p.name,
+      imageUrl: p.imageUrl,
+      priceMin: p.priceMin,
+      priceMax: p.priceMax,
+      currency: p.currency,
+      categoryL1: p.categoryL1,
+    });
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 border-b px-5 py-3 pr-12">
+        <div className="flex min-w-0 items-center gap-3">
+          {viewed.imageUrl ? (
+            <img
+              src={viewed.imageUrl}
+              alt=""
+              className="h-11 w-11 shrink-0 rounded-lg border object-cover"
+              onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+            />
+          ) : (
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border bg-muted">
+              <Package className="h-5 w-5 text-muted-foreground" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <DialogTitle className="truncate text-base">{viewed.name}</DialogTitle>
+            <DialogDescription className="mt-0.5 text-xs">
+              {viewed.priceMin != null
+                ? `$${viewed.priceMin}${viewed.priceMax && viewed.priceMax !== viewed.priceMin ? `–$${viewed.priceMax}` : ""}`
+                : "Price —"}
+              {viewed.categoryL1 ? ` · ${viewed.categoryL1}` : ""}
+            </DialogDescription>
+          </div>
+        </div>
+        {promoteCount > 0 && (
+          <Badge className="shrink-0 bg-orange-100 text-orange-700">
+            <DollarSign className="h-3 w-3 mr-0.5" /> {promoteCount} Promote
+          </Badge>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+        <div className="border-b px-3">
+          <TabsList className="h-9">
+            <TabsTrigger value="overview" className="gap-1">
+              <TrendingUp className="h-3.5 w-3.5" /> Overview
+            </TabsTrigger>
+            <TabsTrigger value="videos" className="gap-1">
+              <Clapperboard className="h-3.5 w-3.5" /> Videos
+              {videos && <span className="text-muted-foreground">({videos.length})</span>}
+            </TabsTrigger>
+            <TabsTrigger value="creators" className="gap-1">
+              <Users className="h-3.5 w-3.5" /> Creators
+            </TabsTrigger>
+            <TabsTrigger value="brand" className="gap-1">
+              <Store className="h-3.5 w-3.5" /> Brand
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {notice && (
+            <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
+              {notice}
+            </p>
+          )}
+
+          {/* Overview */}
+          <TabsContent value="overview" className="mt-0">
+            {analyticsLoading && !analytics ? (
+              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading business panorama…
+              </div>
+            ) : (
+              <AnalyticsPanel a={analytics ?? undefined} />
+            )}
+          </TabsContent>
+
+          {/* Videos */}
+          <TabsContent value="videos" className="mt-0">
+            {videosLoading && !videos ? (
+              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading product videos…
+              </div>
+            ) : (videos ?? []).length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                No videos found for this product yet — EchoTik may not have crawled it.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {(videos ?? []).map((v) => (
+                  <VideoCard
+                    key={v.videoId}
+                    v={v}
+                    playing={playingId === v.videoId}
+                    onPlay={() => setPlayingId(playingId === v.videoId ? null : v.videoId)}
+                  />
+                ))}
+              </div>
+            )}
+            {videos && promoteCount > 0 && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                <span className="font-semibold text-orange-600">Promote</span> = the creator paid TikTok to boost
+                this video. Count: {promoteCount} of {videos.length}.
+              </p>
+            )}
+          </TabsContent>
+
+          {/* Creators */}
+          <TabsContent value="creators" className="mt-0">
+            {creatorsLoading && !creators ? (
+              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading creators…
+              </div>
+            ) : (creators ?? []).length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                No creator data yet — hit refresh once source credentials are set.
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {(creators ?? []).map((c) => (
+                  <div key={c.id ?? c.name} className="flex items-center gap-3 rounded-md border bg-background p-2.5">
+                    {c.avatarUrl ? (
+                      <img
+                        src={c.avatarUrl}
+                        alt=""
+                        className="h-9 w-9 rounded-full object-cover"
+                        onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                      />
+                    ) : (
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-700">
+                        <Users className="h-4 w-4" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{c.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {c.followers != null ? `${compactNum(c.followers)} followers` : "—"}
+                        {c.engagementRate != null && ` · ${(c.engagementRate * 100).toFixed(1)}% eng`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {c.videoCount != null ? `${c.videoCount} videos` : "—"}
+                        {c.salesForProduct != null && ` · ${compactNum(c.salesForProduct)} sales`}
+                      </p>
+                    </div>
+                    {c.rating != null && <Badge className="bg-slate-100 text-slate-700">★ {c.rating}</Badge>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Brand / seller products */}
+          <TabsContent value="brand" className="mt-0">
+            {!analytics && analyticsLoading ? (
+              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading product info…
+              </div>
+            ) : analytics && !analytics.sellerId ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                No seller/brand info for this product.
+              </p>
+            ) : sellerLoading && !sellerProducts ? (
+              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading brand products…
+              </div>
+            ) : (sellerProducts ?? []).length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                This seller has no other products indexed yet.
+              </p>
+            ) : (
+              <>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Other products from this seller — click any to open it here.
+                </p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                  {(sellerProducts ?? []).map((p) => (
+                    <button
+                      key={p.sourceProductId}
+                      type="button"
+                      onClick={() => openSellerProduct(p)}
+                      className="group overflow-hidden rounded-lg border bg-background text-left transition-colors hover:border-primary/50"
+                    >
+                      <div className="relative aspect-square w-full bg-muted">
+                        {p.imageUrl ? (
+                          <img
+                            src={p.imageUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center">
+                            <Package className="h-6 w-6 text-muted-foreground" />
+                          </div>
+                        )}
+                        {p.isHot && <span className="absolute right-1 top-1 text-sm">🔥</span>}
+                      </div>
+                      <div className="space-y-1 p-2.5">
+                        <p className="line-clamp-2 text-xs font-medium group-hover:text-primary">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {p.priceMin != null ? `$${p.priceMin}` : "—"}
+                          {p.priceMax && p.priceMax !== p.priceMin ? `–$${p.priceMax}` : ""}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {compactNum(p.sales30d)} sales · ${compactNum(p.gmv30d)} GMV
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </TabsContent>
+        </div>
+      </Tabs>
+    </div>
+  );
+}
+
+function ProductDetailDialog({
+  open,
+  onOpenChange,
+  product,
+  workspaceId,
+  initialAnalytics,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  product: DetailProduct | null;
+  workspaceId: string;
+  initialAnalytics?: MarketAnalyticsRow | null;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {product && (
+        <DialogContent className="flex max-h-[90vh] w-full max-w-6xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl">
+          <ProductDetailBody
+            key={product.sourceProductId}
+            product={product}
+            workspaceId={workspaceId}
+            initialAnalytics={initialAnalytics ?? null}
+          />
+        </DialogContent>
+      )}
+    </Dialog>
+  );
+}
+
 function MarketTab({
   workspaceId,
   onAdopted,
@@ -2511,6 +3018,10 @@ function MarketTab({
   const [watched, setWatched] = useState<WatchedRow[]>([]);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
   const [watching, setWatching] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<{
+    product: DetailProduct;
+    analytics: MarketAnalyticsRow | null;
+  } | null>(null);
   // ── Products Library filters (EchoTik product/list surface) ──
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -2593,6 +3104,21 @@ function MarketTab({
   useEffect(() => {
     loadWatched();
   }, [loadWatched]);
+
+  const openDetail = (row: MarketRow) =>
+    setDetailFor({
+      product: {
+        source: row.source,
+        sourceProductId: row.sourceProductId,
+        name: row.name,
+        imageUrl: row.imageUrl,
+        priceMin: row.priceMin,
+        priceMax: row.priceMax,
+        currency: row.currency,
+        categoryL1: row.categoryL1,
+      },
+      analytics: analytics[row.id ?? `live:${row.sourceProductId}`] ?? null,
+    });
 
   const toggleWatch = async (row: MarketRow) => {
     if (!row.id) return;
@@ -2980,7 +3506,12 @@ function MarketTab({
                       {row.isHot && <span className="ml-1 text-orange-500">🔥</span>}
                     </td>
                     <td className="max-w-[260px] px-3 py-2">
-                      <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openDetail(row)}
+                        title="Open product detail"
+                        className="group flex w-full items-center gap-2 text-left"
+                      >
                         {row.imageUrl ? (
                           <img
                             src={row.id ? `/api/market/products/${row.id}/image` : row.imageUrl}
@@ -2994,12 +3525,14 @@ function MarketTab({
                           </div>
                         )}
                         <div className="min-w-0">
-                          <p className="truncate font-medium">{row.name}</p>
+                          <p className="truncate font-medium group-hover:text-primary group-hover:underline">
+                            {row.name}
+                          </p>
                           {row.categoryL1 && (
                             <p className="truncate text-xs text-muted-foreground">{row.categoryL1}</p>
                           )}
                         </div>
-                      </div>
+                      </button>
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {row.priceMin ? `$${row.priceMin}` : "—"}
@@ -3176,6 +3709,14 @@ function MarketTab({
         </CardContent>
         )}
       </Card>
+
+      <ProductDetailDialog
+        open={!!detailFor}
+        onOpenChange={(o) => !o && setDetailFor(null)}
+        product={detailFor?.product ?? null}
+        workspaceId={workspaceId}
+        initialAnalytics={detailFor?.analytics ?? null}
+      />
     </div>
   );
 }

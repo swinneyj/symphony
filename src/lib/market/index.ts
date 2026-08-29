@@ -7,7 +7,7 @@
  * Dry-run (MARKET_DRY_RUN=1): returns realistic sample rows WITHOUT storing
  * them — the DB only ever sees real source data.
  */
-import type { MarketCreator, MarketProduct, MarketQuery, MarketSource, ProductAnalytics } from "./types";
+import type { MarketCreator, MarketProduct, MarketProductVideo, MarketQuery, MarketSource, ProductAnalytics } from "./types";
 import { dryRunEnabled } from "./types";
 import * as echotik from "./echotik";
 import * as fastmoss from "./fastmoss";
@@ -248,6 +248,38 @@ export async function fetchProductAnalytics(
     throw new Error(`[market] analytics not implemented for source: ${source}`);
   }
   return echotik.fetchProductAnalytics(sourceProductId);
+}
+
+/**
+ * Videos featuring a product (content layer): sorted by video GMV, enriched
+ * with paid-promotion ("Promote") + recency deltas. Dry-run returns no rows.
+ */
+export async function fetchProductVideos(
+  source: MarketSource,
+  sourceProductId: string,
+  limit = 10
+): Promise<{ rows: MarketProductVideo[]; dryRun: boolean }> {
+  if (dryRunEnabled()) return { rows: [], dryRun: true };
+  if (source === "echotik") {
+    return { rows: await echotik.fetchProductVideos(sourceProductId, limit), dryRun: false };
+  }
+  throw new Error(`[market] product videos not implemented for source: ${source}`);
+}
+
+/**
+ * Every product sold by a seller/brand ("click a brand → all their products").
+ * Dry-run returns no rows.
+ */
+export async function fetchSellerProducts(
+  source: MarketSource,
+  sellerId: string,
+  limit = 24
+): Promise<{ rows: MarketProduct[]; dryRun: boolean }> {
+  if (dryRunEnabled()) return { rows: [], dryRun: true };
+  if (source === "echotik") {
+    return { rows: await echotik.fetchSellerProducts(sellerId, limit), dryRun: false };
+  }
+  throw new Error(`[market] seller products not implemented for source: ${source}`);
 }
 
 /**
