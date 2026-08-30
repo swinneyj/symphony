@@ -30,6 +30,13 @@ export async function initVideoPublish(opts: {
   title: string;
   privacyLevel: PostPrivacyLevel;
   coverTimestampMs?: number;
+  /**
+   * Label the post as AI-generated on TikTok (is_ai_generated). DEFAULT TRUE:
+   * every video this app publishes is AI-generated (Nano Banana renders,
+   * Kling/Sora footage). TikTok requires the label — prevention at source.
+   * Pass false ONLY for genuinely human-made content.
+   */
+  isAiGenerated?: boolean;
 }): Promise<PublishInitResult> {
   if (DRY_RUN) {
     return { publishId: `dryrun-${Date.now()}`, dryRun: true };
@@ -38,7 +45,7 @@ export async function initVideoPublish(opts: {
   const res = await fetch(`${API}/post/publish/video/init/`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${opts.accessToken}`,
+      authorization: "Bearer " + opts.accessToken,
       "content-type": "application/json; charset=UTF-8",
     },
     body: JSON.stringify({
@@ -48,6 +55,7 @@ export async function initVideoPublish(opts: {
         disable_comment: false,
         disable_duet: false,
         disable_stitch: false,
+        ...(opts.isAiGenerated !== false ? { is_ai_generated: true } : {}),
         ...(opts.coverTimestampMs != null ? { video_cover_timestamp_ms: opts.coverTimestampMs } : {}),
       },
       source_info: {

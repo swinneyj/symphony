@@ -163,7 +163,16 @@ export async function POST(
     });
 
     // Record on the job + create a post row for the composer/analytics views.
-    const newMeta = { ...meta, tiktokPublishId: init.publishId, tiktokStatus: "SENDING", postedAt: new Date().toISOString(), dryRun: init.dryRun };
+    // aiDisclosure: true = posted with TikTok's is_ai_generated label (default
+    // for every publish — all content here is AI-generated).
+    const newMeta = {
+      ...meta,
+      tiktokPublishId: init.publishId,
+      tiktokStatus: "SENDING",
+      postedAt: new Date().toISOString(),
+      dryRun: init.dryRun,
+      aiDisclosure: true,
+    };
     await db
       .update(videoBatchJobs)
       .set({ metadata: newMeta, updatedAt: new Date() })
