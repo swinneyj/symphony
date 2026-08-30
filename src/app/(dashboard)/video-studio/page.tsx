@@ -4714,6 +4714,8 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
   const [motionPrompt, setMotionPrompt] = useState("");
   const [durationSec, setDurationSec] = useState("5");
   const [model, setModel] = useState("kling-pro");
+  const [aspectRatio, setAspectRatio] = useState("9:16");
+  const [resolution, setResolution] = useState("720p");
   const [busy, setBusy] = useState(false);
 
   const canSubmit = (sourceFile || sourceUrl.trim()) && editPrompt.trim() && !busy;
@@ -4760,6 +4762,8 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
       if (motionPrompt.trim()) fd.append("motionPrompt", motionPrompt.trim());
       fd.append("durationSec", durationSec);
       fd.append("model", model);
+      fd.append("aspectRatio", aspectRatio);
+      fd.append("resolution", resolution);
       const res = await fetch("/api/video-clone", { method: "POST", body: fd });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || "Clone failed");
@@ -4890,6 +4894,29 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
             >
               <option value="5">5s</option>
               <option value="10">10s</option>
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Size</Label>
+            <select
+              value={aspectRatio}
+              onChange={(e) => setAspectRatio(e.target.value)}
+              className="flex h-9 w-28 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="9:16">9:16 · Vertical</option>
+              <option value="16:9">16:9 · Landscape</option>
+              <option value="1:1">1:1 · Square</option>
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Quality</Label>
+            <select
+              value={resolution}
+              onChange={(e) => setResolution(e.target.value)}
+              className="flex h-9 w-24 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
             </select>
           </div>
           <div className="ml-auto text-right text-xs text-muted-foreground">

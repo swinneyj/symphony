@@ -92,6 +92,11 @@ async function generateSora(req: FootageRequest): Promise<string> {
   // Sora 2 API (verified against OpenAI docs Aug 2026):
   //   POST /v1/videos { prompt, input_reference: { image_url }, seconds: 4|8|12, size: "WxH" }
   //   poll GET /v1/videos/{id} until status completed → .url
+  const SORA_SIZE: Record<string, string> = {
+    "9:16": req.resolution === "1080p" ? "1080x1920" : "720x1280",
+    "16:9": req.resolution === "1080p" ? "1920x1080" : "1280x720",
+    "1:1": req.resolution === "1080p" ? "1080x1080" : "1024x1024",
+  };
   const submit = await fetch("https://api.openai.com/v1/videos", {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
@@ -106,7 +111,7 @@ async function generateSora(req: FootageRequest): Promise<string> {
           Math.abs(b - req.durationSec) < Math.abs(a - req.durationSec) ? b : a
         )
       ),
-      size: req.resolution === "1080p" ? "1024x1792" : "720x1280",
+      size: SORA_SIZE[req.aspectRatio ?? "9:16"],
     }),
   });
   if (!submit.ok) throw new Error(`sora submit failed: ${submit.status} ${await submit.text()}`);
@@ -306,7 +311,9 @@ export async function generateCloneVideo(
   startImageUrl: string,
   prompt: string,
   durationSec: number,
-  model: CloneModel = "kling-pro"
+  model: CloneModel = "kling-pro",
+  aspectRatio: "9:16" | "16:9" | "1:1" = "9:16",
+  resolution: "720p" | "1080p" = "720p"
 ): Promise<string> {
   const key = process.env.FAL_KEY;
   if (!key) throw new MissingKeyError("kling", "FAL_KEY");
@@ -317,7 +324,8 @@ export async function generateCloneVideo(
       imageUrl: startImageUrl,
       prompt,
       durationSec,
-      resolution: "720p",
+      resolution,
+      aspectRatio,
     });
     return r.url;
   }
@@ -327,7 +335,8 @@ export async function generateCloneVideo(
       imageUrl: startImageUrl,
       prompt,
       durationSec,
-      resolution: "720p",
+      resolution,
+      aspectRatio,
     });
     return r.url;
   }
@@ -340,6 +349,8 @@ export async function generateCloneVideo(
     // $0.112/s). The clone re-animates a keyframe — original audio can't
     // follow anyway — so keep it off unless explicitly requested.
     ...(queueId.includes("/v3/") ? { generate_audio: false } : {}),
+    ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
+    ...(resolution === "1080p" ? { resolution: "1080p" } : {}),
   });
 }
 

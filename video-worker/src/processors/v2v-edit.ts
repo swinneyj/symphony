@@ -129,6 +129,10 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
       durationSec?: number;
       /** Re-animate engine: kling-pro (default) | kling-standard | sora | veo. */
       model?: CloneModel;
+      /** Output size: 9:16 (default) | 16:9 | 1:1. */
+      aspectRatio?: string;
+      /** Output quality: 720p (default) | 1080p. */
+      resolution?: string;
     };
     const { sourceVideoUrl, editPrompt } = meta;
     if (!sourceVideoUrl || !editPrompt) {
@@ -161,6 +165,15 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
     }
 
     // 2. Extract a key frame near 40% in — subject is usually most visible.
+    //    Size follows the requested output: 720p/1080p × 9:16/16:9/1:1.
+    const aspect = meta.aspectRatio === "16:9" ? "16:9" : meta.aspectRatio === "1:1" ? "1:1" : "9:16";
+    const is1080 = meta.resolution === "1080p";
+    const KEYFRAME_SIZE: Record<string, string> = {
+      "9:16": is1080 ? "1080x1920" : "720x1280",
+      "16:9": is1080 ? "1920x1080" : "1280x720",
+      "1:1": is1080 ? "1080x1080" : "720x720",
+    };
+    const kfSize = KEYFRAME_SIZE[aspect];
     const probe = await execFileP("ffprobe", [
       "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", srcPath,
     ]);
@@ -169,7 +182,7 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
     const framePath = `${workDir}/keyframe.png`;
     await execFileP("ffmpeg", [
       "-y", "-ss", String(ts), "-i", srcPath, "-frames:v", "1",
-      "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+      "-vf", `scale=${kfSize}:force_original_aspect_ratio=decrease,pad=${kfSize}:(ow-iw)/2:(oh-ih)/2`,
       "-q:v", "2", framePath,
     ], { timeout: 60_000 });
     const frameData = `data:image/png;base64,${readFileSync(framePath).toString("base64")}`;
@@ -189,7 +202,9 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
       editedFrame,
       `${motion}. ${editPrompt}`,
       meta.durationSec ?? 5,
-      meta.model ?? "kling-pro"
+      meta.model ?? "kling-pro",
+      aspect,
+      is1080 ? "1080p" : "720p"
     );
 
     // 5. Normalize result: Sora's generateFootage already lands on Blob;
