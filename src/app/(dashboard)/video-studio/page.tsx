@@ -37,6 +37,9 @@ import {
   Megaphone,
   Info,
   Clock,
+  Bookmark,
+  BookmarkCheck,
+  X,
 } from "lucide-react";
 import type { MarketProductVideo } from "@/lib/market/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -2377,6 +2380,18 @@ interface WatchedRow {
   lastSnapshot: string | null;
 }
 
+interface SavedSellerRow {
+  id: string;
+  kind: "influencer" | "shop";
+  source: string;
+  sourceId: string;
+  name: string;
+  avatarUrl: string | null;
+  category: string | null;
+  followers: number | null;
+  createdAt: string;
+}
+
 interface FilterFieldProps {
   label: string;
   value: string;
@@ -3052,6 +3067,7 @@ function MarketTab({
   const [source, setSource] = useState("echotik");
   const [period, setPeriod] = useState("week");
   const [sort, setSort] = useState("rank");
+  const [recentDays, setRecentDays] = useState<number | null>(null); // "last N days" window on stored list
   const [rows, setRows] = useState<MarketRow[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -3064,6 +3080,9 @@ function MarketTab({
   const [watched, setWatched] = useState<WatchedRow[]>([]);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
   const [watching, setWatching] = useState<string | null>(null);
+  const [savedSellers, setSavedSellers] = useState<SavedSellerRow[]>([]);
+  const [savedSellerKeys, setSavedSellerKeys] = useState<Set<string>>(new Set());
+  const [savingSeller, setSavingSeller] = useState<string | null>(null);
   const [detailFor, setDetailFor] = useState<{
     product: DetailProduct;
     analytics: MarketAnalyticsRow | null;
@@ -3115,6 +3134,7 @@ function MarketTab({
         sort,
         limit: "50",
       });
+      if (recentDays) params.set("days", String(recentDays));
       const res = await fetch(`/api/market/products?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load market data");
@@ -3126,7 +3146,7 @@ function MarketTab({
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, source, period, sort]);
+  }, [workspaceId, source, period, sort, recentDays]);
 
   const refreshMarket = useCallback(async () => {
     setLoading(true);
@@ -3310,9 +3330,23 @@ function MarketTab({
     }
   }, [workspaceId]);
 
+  const loadSavedSellers = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/market/bookmarks?workspaceId=${workspaceId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const rows = (data.rows ?? []) as SavedSellerRow[];
+      setSavedSellers(rows);
+      setSavedSellerKeys(new Set(rows.map((b) => `${b.kind}:${b.source}:${b.sourceId}`)));
+    } catch {
+      /* non-fatal */
+    }
+  }, [workspaceId]);
+
   useEffect(() => {
     loadWatched();
-  }, [loadWatched]);
+    loadSavedSellers();
+  }, [loadWatched, loadSavedSellers]);
 
   const openDetail = (row: MarketRow) =>
     setDetailFor({
@@ -3355,6 +3389,35 @@ function MarketTab({
       toast.error(error instanceof Error ? error.message : "Watchlist error");
     } finally {
       setWatching(null);
+    }
+  };
+
+  const toggleSaveSeller = async (kind: "influencer" | "shop", source: string, sourceId: string, name: string, avatarUrl: string | null, category: string | null, followers: number | null) => {
+    if (!sourceId) return;
+    const key = `${kind}:${source}:${sourceId}`;
+    const isSaved = savedSellerKeys.has(key);
+    setSavingSeller(key);
+    try {
+      if (isSaved) {
+        const res = await fetch(
+          `/api/market/bookmarks?workspaceId=${workspaceId}&kind=${kind}&source=${source}&sourceId=${encodeURIComponent(sourceId)}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) throw new Error("Failed to remove bookmark");
+      } else {
+        const res = await fetch(`/api/market/bookmarks`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workspaceId, kind, source, sourceId, name, avatarUrl, category, followers }),
+        });
+        if (!res.ok) throw new Error("Failed to bookmark");
+      }
+      toast.success(isSaved ? `Removed "${name}" from saved sellers` : `Saved "${name}" — tap it anytime to re-open their products`);
+      await loadSavedSellers();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bookmark error");
+    } finally {
+      setSavingSeller(null);
     }
   };
 
@@ -3468,6 +3531,17 @@ function MarketTab({
           <option value="momentum">Sort: Momentum</option>
           <option value="gmv">Sort: GMV 30d</option>
         </select>
+        <Button
+          size="sm"
+          variant={recentDays === 7 ? "default" : "outline"}
+          onClick={() => {
+            setRecentDays(recentDays === 7 ? null : 7);
+            setView("discover");
+          }}
+          title="Only show products with a snapshot in the last 7 days"
+        >
+          <Clock className="h-4 w-4" /> Last 7 days
+        </Button>
         <Button size="sm" variant={view === "watched" ? "default" : "outline"} onClick={() => setView(view === "watched" ? "discover" : "watched")}>
           <Star className="h-4 w-4" /> Watched ({watched.length})
         </Button>
@@ -3538,6 +3612,54 @@ function MarketTab({
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
           {searchNotice}
         </p>
+      )}
+
+      {savedSellers.length > 0 && (
+        <Card className="p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              <Bookmark className="h-3.5 w-3.5" /> Saved sellers
+            </span>
+            {savedSellers.map((b) => {
+              const bkey = `${b.kind}:${b.source}:${b.sourceId}`;
+              return (
+                <div
+                  key={b.id}
+                  className="flex items-center gap-1.5 rounded-full border bg-muted/40 py-1 pl-1.5 pr-1.5 text-xs"
+                >
+                  {b.avatarUrl ? (
+                    <img src={b.avatarUrl} alt="" className="h-5 w-5 rounded-full border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                  ) : (
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full border bg-background">
+                      {b.kind === "influencer" ? <User className="h-3 w-3 text-muted-foreground" /> : <Store className="h-3 w-3 text-muted-foreground" />}
+                    </div>
+                  )}
+                  <button
+                    className="max-w-[140px] truncate font-medium hover:underline"
+                    title={`${b.name} — open their products`}
+                    onClick={() => {
+                      setSearchType(b.kind === "influencer" ? "influencer" : "shop");
+                      setSearchKeyword(b.name);
+                      void drillProducts(b.kind, b.sourceId);
+                    }}
+                  >
+                    {b.name}
+                  </button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-5 w-5"
+                    title="Remove bookmark"
+                    disabled={savingSeller === bkey}
+                    onClick={() => void toggleSaveSeller(b.kind, b.source, b.sourceId, b.name, b.avatarUrl, b.category, b.followers)}
+                  >
+                    {savingSeller === bkey ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
       )}
 
       {searchResults && (
@@ -3612,10 +3734,37 @@ function MarketTab({
                           <td className="px-3 py-2 whitespace-nowrap">{fmt(r.sales != null ? Number(r.sales) : null)}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{fmt(r.videoCount != null ? Number(r.videoCount) : null)}</td>
                           <td className="px-3 py-2">
-                            <Button size="sm" variant="outline" disabled={drillLoading === key} onClick={() => void drillProducts("influencer", String(r.sourceCreatorId ?? ""))}>
-                              {drillLoading === key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}
-                              Products
-                            </Button>
+                            <div className="flex items-center gap-1.5">
+                              <Button size="sm" variant="outline" disabled={drillLoading === key} onClick={() => void drillProducts("influencer", String(r.sourceCreatorId ?? ""))}>
+                                {drillLoading === key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}
+                                Products
+                              </Button>
+                              {(() => {
+                                const bkey = `influencer:echotik:${String(r.sourceCreatorId ?? "")}`;
+                                const saved = savedSellerKeys.has(bkey);
+                                return (
+                                  <Button
+                                    size="sm"
+                                    variant={saved ? "default" : "outline"}
+                                    disabled={savingSeller === bkey || !r.sourceCreatorId}
+                                    onClick={() =>
+                                      void toggleSaveSeller(
+                                        "influencer",
+                                        "echotik",
+                                        String(r.sourceCreatorId ?? ""),
+                                        String(r.name ?? "Unknown"),
+                                        r.avatarUrl ? String(r.avatarUrl) : null,
+                                        r.category ? String(r.category) : null,
+                                        r.followers != null ? Number(r.followers) : null
+                                      )
+                                    }
+                                    title={saved ? "Unbookmark seller" : "Bookmark seller"}
+                                  >
+                                    {savingSeller === bkey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
+                                  </Button>
+                                );
+                              })()}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -3644,10 +3793,37 @@ function MarketTab({
                           <td className="px-3 py-2 whitespace-nowrap">{money(r.gmv != null ? Number(r.gmv) : null)}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{fmt(r.sales != null ? Number(r.sales) : null)}</td>
                           <td className="px-3 py-2">
-                            <Button size="sm" variant="outline" disabled={drillLoading === key} onClick={() => void drillProducts("shop", String(r.sourceSellerId ?? ""))}>
-                              {drillLoading === key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}
-                              Products
-                            </Button>
+                            <div className="flex items-center gap-1.5">
+                              <Button size="sm" variant="outline" disabled={drillLoading === key} onClick={() => void drillProducts("shop", String(r.sourceSellerId ?? ""))}>
+                                {drillLoading === key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}
+                                Products
+                              </Button>
+                              {(() => {
+                                const bkey = `shop:echotik:${String(r.sourceSellerId ?? "")}`;
+                                const saved = savedSellerKeys.has(bkey);
+                                return (
+                                  <Button
+                                    size="sm"
+                                    variant={saved ? "default" : "outline"}
+                                    disabled={savingSeller === bkey || !r.sourceSellerId}
+                                    onClick={() =>
+                                      void toggleSaveSeller(
+                                        "shop",
+                                        "echotik",
+                                        String(r.sourceSellerId ?? ""),
+                                        String(r.name ?? "Unknown"),
+                                        r.coverUrl ? String(r.coverUrl) : null,
+                                        r.category ? String(r.category) : null,
+                                        r.followers != null ? Number(r.followers) : null
+                                      )
+                                    }
+                                    title={saved ? "Unbookmark seller" : "Bookmark seller"}
+                                  >
+                                    {savingSeller === bkey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
+                                  </Button>
+                                );
+                              })()}
+                            </div>
                           </td>
                         </tr>
                       );

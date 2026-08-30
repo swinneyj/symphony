@@ -628,6 +628,21 @@ export const marketProductCreators = pgTable("market_product_creators", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const marketBookmarks = pgTable("market_bookmarks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), // 'influencer' | 'shop'
+  source: text("source").notNull().default("echotik"),
+  sourceId: text("source_id").notNull(), // creator id or seller id
+  name: text("name").notNull(),
+  avatarUrl: text("avatar_url"),
+  category: text("category"),
+  followers: integer("followers"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 export const productWatchlist = pgTable("product_watchlist", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id")

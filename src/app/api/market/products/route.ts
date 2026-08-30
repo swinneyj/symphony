@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { marketProducts } from "@/db/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, inArray } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { fetchWinningProducts, ingestMarketRows } from "@/lib/market";
 import type { MarketQuery, MarketSource } from "@/lib/market/types";
@@ -173,6 +173,38 @@ export async function GET(request: Request) {
     // No refresh: latest stored snapshots for this source.
     const orderByCol =
       sort === "momentum" ? marketProducts.momentumScore : sort === "gmv" ? marketProducts.gmv30d : marketProducts.rank;
+
+    // Optional recency window ("last N days"): only snapshots within the
+    // window count, deduped to each product's most recent one.
+    const daysParam = searchParams.get("days");
+    const days = daysParam ? Number(daysParam) : null;
+    if (days && Number.isFinite(days) && days > 0) {
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const recent = await db
+        .select()
+        .from(marketProducts)
+        .where(
+          and(
+            eq(marketProducts.workspaceId, workspaceId),
+            eq(marketProducts.source, source),
+            gte(marketProducts.snapshotDate, cutoff)
+          )
+        )
+        .orderBy(desc(marketProducts.snapshotDate));
+      const byProduct = new Map<string, (typeof recent)[number]>();
+      for (const s of recent) {
+        if (!byProduct.has(s.sourceProductId)) byProduct.set(s.sourceProductId, s);
+      }
+      const rows = [...byProduct.values()]
+        .sort((a, b) => {
+          const av = orderByCol === marketProducts.momentumScore ? a.momentumScore : orderByCol === marketProducts.gmv30d ? a.gmv30d : a.rank;
+          const bv = orderByCol === marketProducts.momentumScore ? b.momentumScore : orderByCol === marketProducts.gmv30d ? b.gmv30d : b.rank;
+          return (Number(bv) ?? -Infinity) - (Number(av) ?? -Infinity);
+        })
+        .slice(0, limit);
+      return NextResponse.json({ rows, source, dryRun: false, windowDays: days });
+    }
+
     const rows = await db
       .select()
       .from(marketProducts)
