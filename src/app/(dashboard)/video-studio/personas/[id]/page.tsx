@@ -57,22 +57,44 @@ export default function PersonaDetailPage() {
   const [persona, setPersona] = useState<any>(null);
   const [hub, setHub] = useState<HubPayload | null>(null);
   const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // System personas (workspaceId null) need ?workspaceId= on read APIs —
+  // resolve the user's workspace like the formula run page does.
+  useEffect(() => {
+    fetch("/api/workspaces")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((ws) => {
+        if (Array.isArray(ws) && ws.length > 0) setWorkspaceId(ws[0].id);
+      })
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
-      const p = await fetch(`/api/personas/${id}`).then((r) => r.json());
+      const wsQuery = workspaceId ? `?workspaceId=${workspaceId}` : "";
+      const pRes = await fetch(`/api/personas/${id}${wsQuery}`);
+      if (!pRes.ok) {
+        const d = await pRes.json().catch(() => ({}));
+        throw new Error(d.error ?? `Failed to load persona (${pRes.status})`);
+      }
+      const p = await pRes.json();
       setPersona(p);
-      const h = await fetch(`/api/personas/${id}/media`).then((r) => r.json());
-      setHub(h);
+      const hRes = await fetch(`/api/personas/${id}/media${wsQuery}`);
+      if (!hRes.ok) {
+        const d = await hRes.json().catch(() => ({}));
+        throw new Error(d.error ?? `Failed to load asset hub (${hRes.status})`);
+      }
+      setHub(await hRes.json());
       if (p.workspaceId) {
         const v = await fetch(`/api/voices?workspaceId=${p.workspaceId}`).then((r) => r.json());
         setVoices(v);
       }
-    } catch {
-      setError("Failed to load persona");
+    } catch (e) {
+      setError((e as Error).message);
     }
-  }, [id]);
+  }, [id, workspaceId]);
 
   useEffect(() => {
     load();
@@ -105,7 +127,11 @@ export default function PersonaDetailPage() {
         <div className="h-32 w-32 overflow-hidden rounded-2xl border bg-muted">
           {persona.faceImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={`/api/personas/${id}/image`} alt={persona.name} className="h-full w-full object-cover" />
+            <img
+              src={`/api/personas/${id}/image${workspaceId ? `?workspaceId=${workspaceId}` : ""}`}
+              alt={persona.name}
+              className="h-full w-full object-cover"
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-5xl text-muted-foreground/40">
               {persona.name[0]}

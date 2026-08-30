@@ -68,6 +68,10 @@ export function PersonasTab({
   }, [open, reset]);
 
   const generateFaces = async () => {
+    if (description.trim().length < 10) {
+      setGenError("Describe the face first — at least 10 characters (e.g. '24-year-old blonde fitness creator').");
+      return;
+    }
     setGenLoading(true);
     setGenError(null);
     try {
@@ -161,7 +165,7 @@ export function PersonasTab({
                 />
               </div>
               <div className="flex items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={generateFaces} disabled={genLoading || description.trim().length < 10}>
+                <Button type="button" variant="outline" size="sm" onClick={generateFaces} disabled={genLoading}>
                   <Sparkles className="h-4 w-4 mr-1.5" />
                   {genLoading ? "Generating…" : genUrls.length > 0 ? "Regenerate faces" : "✨ Generate face with AI"}
                 </Button>
@@ -222,7 +226,7 @@ export function PersonasTab({
       ) : (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
           {personas.map((p) => (
-            <Card key={p.id} className="group overflow-hidden">
+            <Card key={p.id} className="group relative overflow-hidden">
               <Link href={`/video-studio/personas/${p.id}`} className="block">
                 <div className="relative aspect-[3/4] bg-muted">
                   {p.faceImageUrl ? (
@@ -232,7 +236,7 @@ export function PersonasTab({
                     <div className="flex h-full items-center justify-center text-4xl text-muted-foreground/40">{p.name[0]}</div>
                   )}
                   {p.isSystem && (
-                    <Badge className="absolute top-2 left-2 bg-primary/90">System</Badge>
+                    <Badge className="absolute left-2 top-2 bg-primary/90">System</Badge>
                   )}
                 </div>
                 <div className="p-3">
@@ -242,35 +246,37 @@ export function PersonasTab({
                   </p>
                 </div>
               </Link>
-              <div className="absolute right-2 top-2 hidden gap-1 group-hover:flex">
-                <Button
-                  size="icon"
-                  variant="secondary"
-                  className="h-7 w-7"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setEditing(p);
-                    setName(p.name);
-                    setDescription(p.description ?? "");
-                    setPersonaPrompt(p.personaPrompt ?? "");
-                    setVoiceId(p.voiceId ?? "");
-                    setOpen(true);
-                  }}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="destructive"
-                  className="h-7 w-7"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    remove(p);
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+              {!p.isSystem && (
+                <div className="absolute right-2 top-2 hidden gap-1 group-hover:flex">
+                  <Button
+                    size="icon"
+                    variant="secondary"
+                    className="h-7 w-7"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setEditing(p);
+                      setName(p.name);
+                      setDescription(p.description ?? "");
+                      setPersonaPrompt(p.personaPrompt ?? "");
+                      setVoiceId(p.voiceId ?? "");
+                      setOpen(true);
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="destructive"
+                    className="h-7 w-7"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      remove(p);
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
             </Card>
           ))}
         </div>
