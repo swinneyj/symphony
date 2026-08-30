@@ -13,6 +13,7 @@ import {
   Trash2,
   Play,
   Clapperboard,
+  UserRound,
   Loader2,
   ExternalLink,
   TrendingUp,
@@ -54,6 +55,7 @@ import { cn } from "@/lib/utils";
 import { MOTION_PRESETS } from "@/lib/video/presets";
 import { formatUsd } from "@/lib/usage-core";
 import { ImageStudioTab } from "@/components/image-studio-tab";
+import { PersonasTab, type Persona } from "@/components/personas-tab";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +107,7 @@ const VIDEO_STUDIO_TABS = new Set([
   "discover",
   "formulas",
   "voices",
+  "personas",
   "batches",
   "market",
   "clone",
@@ -119,6 +122,7 @@ export default function VideoStudioPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [formulas, setFormulas] = useState<Formula[]>([]);
   const [voices, setVoices] = useState<Voice[]>([]);
+  const [personas, setPersonas] = useState<Persona[]>([]);
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("products");
@@ -155,6 +159,11 @@ export default function VideoStudioPage() {
     if (res.ok) setVoices(await res.json());
   }, []);
 
+  const loadPersonas = useCallback(async (wsId: string) => {
+    const res = await fetch(`/api/personas?workspaceId=${wsId}`);
+    if (res.ok) setPersonas(await res.json());
+  }, []);
+
   const loadBatches = useCallback(async (wsId: string) => {
     const res = await fetch(`/api/batches?workspaceId=${wsId}`);
     if (res.ok) setBatches(await res.json());
@@ -172,8 +181,9 @@ export default function VideoStudioPage() {
     loadProducts(workspaceId);
     loadFormulas(workspaceId);
     loadVoices(workspaceId);
+    loadPersonas(workspaceId);
     loadBatches(workspaceId);
-  }, [workspaceId, loadProducts, loadFormulas, loadVoices, loadBatches]);
+  }, [workspaceId, loadProducts, loadFormulas, loadVoices, loadPersonas, loadBatches]);
 
   if (loading) {
     return (
@@ -214,6 +224,9 @@ export default function VideoStudioPage() {
           </TabsTrigger>
           <TabsTrigger value="voices" className="gap-1.5 shrink-0">
             <Clapperboard className="h-4 w-4" /> Voices
+          </TabsTrigger>
+          <TabsTrigger value="personas" className="gap-1.5 shrink-0">
+            <UserRound className="h-4 w-4" /> Personas
           </TabsTrigger>
           <TabsTrigger value="batches" className="gap-1.5 shrink-0">
             <Play className="h-4 w-4" /> Batch Studio
@@ -268,12 +281,22 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
+        <TabsContent value="personas" className="mt-4">
+          <PersonasTab
+            workspaceId={workspaceId!}
+            personas={personas}
+            voices={voices}
+            onChanged={() => loadPersonas(workspaceId!)}
+          />
+        </TabsContent>
+
         <TabsContent value="batches" className="mt-4">
           <BatchStudioTab
             workspaceId={workspaceId!}
             products={products}
             formulas={formulas}
             voices={voices}
+            personas={personas}
             batches={batches}
             onBatchesChanged={() => loadBatches(workspaceId!)}
             onProductsChanged={() => loadProducts(workspaceId!)}
@@ -1899,6 +1922,7 @@ function BatchStudioTab({
   products,
   formulas,
   voices,
+  personas,
   batches,
   onBatchesChanged,
   preselectProductIds,
@@ -1908,6 +1932,7 @@ function BatchStudioTab({
   products: Product[];
   formulas: Formula[];
   voices: Voice[];
+  personas?: Persona[];
   batches: BatchSummary[];
   onBatchesChanged: () => void;
   onProductsChanged: () => void;
@@ -1917,6 +1942,7 @@ function BatchStudioTab({
   const [name, setName] = useState("");
   const [formulaId, setFormulaId] = useState("");
   const [voiceId, setVoiceId] = useState("");
+  const [personaId, setPersonaId] = useState("");
   const [quality, setQuality] = useState("standard");
   const [engine, setEngine] = useState("sora");
   const [selected, setSelected] = useState<string[]>([]);
@@ -2005,6 +2031,7 @@ function BatchStudioTab({
           name,
           formulaId,
           voiceId: voiceId || null,
+          personaId: personaId || null,
           quality,
           provider: engine,
           productIds: selected,
@@ -2117,6 +2144,23 @@ function BatchStudioTab({
                 {ENGINES.map((e) => (
                   <option key={e.value} value={e.value}>
                     {e.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-persona">Persona (AI influencer)</Label>
+              <select
+                id="batch-persona"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                value={personaId}
+                onChange={(e) => setPersonaId(e.target.value)}
+              >
+                <option value="">None</option>
+                {(personas ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.isSystem ? " (system)" : ""}
                   </option>
                 ))}
               </select>

@@ -32,9 +32,6 @@ export async function POST(request: Request) {
     if (!workspaceId || typeof workspaceId !== "string") {
       return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
     }
-    if (!personaId || typeof personaId !== "string") {
-      return NextResponse.json({ error: "personaId is required" }, { status: 400 });
-    }
     if (!description || typeof description !== "string" || description.trim().length < 10) {
       return NextResponse.json(
         { error: "description is required (10+ characters — e.g. '24-year-old blonde fitness creator, athletic build')" },
@@ -45,12 +42,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const [persona] = await db.select().from(personas).where(eq(personas.id, personaId)).limit(1);
-    if (!persona) {
-      return NextResponse.json({ error: "Persona not found" }, { status: 404 });
-    }
-    if (persona.workspaceId !== workspaceId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // personaId optional: when creating a new persona the caller generates
+    // faces FIRST (no persona row yet) and attaches the URLs on create.
+    let persona: (typeof personas.$inferSelect) | null = null;
+    if (personaId) {
+      const [found] = await db.select().from(personas).where(eq(personas.id, personaId)).limit(1);
+      if (!found) {
+        return NextResponse.json({ error: "Persona not found" }, { status: 404 });
+      }
+      if (found.workspaceId !== workspaceId) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      persona = found;
     }
 
     const { urls, costUsd } = await generatePersonaFaces(
@@ -59,15 +62,17 @@ export async function POST(request: Request) {
       { workspaceId, userId: session.user.id }
     );
 
-    // Make the persona usable immediately: first face is the primary, all are refs.
-    await db
-      .update(personas)
-      .set({
-        faceImageUrl: persona.faceImageUrl ?? urls[0],
-        faceRefUrls: urls,
-        updatedAt: new Date(),
-      })
-      .where(eq(personas.id, personaId));
+    // Existing persona: make it usable immediately (first face = primary).
+    if (persona) {
+      await db
+        .update(personas)
+        .set({
+          faceImageUrl: persona.faceImageUrl ?? urls[0],
+          faceRefUrls: urls,
+          updatedAt: new Date(),
+        })
+        .where(eq(personas.id, persona.id));
+    }
 
     await db.insert(aiGenerations).values({
       workspaceId,
