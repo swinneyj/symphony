@@ -50,9 +50,15 @@ export async function POST(request: Request) {
     const res = await withLLM("gpt", (client, model) =>
       client.chat.completions.create({
         model,
-        max_tokens: 400,
+        // Gemini's OpenAI-compat endpoint MANGLES both params: response_format
+        // truncates to ~40 chars and max_tokens caps output at a tiny fraction
+        // (max_tokens=700 → ~28 tokens). Verified 2026-08. For Gemini send
+        // neither and rely on its native 8192-token output cap; keep both for
+        // providers that honor them (deepseek, openai).
+        ...(model.startsWith("gemini")
+          ? {}
+          : { max_tokens: 700, response_format: { type: "json_object" } }),
         temperature: 0.8,
-        response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
           { role: "user", content: userMsg },
