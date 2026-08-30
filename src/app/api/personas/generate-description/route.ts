@@ -25,6 +25,10 @@ export async function POST(request: Request) {
     const workspaceId = body.workspaceId;
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const hint = typeof body.hint === "string" ? body.hint.trim() : "";
+    // Model picker: "auto" (default) walks the gpt chain (gemini flash free
+    // first); a specific id calls just that model, falling back to auto.
+    const PICKER_MODELS = ["gemini-3.6-flash", "deepseek-chat", "gpt-4o-mini"];
+    const pickedModel = typeof body.model === "string" && PICKER_MODELS.includes(body.model) ? body.model : null;
 
     if (!workspaceId || typeof workspaceId !== "string") {
       return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
@@ -47,14 +51,13 @@ export async function POST(request: Request) {
 
     const userMsg = `Persona name: "${name}"${hint ? `\nCreator direction: "${hint}"` : ""}`;
 
-    const res = await withLLM("gpt", (client, model) =>
-      client.chat.completions.create({
+    // Picked model first (single attempt, gemini param guard applied), then
+    // the auto chain as fallback so a bad pick never dead-ends the user.
+    const attempt = async (model: string) => {
+      const client = (await import("@/lib/llm")).clientForModel(model);
+      if (!client) return null;
+      return client.chat.completions.create({
         model,
-        // Gemini's OpenAI-compat endpoint MANGLES both params: response_format
-        // truncates to ~40 chars and max_tokens caps output at a tiny fraction
-        // (max_tokens=700 → ~28 tokens). Verified 2026-08. For Gemini send
-        // neither and rely on its native 8192-token output cap; keep both for
-        // providers that honor them (deepseek, openai).
         ...(model.startsWith("gemini")
           ? {}
           : { max_tokens: 700, response_format: { type: "json_object" } }),
@@ -63,8 +66,30 @@ export async function POST(request: Request) {
           { role: "system", content: system },
           { role: "user", content: userMsg },
         ],
-      })
-    );
+      });
+    };
+
+    let res = pickedModel ? await attempt(pickedModel).catch(() => null) : null;
+    if (!res) {
+      res = await withLLM("gpt", (client, model) =>
+        client.chat.completions.create({
+          model,
+          // Gemini's OpenAI-compat endpoint MANGLES both params: response_format
+          // truncates to ~40 chars and max_tokens caps output at a tiny fraction
+          // (max_tokens=700 → ~28 tokens). Verified 2026-08. For Gemini send
+          // neither and rely on its native 8192-token output cap; keep both for
+          // providers that honor them (deepseek, openai).
+          ...(model.startsWith("gemini")
+            ? {}
+            : { max_tokens: 700, response_format: { type: "json_object" } }),
+          temperature: 0.8,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userMsg },
+          ],
+        })
+      );
+    }
 
     const raw = res?.choices?.[0]?.message?.content ?? "";
     if (!raw.trim()) {

@@ -52,6 +52,7 @@ export function PersonasTab({
   const [genError, setGenError] = useState<string | null>(null);
   const [genUrls, setGenUrls] = useState<string[]>([]);
   const [descLoading, setDescLoading] = useState(false);
+  const [genModel, setGenModel] = useState("auto");
   const [editing, setEditing] = useState<Persona | null>(null);
 
   const reset = useCallback(() => {
@@ -61,6 +62,7 @@ export function PersonasTab({
     setVoiceId("");
     setGenUrls([]);
     setGenError(null);
+    setGenModel("auto");
     setEditing(null);
   }, []);
 
@@ -79,7 +81,7 @@ export function PersonasTab({
       const res = await fetch("/api/personas/generate-description", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspaceId, name: name.trim() }),
+        body: JSON.stringify({ workspaceId, name: name.trim(), model: genModel === "auto" ? undefined : genModel }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Generation failed");
@@ -179,21 +181,34 @@ export function PersonasTab({
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ava — fitness creator" />
               </div>
               <div>
-                <div className="mb-1 flex items-center justify-between">
+                <div className="mb-1 flex items-center justify-between gap-2">
                   <label className="text-xs font-medium">
                     Face description <span className="text-muted-foreground">(used for AI generation)</span>
                   </label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-[11px]"
-                    onClick={generateDescription}
-                    disabled={descLoading}
-                  >
-                    <Sparkles className="h-3 w-3 mr-1" />
-                    {descLoading ? "Writing…" : "Generate with AI"}
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={genModel}
+                      onChange={(e) => setGenModel(e.target.value)}
+                      className="h-6 rounded-md border border-input bg-background px-1.5 text-[11px]"
+                      title="Which model powers the AI generation"
+                    >
+                      <option value="auto">Auto (Gemini, free)</option>
+                      <option value="gemini-3.6-flash">Gemini Flash</option>
+                      <option value="deepseek-chat">DeepSeek</option>
+                      <option value="gpt-4o-mini">GPT-4o mini</option>
+                    </select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-[11px]"
+                      onClick={generateDescription}
+                      disabled={descLoading}
+                    >
+                      <Sparkles className="h-3 w-3 mr-1" />
+                      {descLoading ? "Writing…" : "Generate with AI"}
+                    </Button>
+                  </div>
                 </div>
                 <Textarea
                   value={description}
