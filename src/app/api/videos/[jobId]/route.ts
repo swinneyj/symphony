@@ -37,6 +37,7 @@ export async function GET(
     }
 
     const url = kind === "footage" ? job.footageUrl : job.finalUrl;
+    const download = new URL(request.url).searchParams.get("download") === "1";
     if (!url || url.startsWith("dryrun:")) {
       return NextResponse.json(
         { error: "No real video for this job (dry-run or unfinished)" },
@@ -59,7 +60,8 @@ export async function GET(
           { status: 502 }
         );
       }
-      const disposition = kind === "footage" ? "inline" : "attachment";
+      // Inline by default (browser plays it); ?download=1 → attachment.
+      const disposition = download ? "attachment" : "inline";
       return new NextResponse(upstream.body, {
         status: 200,
         headers: {

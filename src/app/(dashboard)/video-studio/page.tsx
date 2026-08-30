@@ -2236,7 +2236,9 @@ function BatchStudioTab({
                       )}
                       {(job.footageUrl || job.finalUrl) && (
                         <a
-                          href={job.finalUrl ?? job.footageUrl!}
+                          href={job.finalUrl
+                            ? `/api/videos/${job.id}?kind=final`
+                            : `/api/videos/${job.id}?kind=footage`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-primary hover:underline"
