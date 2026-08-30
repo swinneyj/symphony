@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { cacheDel } from "@/lib/market/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import {
@@ -188,6 +189,12 @@ export async function PATCH(
       .set(updateData)
       .where(eq(posts.id, id))
       .returning();
+
+    // Invalidate the publish gate on any schedule/status change — the armed
+    // `next_due_at` may now be stale (see /api/cron/publish).
+    if (body.scheduledFor !== undefined || body.status !== undefined) {
+      await cacheDel("publish:next_due_at");
+    }
 
     return NextResponse.json(updatedPost);
   } catch (error) {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { flagJobs } from "@/lib/market/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { products, videoBatchJobs, videoFormulas } from "@/db/schema";
@@ -63,6 +64,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           metadata: {},
         })
         .returning();
+      await Promise.all([flagJobs("video"), flagJobs("img")]);
       return NextResponse.json(job, { status: 201 });
     }
 
@@ -100,6 +102,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       })
       .returning();
 
+    await Promise.all([flagJobs("video"), flagJobs("img")]);
     await db
       .update(products)
       .set({ status: "processing", updatedAt: new Date() })

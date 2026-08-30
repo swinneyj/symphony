@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { cacheDel } from "@/lib/market/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { posts, workspaceMembers, users } from "@/db/schema";
@@ -194,6 +195,12 @@ export async function POST(request: Request) {
         isTemplate: isTemplate || false,
       })
       .returning();
+
+    // Invalidate the publish gate: a newly scheduled post may be due before
+    // the currently armed `next_due_at` (see /api/cron/publish).
+    if (postStatus === "scheduled" || scheduledForDate) {
+      await cacheDel("publish:next_due_at");
+    }
 
     return NextResponse.json(post, { status: 201 });
   } catch (error) {

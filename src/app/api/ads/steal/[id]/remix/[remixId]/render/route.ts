@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { flagJobs } from "@/lib/market/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import {
@@ -177,6 +178,7 @@ export async function POST(
         stealThisAd: { adSourceId: id, remixId },
       },
     });
+    await Promise.all([flagJobs("video"), flagJobs("img")]);
 
     // Mark the remix rendered + linked to its batch.
     await db

@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlencode
+import urllib.request
 import http.server
 import threading
 
@@ -38,6 +39,35 @@ BLOB_TOKEN = (
     or ""
 ).strip() or None
 POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "5000"))
+
+
+# ── Neon compute gate ────────────────────────────────────────────────────────
+# Skip the DB poll unless a KV job-flag is set (see neon-compute-frugality.md:
+# every DB wake costs the full 5-min suspend delay). Gate is best-effort:
+# any failure → poll the DB as usual.
+GATE_URL = os.environ.get("WORKER_GATE_URL", "https://www.symphonyapp.company/api/cron/worker-gate")
+GATE_SECRET = os.environ.get("CRON_SECRET", "")
+
+
+def _gate_headers():
+    return {"Authorization": f"Bearer {GATE_SECRET}"} if GATE_SECRET else {}
+
+
+def gate_open(worker):
+    try:
+        req = urllib.request.Request(f"{GATE_URL}?w={worker}", headers=_gate_headers())
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return bool(json.loads(r.read().decode()).get("due", False))
+    except Exception:
+        return True  # gate unreachable → poll DB as usual
+
+
+def gate_clear(worker):
+    try:
+        req = urllib.request.Request(f"{GATE_URL}?w={worker}", method="DELETE", headers=_gate_headers())
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
 CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "2"))
 STALE_MINUTES = int(os.environ.get("WORKER_STALE_MINUTES", "15"))
 HEALTH_PORT = int(os.environ.get("PORT", "8082"))
@@ -617,6 +647,8 @@ def tick():
         conn.commit()
         for dl_id, ws, url, platform, want_audio, mute_video, created_by in dl_rows:
             process_download(conn, cur, dl_id, ws, url, platform, want_audio, mute_video, created_by)
+        if not rows and not dl_rows:
+            gate_clear("ads")
     finally:
         conn.close()
 
@@ -642,7 +674,8 @@ if __name__ == "__main__":
     print(f"[ads-worker] starting: poll={POLL_MS}ms concurrency={CONCURRENCY} healthz=:{HEALTH_PORT}")
     while True:
         try:
-            tick()
+            if gate_open("ads"):
+                tick()
         except Exception as e:  # noqa: BLE001 — keep the loop alive
             print(f"[ads-worker] tick error: {e}", file=sys.stderr)
         time.sleep(POLL_MS / 1000.0)
