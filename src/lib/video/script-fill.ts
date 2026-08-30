@@ -127,7 +127,7 @@ function heuristicFeatures(product: ScriptProduct): string[] {
 export async function renderScript(
   template: string,
   product: ScriptProduct,
-  opts: { llm?: boolean; usageCtx?: UsageContext } = {}
+  opts: { llm?: boolean; usageCtx?: UsageContext; persona?: { name: string; personaPrompt: string | null } | null } = {}
 ): Promise<RenderedScript> {
   let features: string[];
   let llm = false;
@@ -162,6 +162,8 @@ export async function renderScript(
     .replace(/\{category\}/g, category)
     .replace(/\{features\}/g, featuresText)
     .replace(/\{hook\}/g, hook)
+    .replace(/\{persona\}/g, opts.persona?.name ?? "")
+    .replace(/\{personaStyle\}/g, opts.persona?.personaPrompt ?? "")
     .replace(/\{store\}/g, "TikTok Shop")
     .replace(/\s{2,}/g, " ")
     .trim();

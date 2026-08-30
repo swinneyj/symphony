@@ -366,6 +366,10 @@ export interface SceneRenderRequest {
   aspectRatio?: string;
   /** Image Studio: output resolution — "1K" | "2K" | "4K". */
   imageSize?: "1K" | "2K" | "4K";
+  /** AI-influencer persona: face refs added as identity references. */
+  personaRefs?: string[];
+  /** AI-influencer persona style clause appended to the prompt. */
+  personaPrompt?: string | null;
 }
 
 export interface SceneRenderResult {
@@ -452,7 +456,7 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("Missing GEMINI_API_KEY for scene render");
   try {
-    const url = await geminiImageEdit(key, req.imageUrl, req.prompt, req.quality, req.aspectRatio, req.imageSize);
+    const url = await geminiImageEdit(key, req.imageUrl, req.prompt, req.quality, req.aspectRatio, req.imageSize, req.personaRefs, req.personaPrompt);
     return { url, dryRun: false };
   } catch (primaryError) {
     console.warn(
@@ -495,14 +499,24 @@ async function geminiImageEdit(
   prompt: string,
   quality: "standard" | "pro",
   aspectRatio?: string,
-  imageSize?: "1K" | "2K" | "4K"
+  imageSize?: "1K" | "2K" | "4K",
+  personaRefs?: string[],
+  personaPrompt?: string | null
 ): Promise<string> {
-  const res = await fetch(imageUrl, {
-    headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
-  });
-  if (!res.ok) throw new Error(`failed to fetch reference image for scene render: ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/png";
+  // Product photo first, then persona face refs — all inline references.
+  const refUrls = [imageUrl, ...(personaRefs ?? [])].filter(Boolean);
+  const parts: Array<Record<string, unknown>> = [
+    { text: personaPrompt ? `${prompt}\nStyle: ${personaPrompt}` : prompt },
+  ];
+  for (const refUrl of refUrls) {
+    const res = await fetch(refUrl, {
+      headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
+    });
+    if (!res.ok) throw new Error(`failed to fetch reference image for scene render: ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/png";
+    parts.push({ inline_data: { mime_type: mime, data: buf.toString("base64") } });
+  }
 
   const gen = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${key}`,
@@ -510,14 +524,7 @@ async function geminiImageEdit(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mime, data: buf.toString("base64") } },
-            ],
-          },
-        ],
+        contents: [{ parts }],
         generationConfig: {
           responseModalities: ["IMAGE"],
           imageConfig: {
