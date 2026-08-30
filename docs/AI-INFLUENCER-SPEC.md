@@ -2,16 +2,17 @@
 
 **Target:** Symphony (Next.js 16, drizzle + Neon, Vercel app + VPS video-worker)
 **Status:** spec (not started)
-**Origin:** Slippaz flagged Osher's video "How I Recreate Viral TikTok Shop Videos With AI in Minutes" (youtube GPLWmbzS4zo): the workflow is a persistent **AI model influencer** presenting products UGC-style for TikTok Shop. Asked: where does this land in Symphony? Answer: the render machinery already exists (Image Studio product→scene→video, Clone tab V2V, Steal This Ad URL→remix, voices with cloning, Post Queue → TT Shop publish). What does NOT exist is the **reusable identity layer** — a saved persona (face refs + voice + style) that persists across videos. This spec closes that gap (Phase 1). Talking-head/lip-sync rendering is Phase 2 (parked — provider probe required).
+**Origin:** Slippaz flagged Osher's video "How I Recreate Viral TikTok Shop Videos With AI in Minutes" (youtube GPLWmbzS4zo): the workflow is a persistent **AI model influencer** presenting products UGC-style for TikTok Shop. Asked: where does this land in Symphony? Answer: the render machinery already exists (Image Studio product→scene→video, Clone tab V2V, Steal This Ad URL→remix, voices with cloning, Post Queue → TT Shop publish). What does NOT exist is the **reusable identity layer** — a saved persona (face refs + voice + style) that persists across videos, **plus a clean management surface for everything tied to that model** (photos, videos, voice samples, content history). This spec closes that gap (Phase 1). Talking-head/lip-sync rendering is Phase 2 (parked — provider probe required).
 **Decision authority:** Hermes (per Slippaz), verify prices at build time.
 
 ---
 
-## 1. What we're building (Phase 1 — the Persona Bank)
+## 1. What we're building (Phase 1 — the Persona Hub)
 
-A **Personas** feature in Video Studio:
+A **Personas** feature in Video Studio where each AI model is a first-class, fully-managed entity — profile, face references, generated photos, every video it appears in, voice samples, and its usage across formulas/batches — all in one place:
 
 - **Create an AI influencer**: upload 3–5 face photos OR generate a consistent face with Nano Banana from a text description ("female UGC creator, early 30s, warm smile, bright kitchen"). Attach a voice (reuse the existing `voices` table — incl. cloned voices), plus a style/persona prompt.
+- **Manage its assets**: per-persona gallery of **Photos** (face refs + AI-generated images featuring the model), **Videos** (every render the persona appears in — auto-linked, no manual tagging), **Voice** (samples + cloned voice), **Usage** (formulas, batches, published posts).
 - **Reuse it across videos**: formulas gain a `personaId`; `{persona}` becomes a fill variable in scripts/scene prompts; scene renders can reference the persona's face as a second input image so the "model" appears *in* the frame holding/presenting the product.
 - **One-click content**: product + persona + UGC formula → batch → Post Queue → publish with TT Shop product link (existing paths).
 
@@ -39,6 +40,18 @@ Plus **two FK columns** on existing tables (drizzle migrations, same pattern as 
 - `video_formulas.personaId` uuid FK→personas (set null) — formula-level default persona
 - `video_batches.personaId` uuid FK→personas (set null) — batch-level override
 
+Plus a **junction table** for the asset hub (reuses the existing `media_assets` library — upload route `/api/media/upload`, public proxy `/api/media/[id]/public`, thumbnails/dimensions/duration already modeled):
+
+| column | type | notes |
+|---|---|---|
+| id | uuid pk | defaultRandom |
+| personaId | uuid FK→personas (cascade) | notNull |
+| mediaAssetId | uuid FK→media_assets (cascade) | notNull |
+| role | text | `face_ref` \| `generated_photo` \| `voice_sample` \| `thumbnail` |
+| createdAt | timestamp | defaultNow |
+
+`persona_media` is a pure junction — `media_assets` stays shared with the publish flow. **Videos need no junction**: rendered outputs are linked by querying `video_batch_jobs` on `metadata->>'personaId'` (the batch-creation path already stamps it) — the Videos gallery is a read, not a write path in the worker.
+
 No `video_job_type` enum change in Phase 1: persona threading flows through the **existing** `scene_render` / `footage` / voiceover jobs — persona refs ride in `video_batch_jobs.metadata`, the scene image persists the identity into footage, and voiceover already resolves `voiceId`.
 
 ## 3. API routes (mirror the products pattern)
@@ -47,6 +60,9 @@ No `video_job_type` enum change in Phase 1: persona threading flows through the 
 - `GET /api/personas` — workspace + system personas (auth + membership)
 - `PATCH /api/personas/[id]` / `DELETE /api/personas/[id]` — workspace ownership check
 - `POST /api/personas/generate-face` — text description → 3–5 Nano Banana images → Blob → returns URLs (costs ~$0.04–0.08/img, billed to `media` cost tracking)
+- `GET /api/personas/[id]/media` — asset hub payload: photos (junction), videos (jobs query on `metadata->>'personaId'`), voice (voices row + samples), usage (formulas/batches/posts counts)
+- `POST /api/personas/[id]/media` — attach an existing `media_assets` row to the persona (role), e.g. uploads from the gallery
+- `DELETE /api/personas/[id]/media/[mediaAssetId]` — detach (asset itself stays in `media_assets` for publish use)
 
 Blob storage + asset serving: reuse the **Image Studio proxy pattern** (`/api/image-studio/jobs/[jobId]/asset` — private Blob needs the authenticated proxy + Range/206 for video; images just need the proxy). Face refs are images only in Phase 1.
 
@@ -60,10 +76,15 @@ The Clone tab's 4-layer pitfall applies: any new option must thread **UI → API
 4. **Footage/assembly** — unchanged: i2v uses the scene image (identity baked in), overlay burns CTA.
 5. **Batch creation route** — `POST /api/batches` accepts `personaId`; per-job metadata carries `{ personaId, personaRefs, personaPrompt }`.
 
-## 5. UI — Personas tab
+## 5. UI — Personas tab + Persona detail page
 
 - New `TabsTrigger value="personas"` in `video-studio/page.tsx` (next to voices/batches), component `PersonasTab` (pattern: `ImageStudioTab`, `CloneTab`).
-- **Grid** of persona cards: face image, name, voice badge, formula count. **Create dialog**: name/describe → [Upload photos] or [✨ Generate face with AI] (preview refs, regenerate button) → voice picker (reuse voices tab data, incl. cloned) → style prompt.
+- **Grid** of persona cards: face image, name, voice badge, asset counts (photos/videos). **Create dialog**: name/describe → [Upload photos] or [✨ Generate face with AI] (preview refs, regenerate button) → voice picker (reuse voices tab data, incl. cloned) → style prompt.
+- **Persona detail page** (`/video-studio/personas/[id]`, pattern: formula run page): header (face, name, voice, status) + tabs:
+  - **Photos** — gallery grid from the junction: face refs (role badge) + generated photos; upload/add + remove; click → lightbox (proxy URL)
+  - **Videos** — every render featuring the model, auto-linked from jobs (`metadata->>'personaId'`): thumbnail, product, formula, batch status, final video → plays in-page (private-Blob proxy, same as Post Queue)
+  - **Voice** — voice row + sample player (reuse voices tab audio UI); swap voice here
+  - **Usage** — formulas using this persona, batch history, published posts (posts link via jobs.posted → posts)
 - **Formula editor**: persona picker beside the voice picker; batch run view shows persona chip.
 - **Quick action** on persona card: "Create video" → product picker → default UGC formula → batch → Post Queue (the 3-click "make content" path).
 
@@ -85,6 +106,7 @@ The Clone tab's 4-layer pitfall applies: any new option must thread **UI → API
 
 - Create persona via AI face generation → formula with persona → batch → final video where the scene includes the persona and the VO uses the persona's voice.
 - Identity consistency: 2+ videos from the same persona are recognizably the same model.
+- **Asset hub completeness (per Slippaz — "manage all the photos, videos that are related")**: the persona detail page shows every photo attached to the model and **every video it appears in, with no manual tagging** — a job rendered with `personaId` shows up in Videos automatically; detaching/adding photos is instant.
 - System personas visible across workspaces; workspace personas isolated.
 - Cost rollup: persona face generation appears in the run's est/actual panel (existing `llm_usage` + media cost pattern).
 - QA on staging with a real render, then visual QA on **all** affected views (per Slippaz's defect rule: batches view, formula run view, personas tab, queue).
@@ -96,10 +118,10 @@ The Clone tab's 4-layer pitfall applies: any new option must thread **UI → API
 | M1 | schema + migration + personas CRUD routes | S (products pattern) |
 | M2 | generate-face route + Blob proxy for refs | S–M |
 | M3 | fill vars + scene-render persona refs (worker + providers) | M (4-layer threading) |
-| M4 | Personas tab + formula picker + quick action | M |
+| M4 | Personas tab + detail page (Photos/Videos/Voice/Usage hub) + formula picker + quick action | M–L |
 | M5 | seed personas/formulas + staging QA | S |
 
-Phase 1 is shippable in **M1–M5, no new provider spend**. Phase 2 (talking head) is a separate spec gated on a free fal/Veo probe.
+Phase 1 is shippable in **M1–M5, no new provider spend**. The asset hub is mostly read paths (junction query + jobs metadata query) on top of the existing `media_assets` library. Phase 2 (talking head) is a separate spec gated on a free fal/Veo probe.
 
 ## 10. Open questions
 
