@@ -95,7 +95,10 @@ export async function checkScriptCompliance(opts: {
     usedModel = model;
     return client.chat.completions.create({
       model,
-      max_tokens: 700,
+      // Gemini's OpenAI-compat endpoint truncates output when max_tokens is
+      // sent (max_tokens=700 → ~28 tokens, JSON parse fails → silent static
+      // fallback). Skip it for Gemini; keep for deepseek/openai.
+      ...(model.startsWith("gemini") ? {} : { max_tokens: 700 }),
       temperature: 0.2,
       messages,
     });
