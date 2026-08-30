@@ -28,7 +28,7 @@ const LLM_CHAIN: Record<LLMTask, string[]> = {
   gpt: ["gemini-3.6-flash", "deepseek-chat", "gpt-4o-mini"],
 };
 
-function clientForModel(model: string): OpenAI | null {
+export function clientForModel(model: string): OpenAI | null {
   if (model.startsWith("gemini")) {
     return process.env.GEMINI_API_KEY
       ? new OpenAI({
