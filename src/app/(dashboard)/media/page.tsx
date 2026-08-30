@@ -78,6 +78,7 @@ export default function MediaPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<MediaType>("all");
+  const [dateFilter, setDateFilter] = useState<"all" | "7d" | "30d">("all");
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -180,12 +181,19 @@ export default function MediaPage() {
   };
 
   const filteredMedia = useMemo(() => {
+    const cutoff =
+      dateFilter === "7d"
+        ? Date.now() - 7 * 24 * 60 * 60 * 1000
+        : dateFilter === "30d"
+          ? Date.now() - 30 * 24 * 60 * 60 * 1000
+          : null;
     return media.filter((item) => {
       if (typeFilter !== "all" && item.mediaType !== typeFilter) return false;
       if (searchQuery && !item.fileName.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      if (cutoff != null && new Date(item.createdAt).getTime() < cutoff) return false;
       return true;
     });
-  }, [media, searchQuery, typeFilter]);
+  }, [media, searchQuery, typeFilter, dateFilter]);
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
@@ -303,6 +311,22 @@ export default function MediaPage() {
               {type === "image" && <FileImage className="h-3 w-3" />}
               {type === "video" && <FileVideo className="h-3 w-3" />}
               {type}
+            </button>
+          ))}
+        </div>
+        <div className="flex rounded-lg border p-0.5">
+          {(["all", "7d", "30d"] as const).map((d) => (
+            <button
+              key={d}
+              onClick={() => setDateFilter(d)}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                dateFilter === d
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {d === "all" ? "All time" : d === "7d" ? "Last 7 days" : "Last 30 days"}
             </button>
           ))}
         </div>
