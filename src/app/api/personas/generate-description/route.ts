@@ -1,0 +1,92 @@
+import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { db } from "@/db";
+import { aiGenerations } from "@/db/schema";
+import { hasWorkspaceAccess } from "@/lib/workspace-access";
+import { withLLM } from "@/lib/llm";
+
+export const runtime = "nodejs";
+
+/**
+ * POST /api/personas/generate-description
+ * LLM-creates a persona's face description + style prompt from the name
+ * (and optional user hint), so the creator never has to write prompts from
+ * scratch — the "✨ Generate with AI" button in the persona dialog.
+ * Returns { description, personaPrompt } — both stay editable client-side.
+ */
+export async function POST(request: Request) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const workspaceId = body.workspaceId;
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const hint = typeof body.hint === "string" ? body.hint.trim() : "";
+
+    if (!workspaceId || typeof workspaceId !== "string") {
+      return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
+    }
+    if (!name) {
+      return NextResponse.json({ error: "Persona name is required" }, { status: 400 });
+    }
+    if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const system =
+      "You are a casting director for TikTok Shop UGC (user-generated content) ads. " +
+      "Given a persona name (and optional direction), invent a compelling, diverse, realistic influencer. " +
+      "Return STRICT JSON only, no markdown, exactly this shape: " +
+      '{"description": "...", "personaPrompt": "..."}. ' +
+      'description = a face-description prompt for AI image generation (age, ethnicity, hairstyle, build, wardrobe, expression, setting) — 30-80 words, detailed and photorealistic, must be safe-for-work. ' +
+      'personaPrompt = a short style/delivery prompt injected into video scene prompts (energy, tone, lighting, setting vibe) — 10-30 words. ' +
+      "Avoid names of real celebrities; make every persona original. Avoid any protected/controversial identity markers.";
+
+    const userMsg = `Persona name: "${name}"${hint ? `\nCreator direction: "${hint}"` : ""}`;
+
+    const res = await withLLM("gpt", (client, model) =>
+      client.chat.completions.create({
+        model,
+        max_tokens: 400,
+        temperature: 0.8,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userMsg },
+        ],
+      })
+    );
+
+    const raw = res?.choices?.[0]?.message?.content ?? "";
+    const parsed = (() => {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        const m = raw.match(/\{[\s\S]*\}/);
+        return m ? JSON.parse(m[0]) : null;
+      }
+    })();
+
+    const description = typeof parsed?.description === "string" ? parsed.description.trim() : null;
+    const personaPrompt = typeof parsed?.personaPrompt === "string" ? parsed.personaPrompt.trim() : null;
+    if (!description) {
+      return NextResponse.json({ error: "Model returned an unusable response — try again" }, { status: 502 });
+    }
+
+    await db.insert(aiGenerations).values({
+      workspaceId,
+      userId: session.user.id,
+      type: "persona_description",
+      prompt: userMsg,
+      result: { description, personaPrompt },
+    });
+
+    return NextResponse.json({ description, personaPrompt: personaPrompt ?? "" });
+  } catch (error) {
+    console.error("Error generating persona description:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
