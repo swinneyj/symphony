@@ -63,8 +63,8 @@ export function estimateChatCost(
 export type UsageContext = {
   workspaceId: string;
   createdById: string;
-  /** Which product surface made the call: "remix" | "agent" | "fill". */
-  surface: "remix" | "agent" | "fill";
+  /** Which product surface made the call: "remix" | "agent" | "fill" | "gpt". */
+  surface: "remix" | "agent" | "fill" | "gpt";
   /** Where to attach the actual (for rollups): "ad_source" | "formula" | "batch" | "job". */
   entityType?: "ad_source" | "formula" | "batch" | "job";
   entityId?: string;

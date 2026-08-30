@@ -209,6 +209,7 @@ export function ImageStudioTab({
   // Stage 1 state
   const [productId, setProductId] = useState("");
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
+  const [buildingPrompt, setBuildingPrompt] = useState(false);
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
   const [batchSize, setBatchSize] = useState(1);
@@ -242,6 +243,31 @@ export function ImageStudioTab({
 
   const product = products.find((p) => p.id === productId);
   const sourceImage = product?.sceneImageUrl ?? product?.processedImageUrl ?? product?.originalImageUrl ?? null;
+
+  /** GPT Library: expand the short idea into a production Nano Banana prompt. */
+  const buildPromptWithGpt = useCallback(async () => {
+    setBuildingPrompt(true);
+    try {
+      const context = product
+        ? `Product: ${product.name}\nAspect ratio: ${aspectRatio}, image size: ${imageSize}. Scene render for a TikTok Shop product video — keep the product accurate (label, logo, colors, proportions) and leave clean negative space for captions.`
+        : `Aspect ratio: ${aspectRatio}, image size: ${imageSize}. Scene render for a TikTok Shop product video — leave clean negative space for captions.`;
+      const res = await fetch("/api/gpt/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preset: "nano_banana", input: prompt, context }),
+      });
+      const data = await res.json();
+      if (res.ok && data.text) {
+        setPrompt(data.text);
+      } else {
+        alert(data.error ?? "Prompt build failed");
+      }
+    } catch {
+      alert("Prompt build failed");
+    } finally {
+      setBuildingPrompt(false);
+    }
+  }, [product, prompt, aspectRatio, imageSize]);
 
   // Poll stage 1 (images done when every job has a sceneImageUrl or failed)
   useBatchPoll(
@@ -466,7 +492,23 @@ export function ImageStudioTab({
           </div>
 
           <div className="space-y-2">
-            <Label>Prompt</Label>
+            <div className="flex items-center justify-between">
+              <Label>Prompt</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={buildPromptWithGpt}
+                disabled={buildingPrompt || !prompt.trim()}
+              >
+                {buildingPrompt ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Wand2 className="h-3.5 w-3.5" />
+                )}
+                {buildingPrompt ? "Building…" : "✨ Build prompt (Nano Banana GPT)"}
+              </Button>
+            </div>
             <Textarea
               rows={4}
               value={prompt}

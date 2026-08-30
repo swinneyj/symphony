@@ -1,5 +1,6 @@
 import { withLLM } from "@/lib/llm";
 import { guessCategory } from "./presets";
+import { getGptPreset } from "./gpt-presets";
 import { estimateChatCost, recordLlmUsage, type UsageContext } from "@/lib/usage";
 
 /**
@@ -22,7 +23,51 @@ export type RenderedScript = {
   script: string;
   features: string[];
   llm: boolean;
+  hooks?: string[];
 };
+
+/**
+ * BOF Hook Generator (GPT Library preset): 10 bottom-of-funnel TikTok Shop
+ * hooks for a product, best-first. Returns [] when the LLM chain is down —
+ * callers treat {hook} as optional.
+ */
+export async function generateBofHooks(
+  product: ScriptProduct,
+  usageCtx?: UsageContext
+): Promise<string[]> {
+  const preset = getGptPreset("bof_hooks");
+  const messages: Array<{ role: "system" | "user"; content: string }> = [
+    {
+      role: "system",
+      content: preset?.systemPrompt ?? "",
+    },
+    {
+      role: "user",
+      content: `Product: ${product.name}${product.price ? `\nPrice: ${product.price}` : ""}`,
+    },
+  ];
+  const estimate = estimateChatCost("gpt", messages, { maxOutputTokens: 400 });
+  let usedModel = estimate.model;
+  const res = await withLLM("gpt", (client, model) => {
+    usedModel = model;
+    return client.chat.completions.create({
+      model,
+      max_tokens: 400,
+      temperature: 0.9,
+      messages,
+    });
+  });
+  if (!res) return [];
+  if (usageCtx) await recordLlmUsage(usageCtx, usedModel, res.usage, estimate);
+
+  const text = res.choices[0]?.message?.content?.trim();
+  if (!text) return [];
+  return text
+    .split(/\n+/)
+    .map((line) => line.replace(/^\s*\d+[.)]\s*/, "").trim())
+    .filter((line) => line.length > 8 && line.length <= 140)
+    .slice(0, 10);
+}
 
 async function llmFeatures(
   product: ScriptProduct,
@@ -102,14 +147,24 @@ export async function renderScript(
   const { category } = guessCategory(`${product.name} ${product.description ?? ""}`);
   const featuresText = features.length > 0 ? features.join(". ") + "." : "";
 
+  // {hook} is filled by the BOF Hook Generator GPT preset only when the
+  // template asks for it — no extra LLM cost otherwise.
+  let hooks: string[] | undefined;
+  let hook = "";
+  if (template.includes("{hook}")) {
+    hooks = await generateBofHooks(product, opts.usageCtx);
+    hook = hooks[0] ?? "";
+  }
+
   const script = template
     .replace(/\{product\}/g, product.name.trim())
     .replace(/\{price\}/g, product.price?.trim() || "")
     .replace(/\{category\}/g, category)
     .replace(/\{features\}/g, featuresText)
+    .replace(/\{hook\}/g, hook)
     .replace(/\{store\}/g, "TikTok Shop")
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  return { script, features, llm };
+  return { script, features, llm, hooks };
 }

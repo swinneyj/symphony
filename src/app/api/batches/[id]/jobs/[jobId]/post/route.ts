@@ -6,7 +6,7 @@ import { eq, and } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { initVideoPublish, fetchPublishStatus } from "@/lib/tiktok/posting";
 import { refreshTikTokToken, tiktokClientKey, tiktokClientSecret } from "@/lib/tiktok/auth";
-import { buildComplianceChecklist, buildTikTokTitle } from "@/lib/video/compliance";
+import { buildComplianceChecklist, buildTikTokTitle, checkScriptCompliance } from "@/lib/video/compliance";
 
 // Posts a completed batch job's final video to the workspace's TikTok account.
 // Compliance gate: refuses to post when the checklist fails (dry-run allowed).
@@ -109,6 +109,11 @@ export async function POST(
       }
     }
 
+    const title = buildTikTokTitle({
+      productName: product?.name ?? "Product",
+      isShopProduct: true,
+    });
+
     // Compliance gate — Video Studio products are TikTok Shop content by design.
     const checklist = buildComplianceChecklist({
       productName: product?.name ?? "Product",
@@ -122,10 +127,22 @@ export async function POST(
       );
     }
 
-    const title = buildTikTokTitle({
+    // GPT Library deep check — TikTok Violation Checker preset on the actual
+    // rendered script + title. RED blocks the post; YELLOW warns but posts
+    // (the report rides in the response). Falls back to the static checklist
+    // result if the LLM chain is down (report === null).
+    const complianceReport = await checkScriptCompliance({
+      script: job.script,
+      title,
       productName: product?.name ?? "Product",
-      isShopProduct: true,
+      productDescription: product?.description ?? null,
     });
+    if (complianceReport && complianceReport.rating === "red") {
+      return NextResponse.json(
+        { error: "Compliance check failed (GPT Violation Checker)", report: complianceReport },
+        { status: 422 }
+      );
+    }
 
     // Direct Post via PULL_FROM_URL (video already on Blob).
     const body = await request.json().catch(() => ({}));

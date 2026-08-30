@@ -12,7 +12,7 @@ import OpenAI from "openai";
  * 429 on one model degrades to the next instead of erroring to the user.
  */
 
-export type LLMTask = "remix" | "agent" | "fill";
+export type LLMTask = "remix" | "agent" | "fill" | "gpt";
 
 /**
  * Fallback chains, best-first. Gemini Pro tier is preferred for creative
@@ -23,6 +23,9 @@ const LLM_CHAIN: Record<LLMTask, string[]> = {
   remix: ["gemini-3.1-pro-preview", "gemini-3.6-flash", "deepseek-chat", "gpt-4o-mini"],
   agent: ["gemini-3.1-pro-preview", "gemini-3.6-flash", "deepseek-chat", "gpt-4o-mini"],
   fill: ["gemini-3.6-flash", "deepseek-chat", "gpt-4o-mini"],
+  // GPT Library presets (custom-GPT instructions ported into Symphony). Cheap
+  // chain — these are prompt-engineering passes, not creative writing.
+  gpt: ["gemini-3.6-flash", "deepseek-chat", "gpt-4o-mini"],
 };
 
 function clientForModel(model: string): OpenAI | null {
