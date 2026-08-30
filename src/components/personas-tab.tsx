@@ -51,6 +51,7 @@ export function PersonasTab({
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [genUrls, setGenUrls] = useState<string[]>([]);
+  const [descLoading, setDescLoading] = useState(false);
   const [editing, setEditing] = useState<Persona | null>(null);
 
   const reset = useCallback(() => {
@@ -66,6 +67,30 @@ export function PersonasTab({
   useEffect(() => {
     if (!open) reset();
   }, [open, reset]);
+
+  const generateDescription = async () => {
+    if (!name.trim()) {
+      setGenError("Enter a persona name first (e.g. 'Ava — fitness creator').");
+      return;
+    }
+    setDescLoading(true);
+    setGenError(null);
+    try {
+      const res = await fetch("/api/personas/generate-description", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, name: name.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Generation failed");
+      setDescription(data.description);
+      setPersonaPrompt(data.personaPrompt ?? "");
+    } catch (e) {
+      setGenError((e as Error).message);
+    } finally {
+      setDescLoading(false);
+    }
+  };
 
   const generateFaces = async () => {
     if (description.trim().length < 10) {
@@ -154,9 +179,22 @@ export function PersonasTab({
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ava — fitness creator" />
               </div>
               <div>
-                <label className="text-xs font-medium">
-                  Face description <span className="text-muted-foreground">(used for AI generation)</span>
-                </label>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs font-medium">
+                    Face description <span className="text-muted-foreground">(used for AI generation)</span>
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={generateDescription}
+                    disabled={descLoading}
+                  >
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    {descLoading ? "Writing…" : "Generate with AI"}
+                  </Button>
+                </div>
                 <Textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
