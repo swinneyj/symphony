@@ -33,6 +33,8 @@ export async function POST(request: Request) {
     const motionPrompt = (form.get("motionPrompt") as string | null)?.trim() || undefined;
     const durationSec = Math.min(Math.max(Number(form.get("durationSec") ?? 5) || 5, 5), 10);
     const model = (form.get("model") as string) || "kling-pro";
+    const aspectRatio = (form.get("aspectRatio") as string) || "9:16";
+    const resolution = (form.get("resolution") as string) || "720p";
     if (
       ![
         "kling-pro",
@@ -45,6 +47,12 @@ export async function POST(request: Request) {
       ].includes(model)
     ) {
       return NextResponse.json({ error: "invalid model" }, { status: 400 });
+    }
+    if (!["9:16", "16:9", "1:1"].includes(aspectRatio)) {
+      return NextResponse.json({ error: "invalid aspectRatio (9:16 | 16:9 | 1:1)" }, { status: 400 });
+    }
+    if (!["720p", "1080p"].includes(resolution)) {
+      return NextResponse.json({ error: "invalid resolution (720p | 1080p)" }, { status: 400 });
     }
     const file = form.get("source") as File | null;
     const sourceVideoUrl = (form.get("sourceVideoUrl") as string | null)?.trim() ?? "";
@@ -113,6 +121,8 @@ export async function POST(request: Request) {
           ...(motionPrompt ? { motionPrompt } : {}),
           durationSec,
           model,
+          aspectRatio,
+          resolution,
         },
       })
       .returning();
