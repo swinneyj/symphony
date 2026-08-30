@@ -364,6 +364,46 @@ export const voices = pgTable("voices", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+// ─── AI INFLUENCER PERSONAS ───────────────────────────────────────────────────
+// Reusable identity layer: face refs + voice + style prompt, persisted across
+// videos. M1 = schema + CRUD (see docs/AI-INFLUENCER-SPEC.md).
+
+export const personas = pgTable("personas", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  // null = system persona visible to every workspace
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id")
+    .notNull()
+    .references(() => users.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  /** Primary face reference (Blob, served through the authenticated proxy). */
+  faceImageUrl: text("face_image_url"),
+  /** 3–5 reference faces for identity consistency (Blob URLs). */
+  faceRefUrls: jsonb("face_ref_urls").$type<string[]>().default([]),
+  /** Reuses the existing voices infra (incl. cloned voices). */
+  voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  /** Appearance/style — injected into scene prompts. */
+  personaPrompt: text("persona_prompt"),
+  isSystem: boolean("is_system").default(false),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/** Pure junction — media_assets stays shared with the publish flow. */
+export const personaMedia = pgTable("persona_media", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  personaId: uuid("persona_id")
+    .notNull()
+    .references(() => personas.id, { onDelete: "cascade" }),
+  mediaAssetId: uuid("media_asset_id")
+    .notNull()
+    .references(() => mediaAssets.id, { onDelete: "cascade" }),
+  /** 'face_ref' | 'generated_photo' | 'voice_sample' | 'thumbnail'. */
+  role: text("role").notNull().default("generated_photo"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 export const videoFormulas = pgTable("video_formulas", {
   id: uuid("id").defaultRandom().primaryKey(),
   // null = system formula available to every workspace
@@ -380,6 +420,8 @@ export const videoFormulas = pgTable("video_formulas", {
   sourceFrame: text("source_frame").notNull().default("render"),
   motionPreset: text("motion_preset").default("none"),
   voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  /** Default AI-influencer persona for renders (overridable per batch). */
+  personaId: uuid("persona_id").references(() => personas.id, { onDelete: "set null" }),
   durationSec: integer("duration_sec").default(6),
   quality: text("quality").default("standard"),
   /** True: assemble plays the clip forward then reversed (boomerang) — doubles length at $0. */
@@ -410,6 +452,8 @@ export const videoBatches = pgTable("video_batches", {
   name: text("name").notNull(),
   formulaId: uuid("formula_id").references(() => videoFormulas.id, { onDelete: "set null" }),
   voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  /** Batch-level persona override (wins over formula.personaId). */
+  personaId: uuid("persona_id").references(() => personas.id, { onDelete: "set null" }),
   quality: text("quality").notNull().default("standard"),
   provider: videoProviderEnum("provider").default("sora"),
   status: videoBatchStatusEnum("status").notNull().default("queued"),
