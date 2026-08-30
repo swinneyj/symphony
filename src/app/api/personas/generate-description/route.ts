@@ -61,11 +61,19 @@ export async function POST(request: Request) {
     );
 
     const raw = res?.choices?.[0]?.message?.content ?? "";
+    if (!raw.trim()) {
+      return NextResponse.json(
+        { error: "AI generation is unavailable right now — no model responded. Check that GEMINI_API_KEY is set on the deployment." },
+        { status: 502 }
+      );
+    }
+    // Strip markdown fences some models wrap JSON in (```json ... ```).
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
     const parsed = (() => {
       try {
-        return JSON.parse(raw);
+        return JSON.parse(cleaned);
       } catch {
-        const m = raw.match(/\{[\s\S]*\}/);
+        const m = cleaned.match(/\{[\s\S]*\}/);
         return m ? JSON.parse(m[0]) : null;
       }
     })();
@@ -73,7 +81,10 @@ export async function POST(request: Request) {
     const description = typeof parsed?.description === "string" ? parsed.description.trim() : null;
     const personaPrompt = typeof parsed?.personaPrompt === "string" ? parsed.personaPrompt.trim() : null;
     if (!description) {
-      return NextResponse.json({ error: "Model returned an unusable response — try again" }, { status: 502 });
+      return NextResponse.json(
+        { error: `Model returned an unusable response — try again. (raw: ${raw.slice(0, 160)})` },
+        { status: 502 }
+      );
     }
 
     await db.insert(aiGenerations).values({
