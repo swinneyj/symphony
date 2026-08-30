@@ -4890,10 +4890,11 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
             <select
               value={durationSec}
               onChange={(e) => setDurationSec(e.target.value)}
-              className="flex h-9 w-24 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex h-9 w-28 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <option value="5">5s</option>
               <option value="10">10s</option>
+              <option value="source">Match source</option>
             </select>
           </div>
           <div className="space-y-1.5">
@@ -4922,7 +4923,7 @@ function CloneTab({ workspaceId }: { workspaceId: string }) {
           <div className="ml-auto text-right text-xs text-muted-foreground">
             <div>
               {MODEL_RATE_S[model]
-                ? `Re-animate ≈ $${(MODEL_RATE_S[model] * Number(durationSec)).toFixed(2)}`
+                ? `Re-animate ≈ $${(MODEL_RATE_S[model] * (durationSec === "source" ? 10 : Number(durationSec))).toFixed(2)}${durationSec === "source" ? " (≤10s)" : ""}`
                 : model === "sora"
                   ? "Re-animate: Sora credits"
                   : "Re-animate: —"}
