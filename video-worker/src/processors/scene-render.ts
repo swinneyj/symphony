@@ -45,7 +45,10 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
        tiktokAccountId?: string;
        imageResolution?: string;
        motionPreset?: string;
-     };
+       /** AI-influencer persona: face refs for identity + style clause. */
+       personaRefs?: string[];
+       personaPrompt?: string | null;
+       };
 
      let product: ProductRow | null = null;
      if (job.product_id) {
@@ -88,6 +91,8 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
          imageUrl,
          prompt,
          quality: (jobMeta.quality ?? formula?.quality ?? "standard") === "pro" ? "pro" : "standard",
+         personaRefs: jobMeta.personaRefs,
+         personaPrompt: jobMeta.personaPrompt,
          ...(jobMeta.aspectRatio ? { aspectRatio: jobMeta.aspectRatio } : {}),
          ...(jobMeta.imageSize ? { imageSize: jobMeta.imageSize } : {}),
        });

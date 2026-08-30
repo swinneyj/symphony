@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { videoBatches, videoBatchJobs, videoFormulas, products, voices, llmUsage } from "@/db/schema";
+import { products, videoBatches, videoBatchJobs, videoFormulas, voices, personas, llmUsage } from "@/db/schema";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { actualMediaCost } from "@/lib/usage";
@@ -208,11 +208,13 @@ export async function POST(request: Request) {
       overlayFontSize,
       overlayLayout: runOverlayLayout,
       imageResolution,
+      personaId,
     }: {
       workspaceId?: string;
       name?: string;
       formulaId?: string;
       voiceId?: string | null;
+      personaId?: string | null;
       quality?: string;
       provider?: string;
       productIds?: string[];
@@ -253,6 +255,23 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Voice not found" }, { status: 404 });
       }
     }
+
+    // Optional AI-influencer persona must exist and belong to the workspace
+    // (system personas are visible to every workspace).
+    let persona: (typeof personas.$inferSelect) | null = null;
+    if (personaId) {
+      const [found] = await db.select().from(personas).where(eq(personas.id, personaId)).limit(1);
+      if (!found) {
+        return NextResponse.json({ error: "Persona not found" }, { status: 404 });
+      }
+      if (found.workspaceId !== null && found.workspaceId !== workspaceId) {
+        return NextResponse.json({ error: "Persona does not belong to this workspace" }, { status: 403 });
+      }
+      persona = found;
+    }
+    // Persona voice wins over the formula default; an explicit run-view voice
+    // pick still wins over both.
+    const effectiveVoiceId = voiceId ?? persona?.voiceId ?? null;
 
     // All products must belong to the workspace.
     const owned = await db
@@ -296,7 +315,8 @@ export async function POST(request: Request) {
         createdById: session.user.id,
         name: name.trim(),
         formulaId,
-        voiceId: voiceId ?? null,
+        voiceId: effectiveVoiceId,
+        personaId: persona?.id ?? null,
         quality,
         provider: (dbProvider as never) ?? "sora",
         status: "queued",
@@ -312,7 +332,10 @@ export async function POST(request: Request) {
           description: product.description,
           price: product.price,
         },
-        { llm: false }
+        {
+          llm: false,
+          persona: persona ? { name: persona.name, personaPrompt: persona.personaPrompt } : undefined,
+        }
       );
       await db.insert(videoBatchJobs).values({
         batchId: batch.id,
@@ -347,6 +370,14 @@ export async function POST(request: Request) {
           // Graph-authored scene/motion/duration/quality override the formula row.
           ...(gScenePrompt ? { scenePromptTemplate: gScenePrompt } : {}),
           ...(gMotionPreset ? { motionPreset: gMotionPreset } : {}),
+          // AI-influencer persona: face refs + style flow to the scene render
+          // (identity consistency) — the worker threads them into Nano Banana.
+          ...(persona
+            ? {
+                personaRefs: (persona.faceRefUrls ?? []).slice(0, 5),
+                personaPrompt: persona.personaPrompt ?? null,
+              }
+            : {}),
           // Run-view length beats graph beats formula flat.
           ...(runDurationSec ? { durationSec: runDurationSec } : gDurationSec ? { durationSec: gDurationSec } : {}),
           // Run-view quality beats graph beats formula flat.
