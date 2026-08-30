@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { flagJobs } from "@/lib/market/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { videoBatches, videoBatchJobs } from "@/db/schema";
@@ -88,6 +89,7 @@ export async function POST(request: Request) {
         },
       });
     }
+    await Promise.all([flagJobs("video"), flagJobs("img")]);
 
     return NextResponse.json({ batchId: batch.id, jobCount: outputCount }, { status: 201 });
   } catch (error) {

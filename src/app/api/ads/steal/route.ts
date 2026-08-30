@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { flagJobs } from "@/lib/market/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { adSources, adRemixes } from "@/db/schema";
@@ -101,6 +102,7 @@ export async function POST(request: Request) {
         status,
       })
       .returning();
+    await flagJobs("ads");
 
     return NextResponse.json(row, { status: 201 });
   } catch (error) {

@@ -24,6 +24,35 @@ from PIL import Image
 DATABASE_URL = os.environ.get("DATABASE_URL")
 BLOB_TOKEN = (os.environ.get("BLOB_READ_WRITE_TOKEN") or os.environ.get("BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN") or "").strip() or None
 POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "5000"))
+
+
+# ── Neon compute gate ────────────────────────────────────────────────────────
+# Skip the DB poll unless a KV job-flag is set (see neon-compute-frugality.md:
+# every DB wake costs the full 5-min suspend delay). Gate is best-effort:
+# any failure → poll the DB as usual.
+GATE_URL = os.environ.get("WORKER_GATE_URL", "https://www.symphonyapp.company/api/cron/worker-gate")
+GATE_SECRET = os.environ.get("CRON_SECRET", "")
+
+
+def _gate_headers():
+    return {"Authorization": f"Bearer {GATE_SECRET}"} if GATE_SECRET else {}
+
+
+def gate_open(worker):
+    try:
+        req = urllib.request.Request(f"{GATE_URL}?w={worker}", headers=_gate_headers())
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return bool(json.loads(r.read().decode()).get("due", False))
+    except Exception:
+        return True  # gate unreachable → poll DB as usual
+
+
+def gate_clear(worker):
+    try:
+        req = urllib.request.Request(f"{GATE_URL}?w={worker}", method="DELETE", headers=_gate_headers())
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
 CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "2"))
 MAX_RETRIES = int(os.environ.get("WORKER_MAX_RETRIES", "3"))
 STALE_MINUTES = int(os.environ.get("WORKER_STALE_MINUTES", "15"))
@@ -190,6 +219,7 @@ def tick(conn):
             print(f"[img-worker] requeued {reclaimed} stale job(s)")
         jobs = claim(cur, CONCURRENCY)
         if not jobs:
+            gate_clear("img")
             return
         for job_id, workspace_id, product_id in jobs:
             process_job(cur, job_id, workspace_id, product_id)
@@ -216,7 +246,8 @@ def main():
     print(f"[img-worker] starting poll={POLL_MS}ms concurrency={CONCURRENCY}")
     while True:
         try:
-            tick(conn)
+            if gate_open("img"):
+                tick(conn)
         except Exception as e:
             print(f"[img-worker] tick error: {e}", file=sys.stderr)
             try:
