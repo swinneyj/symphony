@@ -34,17 +34,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "SCRIPTsmith_QUEUE_TOKEN not set" }, { status: 500 });
   }
 
-  const ws = await db.select().from(workspaces).orderBy(asc(workspaces.createdAt)).limit(1);
-  if (!ws.length) return NextResponse.json({ imported: 0, skipped: "no workspace" });
-  const member = await db
-    .select({ userId: workspaceMembers.userId })
-    .from(workspaceMembers)
-    .where(eq(workspaceMembers.workspaceId, ws[0].id))
-    .limit(1);
-  if (!member.length) return NextResponse.json({ imported: 0, skipped: "no workspace member" });
-  const workspaceId = ws[0].id;
-  const createdById = member[0].userId;
-
+  // Neon compute gate (see neon-compute-frugality.md): check the queue FIRST
+  // (external API, free). Empty queue → return before any DB touch, so this
+  // cron costs zero Neon wakes when idle. DB only runs when items import.
   let items: QueueItem[] = [];
   try {
     const r = await fetch(`${BACKEND}/api/queue`, {
@@ -56,6 +48,20 @@ export async function GET(request: Request) {
   } catch (error) {
     return NextResponse.json({ error: "queue unreachable: " + (error as Error).message }, { status: 502 });
   }
+  if (items.length === 0) {
+    return NextResponse.json({ imported: 0, checked: true });
+  }
+
+  const ws = await db.select().from(workspaces).orderBy(asc(workspaces.createdAt)).limit(1);
+  if (!ws.length) return NextResponse.json({ imported: 0, skipped: "no workspace" });
+  const member = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.workspaceId, ws[0].id))
+    .limit(1);
+  if (!member.length) return NextResponse.json({ imported: 0, skipped: "no workspace member" });
+  const workspaceId = ws[0].id;
+  const createdById = member[0].userId;
 
   const results: Array<{ id: string; status: string }> = [];
   for (const item of items.slice(0, 10)) {
