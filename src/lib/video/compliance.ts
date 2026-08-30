@@ -1,8 +1,12 @@
 /**
- * TikTok Shop compliance checklist + title builder.
+ * TikTok Shop compliance checklist + title builder + GPT Library deep check.
  * Mirrors BatchBot's compliance posture: disclosure hashtags, title limits,
  * minimum video length, no external watermarks.
  */
+
+import { withLLM } from "@/lib/llm";
+import { getGptPreset } from "./gpt-presets";
+import { estimateChatCost, recordLlmUsage, type UsageContext } from "@/lib/usage";
 
 export type ComplianceCheck = { name: string; passed: boolean; detail?: string };
 
@@ -46,8 +50,64 @@ export function buildTikTokTitle(opts: {
   isShopProduct: boolean;
 }): string {
   const base = `${opts.productName} — check it out on TikTok Shop`;
-  if (opts.isShopProduct) {
-    return `${base} #tiktokmademebuyit #tiktokshop #fyp`;
+  return opts.isShopProduct ? `${base} #tiktokmademebuyit` : base;
+}
+
+/**
+ * GPT Library deep check — TikTok Violation Checker preset.
+ * Analyzes the actual script/title (not just static rules) and returns a
+ * policy risk report. RED blocks publishing; the post route enforces that.
+ * Returns null when the LLM chain is down (posting falls back to the static
+ * checklist, which still runs).
+ */
+export type ComplianceReport = {
+  rating: "green" | "yellow" | "red";
+  issues: { line: string; category: string; risk: string; fix: string }[];
+  summary: string;
+};
+
+export async function checkScriptCompliance(opts: {
+  script: string | null;
+  title: string | null;
+  productName: string;
+  productDescription?: string | null;
+  usageCtx?: UsageContext;
+}): Promise<ComplianceReport | null> {
+  const preset = getGptPreset("violation_checker");
+  if (!preset) return null;
+
+  const content = [
+    opts.productName ? `PRODUCT: ${opts.productName}` : null,
+    opts.productDescription ? `PRODUCT DETAILS: ${opts.productDescription}` : null,
+    opts.script ? `SPOKEN SCRIPT / ON-SCREEN TEXT:\n${opts.script}` : null,
+    opts.title ? `CAPTION / TITLE: ${opts.title}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const messages: Array<{ role: "system" | "user"; content: string }> = [
+    { role: "system", content: preset.systemPrompt },
+    { role: "user", content },
+  ];
+  const estimate = estimateChatCost("gpt", messages, { maxOutputTokens: 700 });
+  let usedModel = estimate.model;
+  const res = await withLLM("gpt", (client, model) => {
+    usedModel = model;
+    return client.chat.completions.create({
+      model,
+      max_tokens: 700,
+      temperature: 0.2,
+      messages,
+    });
+  });
+  if (!res) return null;
+  if (opts.usageCtx) await recordLlmUsage(opts.usageCtx, usedModel, res.usage, estimate);
+
+  const text = res.choices[0]?.message?.content?.trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text.replace(/^```(json)?|```$/g, "").trim()) as ComplianceReport;
+  } catch {
+    return null; // malformed model output — don't block publishing on a parse miss
   }
-  return base;
 }
