@@ -136,7 +136,11 @@ export async function POST(
       : "SELF_ONLY";
     const init = await initVideoPublish({
       accessToken,
-      videoUrl: job.finalUrl,
+      // Private Blob URLs 403 without our server token — TikTok's PULL_FROM_URL
+      // fetches server-side with no auth, so stream through the UUID-gated
+      // public proxy instead (same pattern as composer posts). www origin is
+      // canonical: the apex 308-redirects and TikTok does not follow redirects.
+      videoUrl: `https://www.symphonyapp.company/api/videos/${job.id}/public?kind=final`,
       title,
       privacyLevel,
     });
