@@ -43,7 +43,7 @@ export async function handleProductProcess(job: JobRow, maxRetries: number) {
       `products/${product.workspace_id}/${productId}/processed-${Date.now()}.${ext}`,
       image.buffer,
       {
-        access: "public",
+        access: "private",
         contentType: image.contentType,
         addRandomSuffix: false,
       }
