@@ -347,6 +347,35 @@ export async function fetchRecentInfluencerProducts(influencerId: string, days =
 }
 
 /**
+ * Top creators by sales/volume (champion-sales leaderboard + siblings).
+ * Website-session adapter only (needs ECHOTIK_WEB_COOKIE for the newer
+ * leaderboard endpoints). 1 request per combo, cached 4h — quota-frugal.
+ */
+export async function fetchTopCreators(query: {
+  period?: "day" | "week" | "month";
+  role?: "creator" | "seller" | "all";
+  board?: "champion-sales" | "followers" | "followers-increment" | "darkhorse-creator" | "darkhorse-seller" | "hot-live" | "most-views-live";
+  limit?: number;
+  categoryId?: string;
+} = {}) {
+  if (dryRunEnabled()) return { rows: [], dryRun: true };
+  const impl = echotikImpl();
+  if (!("fetchTopCreators" in impl)) {
+    throw new Error(`[market] top creators not implemented for source: echotik (API adapter)`);
+  }
+  return { rows: await impl.fetchTopCreators(query), dryRun: false };
+}
+
+/** Leaderboard filter options (time ranges, roles, categories) for the UI. */
+export async function getLeaderboardFilters() {
+  const impl = echotikImpl();
+  if (!("getLeaderboardFilters" in impl)) {
+    throw new Error(`[market] leaderboard filters not implemented for source: echotik (API adapter)`);
+  }
+  return impl.getLeaderboardFilters();
+}
+
+/**
  * Persists creator profiles + product↔creator junction for a market product
  * (upsert by source+id+date / creator+product+date). Returns rows persisted.
  */
