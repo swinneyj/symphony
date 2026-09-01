@@ -200,6 +200,9 @@ export async function POST(request: Request) {
       provider,
       productIds,
       tiktokAccountId,
+      // How many videos to generate PER selected product (Market quick-create:
+      // 1/5/10/15). More variants = more engine generations = more cost.
+      videosPerProduct,
       // Run-view overrides (BatchBot view=run): explicit user choices beat
       // formula defaults for this batch only.
       durationSec: runDurationSec,
@@ -220,6 +223,7 @@ export async function POST(request: Request) {
       provider?: string;
       productIds?: string[];
       tiktokAccountId?: string | null;
+      videosPerProduct?: number;
       durationSec?: number | null;
       boomerang?: boolean | null;
       overlayTemplate?: string | null;
@@ -238,6 +242,9 @@ export async function POST(request: Request) {
     if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+
+    // Videos per product: 1..15 (Market quick-create). Guard against absurd counts.
+    const perProduct = Math.min(Math.max(Math.trunc(Number(videosPerProduct) || 1), 1), 15);
 
     // Formula must exist (system or this workspace's).
     const [formula] = await db
@@ -321,7 +328,7 @@ export async function POST(request: Request) {
         quality,
         provider: (dbProvider as never) ?? "sora",
         status: "queued",
-        totalCount: productRows.length,
+        totalCount: productRows.length * perProduct,
       })
       .returning();
 
@@ -338,6 +345,8 @@ export async function POST(request: Request) {
           persona: persona ? { name: persona.name, personaPrompt: persona.personaPrompt } : undefined,
         }
       );
+      // One job per product × videos-per-product (Market quick-create).
+      for (let v = 0; v < perProduct; v += 1) {
       await db.insert(videoBatchJobs).values({
         batchId: batch.id,
         workspaceId,
@@ -384,8 +393,11 @@ export async function POST(request: Request) {
           // Run-view quality beats graph beats formula flat.
           ...(quality && quality !== "standard" ? { quality } : gQuality ? { quality: gQuality } : {}),
           ...(imageResolution ? { imageResolution } : {}),
+          // Variant index when the user asked for N videos per product.
+          ...(perProduct > 1 ? { variant: v + 1, variantCount: perProduct } : {}),
         },
       });
+      }
       await Promise.all([flagJobs("video"), flagJobs("img")]);
     }
 

@@ -308,6 +308,7 @@ export default function VideoStudioPage() {
         <TabsContent value="market" className="mt-4">
           <MarketTab
             workspaceId={workspaceId!}
+            formulas={formulas}
             onAdopted={() => loadProducts(workspaceId!)}
             onGenerate={(ids) => {
               setBatchPreselect(ids);
@@ -625,16 +626,14 @@ function ProductsTab({
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="space-y-2">
           {products.map((product) => (
-            <Card key={product.id} className="overflow-hidden">
-              <div className="relative aspect-square bg-zinc-100">
+            <div key={product.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-background p-2.5 transition hover:border-primary/40">
+              <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border bg-zinc-100">
                 {product.originalImageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={`/api/products/${product.id}/image${
-                      sceneView[product.id] ? "?variant=scene" : ""
-                    }`}
+                    src={`/api/products/${product.id}/image${sceneView[product.id] ? "?variant=scene" : ""}`}
                     alt={product.name}
                     className="h-full w-full object-cover"
                     onError={(e) => {
@@ -643,92 +642,61 @@ function ProductsTab({
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center">
-                    <Package className="h-10 w-10 text-muted-foreground/40" />
+                    <Package className="h-5 w-5 text-muted-foreground/40" />
                   </div>
                 )}
                 {product.sceneImageUrl && (
                   <button
                     type="button"
-                    onClick={() =>
-                      setSceneView((v) => ({
-                        ...v,
-                        [product.id]: !v[product.id],
-                      }))
-                    }
-                    className={`absolute top-2 right-2 flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium shadow-sm transition-colors ${
-                      sceneView[product.id]
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-white/90 text-zinc-700 hover:bg-white"
+                    onClick={() => setSceneView((v) => ({ ...v, [product.id]: !v[product.id] }))}
+                    className={`absolute top-1 right-1 flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold shadow-sm transition-colors ${
+                      sceneView[product.id] ? "bg-primary text-primary-foreground" : "bg-white/90 text-zinc-700 hover:bg-white"
                     }`}
+                    title={sceneView[product.id] ? "Showing AI scene" : "Show AI scene"}
                   >
-                    <Wand2 className="h-3 w-3" />
-                    {sceneView[product.id] ? "Scene" : "AI Scene"}
+                    <Wand2 className="h-2.5 w-2.5" />
+                    {sceneView[product.id] ? "Scene" : "AI"}
                   </button>
                 )}
               </div>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1 basis-40">
+                <div className="flex items-center gap-2">
                   <p className="line-clamp-1 text-sm font-medium">{product.name}</p>
-                  <Badge className={cn("shrink-0", STATUS_STYLE[product.status])}>
-                    {product.status}
-                  </Badge>
+                  <Badge className={cn("shrink-0", STATUS_STYLE[product.status])}>{product.status}</Badge>
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   {product.price && <span className="font-medium">{product.price}</span>}
-                  <span className="capitalize">{product.sourceType}</span>
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={product.status === "processing"}
-                    onClick={() => handleProcess(product)}
-                  >
-                    <Play className="h-3.5 w-3.5" />
-                    Process
-                  </Button>
-                  <div className="flex min-w-0 flex-1 items-center gap-1">
-                    <select
-                      value={sceneFormula[product.id] ?? ""}
-                      onChange={(e) =>
-                        setSceneFormula((v) => ({
-                          ...v,
-                          [product.id]: e.target.value,
-                        }))
-                      }
-                      className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-xs text-foreground outline-none"
-                      title="Scene (formula) for AI regeneration"
-                    >
-                      <option value="">Scene…</option>
-                      {formulas.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!sceneFormula[product.id]}
-                      onClick={() =>
-                        handleGenerateScene(product, sceneFormula[product.id])
-                      }
-                    >
-                      <Wand2 className="h-3.5 w-3.5" />
-                      Scene
-                    </Button>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-red-600"
-                    onClick={() => handleDelete(product)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                  {product.price && product.sourceType ? " · " : ""}
+                  {product.sourceType && <span className="capitalize">{product.sourceType}</span>}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <select
+                  value={sceneFormula[product.id] ?? ""}
+                  onChange={(e) => setSceneFormula((v) => ({ ...v, [product.id]: e.target.value }))}
+                  className="h-8 w-32 rounded-md border border-input bg-transparent px-2 text-xs text-foreground outline-none"
+                  title="Scene (formula) for AI regeneration"
+                >
+                  <option value="">Scene…</option>
+                  {formulas.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+                <Button size="sm" variant="outline" disabled={product.status === "processing"} onClick={() => handleProcess(product)}>
+                  <Play className="h-3.5 w-3.5" />
+                  Process
+                </Button>
+                <Button size="sm" variant="outline" disabled={!sceneFormula[product.id]} onClick={() => handleGenerateScene(product, sceneFormula[product.id])}>
+                  <Wand2 className="h-3.5 w-3.5" />
+                  Scene
+                </Button>
+                <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(product)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -2359,6 +2327,144 @@ interface MarketRow {
   metadata?: Record<string, unknown>;
 }
 
+// ── White-background detection (client-side canvas check, $0 API cost) ─────
+// Product covers live on cdn.echotik.live which sends `access-control-allow-
+// origin: *` (verified 2026-09-01) so a canvas pixel read is safe. Cached
+// module-wide so re-renders and duplicate rows never re-scan.
+const whiteBgCache = new Map<string, boolean>();
+
+/** Compact count formatter: 159710 → "160K", 1260000 → "1.3M". */
+function fmtCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return String(n);
+}
+
+type WhiteBgStatus = "checking" | "white" | "not-white" | "unknown";
+
+function useWhiteBg(url: string | null): WhiteBgStatus {
+  // Lazy initial state reads the cache so a cache hit never setStates in an effect.
+  const [status, setStatus] = useState<WhiteBgStatus>(() => {
+    if (!url) return "unknown";
+    const cached = whiteBgCache.get(url);
+    return cached !== undefined ? (cached ? "white" : "not-white") : "checking";
+  });
+  useEffect(() => {
+    if (!url) return;
+    const cached = whiteBgCache.get(url);
+    if (cached !== undefined) return; // already known (lazy init or prior url)
+    let cancelled = false;
+    void (async () => {
+      try {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error("load failed"));
+          img.src = url;
+        });
+        const size = 64;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) throw new Error("no canvas context");
+        ctx.drawImage(img, 0, 0, size, size);
+        const data = ctx.getImageData(0, 0, size, size).data;
+        let white = 0;
+        let total = 0;
+        for (let i = 0; i < data.length; i += 16) {
+          if (data[i] > 232 && data[i + 1] > 232 && data[i + 2] > 232) white += 1;
+          total += 1;
+        }
+        const isWhite = white / total > 0.55;
+        whiteBgCache.set(url, isWhite);
+        if (!cancelled) setStatus(isWhite ? "white" : "not-white");
+      } catch {
+        whiteBgCache.set(url, false);
+        if (!cancelled) setStatus("unknown");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+  return status;
+}
+
+function WhiteBgBadge({ url, className }: { url: string | null; className?: string }) {
+  const status = useWhiteBg(url);
+  if (status !== "white") return null;
+  return (
+    <span
+      className={cn("rounded bg-emerald-600/90 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white", className)}
+      title="White-background photo"
+    >
+      WB
+    </span>
+  );
+}
+
+/** Drill gallery card: large image, white-bg badge, select checkbox, meta. */
+function DrillCard({
+  p,
+  selected,
+  onToggle,
+  whiteBgOnly,
+}: {
+  p: MarketRow;
+  selected: boolean;
+  onToggle: () => void;
+  whiteBgOnly: boolean;
+}) {
+  const bg = useWhiteBg(p.imageUrl);
+  const hiddenByFilter = whiteBgOnly && bg !== "white"; // checking/unknown/non-white hidden
+  if (hiddenByFilter) return null;
+  return (
+    <label
+      className={cn(
+        "flex cursor-pointer flex-col gap-1.5 rounded-md border p-2 transition hover:border-primary/50",
+        selected ? "border-primary bg-primary/5" : ""
+      )}
+    >
+      <div className="relative aspect-square w-full overflow-hidden rounded-md border bg-muted">
+        {p.imageUrl ? (
+          <img
+            src={p.imageUrl}
+            alt=""
+            loading="lazy"
+            className="h-full w-full object-cover"
+            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Package className="h-6 w-6 text-muted-foreground" />
+          </div>
+        )}
+        <span className="absolute right-1 top-1 rounded bg-background/85 px-1 py-0.5 text-[10px] font-semibold text-foreground">
+          {p.sales30d != null ? `${fmtCompact(p.sales30d)} sold` : ""}
+        </span>
+        <WhiteBgBadge url={p.imageUrl} className="absolute left-1 top-1" />
+      </div>
+      <div className="flex items-start gap-1.5">
+        <input
+          type="checkbox"
+          className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[var(--primary)]"
+          checked={selected}
+          onChange={onToggle}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="line-clamp-2 text-xs font-medium leading-tight">{p.name}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {p.priceMin != null ? `$${p.priceMin}` : "—"}
+            {p.commissionRate != null ? ` · ${Math.round(p.commissionRate * 100)}% comm` : ""}
+          </p>
+        </div>
+      </div>
+    </label>
+  );
+}
+
 interface MarketAnalyticsRow {
   productId: string;
   name: string | null;
@@ -3103,10 +3209,12 @@ function ProductDetailDialog({
 
 function MarketTab({
   workspaceId,
+  formulas,
   onAdopted,
   onGenerate,
 }: {
   workspaceId: string;
+  formulas: Formula[];
   onAdopted: () => void;
   onGenerate?: (productIds: string[]) => void;
 }) {
@@ -3158,6 +3266,23 @@ function MarketTab({
   const [recentNotice, setRecentNotice] = useState<string | null>(null);
   const [bulkAdopting, setBulkAdopting] = useState(false);
   const [recentAdoptedIds, setRecentAdoptedIds] = useState<string[]>([]); // DB product ids just added
+  // ── Top Creators leaderboard ("who's moving volume") ──
+  const [topCreators, setTopCreators] = useState<Array<Record<string, unknown>>>([]);
+  const [topCreatorsLoading, setTopCreatorsLoading] = useState(false);
+  const [topCreatorsPeriod, setTopCreatorsPeriod] = useState<"day" | "week" | "month">("day");
+  const [topCreatorsRole, setTopCreatorsRole] = useState<"all" | "creator" | "seller">("all");
+  const [topCreatorsNotice, setTopCreatorsNotice] = useState<string | null>(null);
+  // ── Drill gallery (larger view) — checkbox select + bulk add ──
+  const [drillSelected, setDrillSelected] = useState<Record<string, string[]>>({});
+  const [drillBulkAdopting, setDrillBulkAdopting] = useState(false);
+  const [drillWhiteBgOnly, setDrillWhiteBgOnly] = useState(false);
+  const [drillAdoptedIds, setDrillAdoptedIds] = useState<string[]>([]);
+  // ── Drill sort (GMV-first by default — pick the winners) ──
+  const [drillSort, setDrillSort] = useState<"gmv" | "sales" | "rank">("gmv");
+  // ── Batch quick-create (scene pick + videos per product) ──
+  const [drillSceneFormulaId, setDrillSceneFormulaId] = useState("");
+  const [drillVideosPerProduct, setDrillVideosPerProduct] = useState(1);
+  const [drillBatchCreating, setDrillBatchCreating] = useState(false);
 
   const setFilter = (key: string, value: string) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -3362,6 +3487,127 @@ function MarketTab({
     } finally {
       setBulkAdopting(false);
     }
+  };
+
+  /** Top Creators leaderboard — 1 cached request per (period, role) combo. */
+  const loadTopCreators = useCallback(async () => {
+    setTopCreatorsLoading(true);
+    setTopCreatorsNotice(null);
+    try {
+      const params = new URLSearchParams({ workspaceId, period: topCreatorsPeriod, role: topCreatorsRole, limit: "50" });
+      const res = await fetch(`/api/market/creators/top?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        const msg = data.error ?? "Failed to load top creators";
+        // Paid-plan gate (weekly/monthly boards) → friendly inline notice, not a toast.
+        if (/member plan|Visitor|quota/i.test(msg)) {
+          setTopCreators([]);
+          setTopCreatorsNotice("Weekly/Monthly boards need the EchoTik plan your cookie is logged into — showing what's available.");
+          return;
+        }
+        throw new Error(msg);
+      }
+      setTopCreators(data.creators ?? []);
+      if (data.notice) setTopCreatorsNotice(data.notice);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load top creators");
+    } finally {
+      setTopCreatorsLoading(false);
+    }
+  }, [workspaceId, topCreatorsPeriod, topCreatorsRole]);
+
+  // Auto-load on mount; reload when period/role changes.
+  useEffect(() => {
+    void loadTopCreators();
+  }, [loadTopCreators]);
+
+  const toggleDrillSelect = (key: string, sourceProductId: string) =>
+    setDrillSelected((prev) => {
+      const cur = prev[key] ?? [];
+      return {
+        ...prev,
+        [key]: cur.includes(sourceProductId) ? cur.filter((s) => s !== sourceProductId) : [...cur, sourceProductId],
+      };
+    });
+
+  const selectAllDrill = (key: string, rows: MarketRow[]) =>
+    setDrillSelected((prev) => ({ ...prev, [key]: rows.map((r) => r.sourceProductId) }));
+
+  const clearDrill = (key: string) => setDrillSelected((prev) => ({ ...prev, [key]: [] }));
+
+  /** Bulk-add the checked drill products (larger-view gallery). */
+  const bulkAddDrill = async (key: string) => {
+    const rows = drillResults[key] ?? [];
+    const selected = rows.filter((r) => (drillSelected[key] ?? []).includes(r.sourceProductId));
+    if (selected.length === 0) return;
+    setDrillBulkAdopting(true);
+    setDrillAdoptedIds([]);
+    try {
+      const res = await fetch(`/api/market/products/bulk-adopt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, rows: selected }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Bulk adopt failed");
+      const addedIds: string[] = (data.results ?? [])
+        .filter((r: { alreadyAdopted?: boolean; productId?: string | null }) => !r.alreadyAdopted && r.productId)
+        .map((r: { productId: string }) => r.productId);
+      setDrillAdoptedIds(addedIds);
+      toast.success(`Added ${data.added} · already in library ${data.already}${data.failed ? ` · ${data.failed} failed` : ""}`);
+      onAdopted();
+      await loadStored();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bulk adopt failed");
+    } finally {
+      setDrillBulkAdopting(false);
+    }
+  };
+
+  /** Create the batch straight from the added products: scene (formula) + videos-per-product. */
+  const createBatchFromDrill = async () => {
+    const ids = drillAdoptedIds;
+    if (ids.length === 0) return;
+    const formulaId = drillSceneFormulaId || formulas.find((f) => f.scenePromptTemplate)?.id || "";
+    if (!formulaId) {
+      toast.error("Pick a scene (formula) first — none found. Create one in the Formulas tab.");
+      return;
+    }
+    const count = drillVideosPerProduct;
+    setDrillBatchCreating(true);
+    try {
+      const res = await fetch(`/api/batches`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          name: `Top creators — ${new Date().toISOString().slice(0, 10)} (${ids.length}×${count})`,
+          formulaId,
+          productIds: ids,
+          videosPerProduct: count,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Batch create failed");
+      toast.success(`Batch created — ${data.totalCount ?? ids.length * count} videos queued`);
+      setDrillAdoptedIds([]); // consumed
+      onGenerate?.(ids); // jump to Batches with products still preselected
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Batch create failed");
+    } finally {
+      setDrillBatchCreating(false);
+    }
+  };
+
+  /** GMV-first ordering for the drill gallery (user: sort by highest GMV sales). */
+  const sortDrillRows = (rows: MarketRow[]): MarketRow[] => {
+    if (drillSort === "rank") return rows;
+    const key = drillSort === "gmv" ? "gmv30d" : "sales30d";
+    return [...rows].sort((a, b) => {
+      const av = a[key] ?? 0;
+      const bv = b[key] ?? 0;
+      return bv - av;
+    });
   };
 
   const loadWatched = useCallback(async () => {
@@ -3973,11 +4219,22 @@ function MarketTab({
             {/* Drill-down products (influencer / shop) */}
             {Object.entries(drillResults).map(([key, prows]) => (
               <div key={key} className="border-t">
-                <div className="flex items-center justify-between px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                   <p className="text-xs font-medium text-muted-foreground">
                     {key.startsWith("influencer:") ? "Influencer's products" : "Shop's products"} ({prows.length})
+                    {drillWhiteBgOnly ? " · white bg only" : ""}
                   </p>
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <select
+                      value={drillSort}
+                      onChange={(e) => setDrillSort(e.target.value as "gmv" | "sales" | "rank")}
+                      className="h-7 rounded-md border bg-background px-1.5 text-xs"
+                      title="Sort by performance"
+                    >
+                      <option value="gmv">Sort: GMV</option>
+                      <option value="sales">Sort: Sales</option>
+                      <option value="rank">Sort: Default</option>
+                    </select>
                     {key.startsWith("influencer:") && (
                       <Button
                         size="sm"
@@ -3994,33 +4251,103 @@ function MarketTab({
                         {recentFor === key ? "Hide recent" : "Last 14 days"}
                       </Button>
                     )}
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => selectAllDrill(key, prows)}>
+                      All
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => clearDrill(key)}>
+                      None
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 px-2 text-xs"
+                      onClick={() => setDrillWhiteBgOnly((v) => !v)}
+                      title="Only show photos with a white background (checked in your browser — no API calls)"
+                    >
+                      <ImageIcon className="h-3 w-3" />
+                      WB only
+                    </Button>
+                    <Button size="sm" onClick={() => void bulkAddDrill(key)} disabled={drillBulkAdopting || (drillSelected[key] ?? []).length === 0}>
+                      {drillBulkAdopting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                      Add {(drillSelected[key] ?? []).length || 0} to Products
+                    </Button>
                     <Button size="sm" variant="ghost" onClick={() => setDrillResults((prev) => { const n = { ...prev }; delete n[key]; return n; })}>
                       Close
                     </Button>
                   </div>
                 </div>
-                <div className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {prows.map((p) => (
-                    <div key={p.sourceProductId} className="flex items-center gap-2 rounded-md border p-2">
-                      {p.imageUrl ? (
-                        <img src={p.imageUrl} alt="" className="h-10 w-10 rounded-md border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
-                      ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-muted">
-                          <Package className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium">{p.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {p.priceMin ? `$${p.priceMin}` : "—"} · {fmt(p.sales30d)} sales · {money(p.gmv30d)}
-                        </p>
-                      </div>
-                      <Button size="sm" variant="ghost" onClick={() => adopt(p)} disabled={adopting === p.sourceProductId} title="Add to Products">
-                        <Plus className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                <div className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {sortDrillRows(prows).map((p) => (
+                    <DrillCard
+                      key={p.sourceProductId}
+                      p={p}
+                      selected={(drillSelected[key] ?? []).includes(p.sourceProductId)}
+                      onToggle={() => toggleDrillSelect(key, p.sourceProductId)}
+                      whiteBgOnly={drillWhiteBgOnly}
+                    />
                   ))}
                 </div>
+                {drillAdoptedIds.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-medium">{drillAdoptedIds.length} added —</span>
+                      <select
+                        value={drillSceneFormulaId || ""}
+                        onChange={(e) => setDrillSceneFormulaId(e.target.value)}
+                        className="h-8 max-w-[220px] rounded-md border bg-background px-2 text-xs"
+                        title="Scene (formula) for the batch — render-scene formulas create the image first, then image-to-video"
+                      >
+                        {formulas.filter((f) => f.scenePromptTemplate).length > 0 ? (
+                          <>
+                            <option value="">Scene…</option>
+                            {formulas.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.scenePromptTemplate ? `🖼 ${f.name}` : f.name}
+                              </option>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            <option value="">Formula…</option>
+                            {formulas.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.name}
+                              </option>
+                            ))}
+                          </>
+                        )}
+                      </select>
+                      <div className="flex items-center gap-1" title="Videos per product">
+                        {[1, 5, 10, 15].map((n) => (
+                          <button
+                            key={n}
+                            onClick={() => setDrillVideosPerProduct(n)}
+                            className={`h-7 rounded-md border px-2 text-xs font-medium transition ${
+                              drillVideosPerProduct === n ? "border-primary bg-primary/10 text-foreground" : "bg-background text-muted-foreground"
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                        <span className="pl-1 text-[11px] text-muted-foreground">videos ea.</span>
+                      </div>
+                      <Button size="sm" onClick={() => void createBatchFromDrill()} disabled={drillBatchCreating}>
+                        {drillBatchCreating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+                        {drillBatchCreating
+                          ? "Creating…"
+                          : `Create batch · ${drillAdoptedIds.length * drillVideosPerProduct} videos`}
+                      </Button>
+                      {onGenerate && (
+                        <Button size="sm" variant="ghost" onClick={() => onGenerate(drillAdoptedIds)}>
+                          Just jump to Batches →
+                        </Button>
+                      )}
+                    </div>
+                    <p className="w-full text-[11px] text-muted-foreground">
+                      Scene image renders first, then image-to-video (engine cost applies per video).
+                    </p>
+                  </div>
+                )}
 
                 {recentFor === key && (
                   <div className="border-t bg-muted/30 px-3 py-3">
@@ -4113,6 +4440,88 @@ function MarketTab({
           </CardContent>
         </Card>
       )}
+
+      {/* ── Top Creators — find who's moving volume, copy their products ── */}
+      <Card className="p-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 text-sm font-semibold">
+            <TrendingUp className="h-4 w-4" /> Top Creators
+          </div>
+          <select
+            value={topCreatorsPeriod}
+            onChange={(e) => setTopCreatorsPeriod(e.target.value as "day" | "week" | "month")}
+            className="h-8 rounded-md border bg-background px-2 text-xs"
+            title="Leaderboard period"
+          >
+            <option value="day">Daily</option>
+            <option value="week">Weekly</option>
+            <option value="month">Monthly</option>
+          </select>
+          <select
+            value={topCreatorsRole}
+            onChange={(e) => setTopCreatorsRole(e.target.value as "all" | "creator" | "seller")}
+            className="h-8 rounded-md border bg-background px-2 text-xs"
+            title="Account type"
+          >
+            <option value="all">All</option>
+            <option value="creator">Creators</option>
+            <option value="seller">Sellers</option>
+          </select>
+          <Button size="sm" variant="outline" onClick={() => void loadTopCreators()} disabled={topCreatorsLoading}>
+            {topCreatorsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TrendingUp className="h-3.5 w-3.5" />}
+            Refresh
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Ranked by sales · click a creator to load their products, then select &amp; add
+          </span>
+        </div>
+        {topCreatorsNotice && <p className="mb-2 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-600">{topCreatorsNotice}</p>}
+        {topCreatorsLoading && topCreators.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading top creators…
+          </div>
+        ) : topCreators.length === 0 ? (
+          <p className="py-8 text-center text-xs text-muted-foreground">No creator data yet.</p>
+        ) : (
+          <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {topCreators.map((c) => {
+              const id = String(c.sourceCreatorId ?? "");
+              const name = String(c.name ?? "Unknown creator");
+              const raw = (c.metadata as Record<string, unknown> | undefined)?.raw as Record<string, unknown> | undefined;
+              const handle = String(raw?.unique_id ?? c.name ?? "");
+              const region = c.region ? String(c.region) : "US";
+              const verified = c.rating != null && Number(c.rating) >= 1;
+              return (
+                <button
+                  key={id}
+                  onClick={() => id && void drillProducts("influencer", id)}
+                  className="flex items-center gap-2 rounded-md border p-2 text-left transition hover:border-primary/50 hover:bg-muted/40"
+                  title={`Load ${name}'s products`}
+                >
+                  <span className="w-5 shrink-0 text-center text-xs font-bold text-muted-foreground">{String(c.rank ?? "—")}</span>
+                  {c.avatarUrl ? (
+                    <img src={String(c.avatarUrl)} alt="" className="h-9 w-9 rounded-full border object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                  ) : (
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-muted">
+                      <User className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium">
+                      {name}
+                      {verified && <Star className="ml-0.5 inline h-3 w-3 fill-amber-400 text-amber-400" />}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      @{handle} · {region}
+                    </p>
+                  </div>
+                  <Package className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
       {showFilters && (
         <Card>

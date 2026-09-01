@@ -13,6 +13,17 @@
  *   x-lang: en, x-currency: USD, x-region: US
  *   No cookies needed. No Cloudflare wall on these endpoints.
  *
+ * AUTH for influencer/seller LEADERBOARDS (verified live 2026-09-01):
+ *   The /influencers/leaderboard/* and /sellers/leaderboard/* endpoints are
+ *   NEWER and require the full session: the `token` cookie (via Cookie
+ *   header) + x-region header. Bearer-only gets an HTML 500. Region is NOT a
+ *   query param on these — it's the `x-region: US` header (or region cookie).
+ *   Envelope quirk: success returns code=100004 WITH data (not code=0). The
+ *   filters endpoint (/influencers/leaderboard/filters) works Bearer-only and
+ *   returns the available time_type/time_range ids (daily=YYYYMMDD,
+ *   weekly/monthly=YYYYMMDD-YYYYMMDD) + influencer_role/category filters.
+ *   ECHOTIK_WEB_COOKIE (full Netscape cookie file) must be set in env.
+ *
  * Envelope: { code: 0, msg: "ok", data: <array|object>, meta: { total,
  *   current_page, last_page, per_page } }. Detail endpoints return `data` as a
  *   single OBJECT (not array). Values are FORMATTED STRINGS ("159.71K",
@@ -122,6 +133,34 @@ function authHeaders(): Record<string, string> {
     "x-currency": "USD",
     "x-region": "US",
     Accept: "application/json",
+  };
+}
+
+/**
+ * Headers for the NEWER leaderboard endpoints (/influencers/leaderboard/*).
+ * These auth by session COOKIE (not just Bearer) — ECHOTIK_WEB_COOKIE is the
+ * full Netscape cookie file re-exported from the browser (28d expiry, same
+ * cadence as the token). `x-region` here is the actual region selector (the
+ * query param is ignored/rejected on these endpoints).
+ */
+function leaderboardHeaders(): Record<string, string> {
+  const cookie = process.env.ECHOTIK_WEB_COOKIE;
+  if (!cookie) {
+    throw new MissingSourceCredentialsError("echotik", ["ECHOTIK_WEB_COOKIE"]);
+  }
+  const cookieHeader = cookie
+    .split("\n")
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.split("\t"))
+    .filter((p) => p.length >= 7)
+    .map((p) => `${p[5]}=${p[6]}`)
+    .join("; ");
+  return {
+    ...authHeaders(),
+    Cookie: cookieHeader,
+    "Content-Type": "application/json",
+    "x-secondary-currency": "CNY",
+    "X-User-Id": "",
   };
 }
 
@@ -489,16 +528,17 @@ function normalizeInfluencer(r: ApiRow): MarketInfluencer {
   return {
     source: "echotik" as MarketSource,
     sourceCreatorId: String(r.influencer_id ?? ""),
-    name: str(r.unique_id) ?? str(r.influencer_name) ?? "Unknown creator",
+    // Leaderboard rows carry nick_name (display) + unique_id (@handle).
+    name: str(r.nick_name) ?? str(r.unique_id) ?? str(r.influencer_name) ?? "Unknown creator",
     avatarUrl: str(r.avatar_url) ?? null,
     bio: str(r.bio) ?? null,
     followers: parseNum(r.follower_count) ?? parseNum(r.total_followers_cnt) ?? null,
     likes: parseNum(r.heart_count) ?? parseNum(r.total_digg_cnt) ?? null,
-    videoCount: parseNum(r.video_count) ?? parseNum(r.videos_count) ?? null,
+    videoCount: parseNum(r.video_count) ?? parseNum(r.videos_count) ?? parseNum(r.total_post_video_cnt) ?? null,
     liveCount: parseNum(r.live_count) ?? parseNum(r.total_live_cnt) ?? null,
-    sales: parseNum(r.sales) ?? parseNum(r.total_sale_cnt) ?? null,
-    gmv: parseNum(r.gmv) ?? null,
-    category: str(r.category) ?? null,
+    sales: parseNum(r.sales) ?? parseNum(r.total_sale_cnt) ?? parseNum(r.total_sales_cnt) ?? null,
+    gmv: parseNum(r.gmv) ?? parseNum(r.total_gmv_amt) ?? null,
+    category: str(r.category) ?? str(r.category_product) ?? null,
     region,
     rating: parseNum(r.certificate_type) ?? parseNum(r.influencer_level) ?? null,
     engagementRate: parsePct(r.engagement_rate),
@@ -670,4 +710,145 @@ export async function resolveCoverUrl(coverField: string): Promise<string> {
     // not JSON
   }
   throw new Error("[echotik-site] invalid cover url");
+}
+
+// ─── Creator leaderboards ("find the creators moving volume") ──────────────
+// Verified live 2026-09-01: /influencers/leaderboard/champion-sales is the
+// "Sales Champion" tab on echotik.live — ranked creators/sellers by sales.
+// Auth = full session cookie (leaderboardHeaders); region = x-region header,
+// NOT a query param. Success envelope is code=100004 WITH data. Params:
+//   time_type=daily|weekly|monthly, time_range=<id from filters>
+//   page, per_page, influencer_role=1|2|"" (Creator|Seller|All),
+//   influencer_categories, product_categories (ids from filters)
+// Other boards on the same shape: followers, followers-increment,
+// darkhorse-creator, darkhorse-seller, hot-live, most-views-live.
+
+export type CreatorBoard =
+  | "champion-sales"
+  | "followers"
+  | "followers-increment"
+  | "darkhorse-creator"
+  | "darkhorse-seller"
+  | "hot-live"
+  | "most-views-live";
+
+export type CreatorRole = "creator" | "seller" | "all";
+
+export interface TopCreatorsQuery {
+  /** Daily / weekly / monthly leaderboard period (default day). */
+  period?: "day" | "week" | "month";
+  /** creator=1, seller=2, all="" (default all). */
+  role?: CreatorRole;
+  /** Board to read (default champion-sales). */
+  board?: CreatorBoard;
+  /** Max rows (per_page cap 50 — 1 request; >50 pages, cached per page). */
+  limit?: number;
+  /** Influencer category filter id (from getLeaderboardFilters). */
+  categoryId?: string;
+}
+
+export interface LeaderboardFilters {
+  timeType: "daily" | "weekly" | "monthly";
+  /** Available time_range ids per period; first entry = most recent. */
+  timeRanges: Record<"daily" | "weekly" | "monthly", string[]>;
+  influencerRoles: { id: string; name: string }[];
+  influencerCategories: { id: string; name: string }[];
+  productCategories: { id: string; name: string }[];
+}
+
+/** Fetch the leaderboard filter options (time ranges, roles, categories). */
+export async function getLeaderboardFilters(): Promise<LeaderboardFilters> {
+  const path = "/influencers/leaderboard/filters";
+  const key = cacheKey("echotik-site", path);
+  const cached = await cacheGet<LeaderboardFilters>(key);
+  if (cached) return cached;
+  const res = await fetch(`${BASE}${path}`, {
+    headers: authHeaders(),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await res.text();
+  if (!text.trim().startsWith("{")) {
+    throw new Error(`[echotik-site] ${path}: non-JSON response (${res.status})`);
+  }
+  const json = JSON.parse(text) as { data?: Record<string, unknown> };
+  const data = json.data ?? {};
+  const idName = (list: unknown): { id: string; name: string }[] =>
+    Array.isArray(list)
+      ? (list as ApiRow[]).map((r) => ({ id: String(r.id ?? ""), name: String(r.name ?? "") }))
+      : [];
+  const tt = (data.time_type as ApiRow[] | undefined) ?? [];
+  const ranges = {} as LeaderboardFilters["timeRanges"];
+  for (const t of ["daily", "weekly", "monthly"] as const) {
+    const list = (data.time_range as Record<string, ApiRow[]> | undefined)?.[t] ?? [];
+    ranges[t] = list.map((r) => String(r.id ?? "")).filter(Boolean);
+  }
+  const filters: LeaderboardFilters = {
+    timeType: (tt.find((r) => r.id === "daily") ? "daily" : String(tt[0]?.id ?? "daily")) as LeaderboardFilters["timeType"],
+    timeRanges: ranges,
+    influencerRoles: idName(data.influencer_role),
+    influencerCategories: idName(data.influencer_categories),
+    productCategories: idName(data.product_categories),
+  };
+  await cacheSet(key, filters, 4 * 3600);
+  return filters;
+}
+
+/**
+ * Top creators by sales (champion-sales) — the "find who's moving volume"
+ * feed. 1 request per (period, role, board) combo, cached 4h.
+ */
+export async function fetchTopCreators(query: TopCreatorsQuery = {}): Promise<MarketInfluencer[]> {
+  const { period = "day", role = "all", board = "champion-sales", limit = 50, categoryId } = query;
+  const timeType = period === "day" ? "daily" : period === "week" ? "weekly" : "monthly";
+  const filters = await getLeaderboardFilters();
+  const timeRange = filters.timeRanges[timeType]?.[0] ?? "";
+  if (!timeRange) throw new Error(`[echotik-site] no ${timeType} time range available from leaderboard filters`);
+  const roleId = role === "creator" ? "1" : role === "seller" ? "2" : "";
+
+  const path = `/influencers/leaderboard/${board}`;
+  const per = Math.min(Math.max(limit, 10), 50);
+  const params: Record<string, string> = {
+    time_type: timeType,
+    time_range: timeRange,
+    page: "1",
+    per_page: String(per),
+    influencer_role: roleId,
+    influencer_categories: categoryId ?? "",
+    product_categories: "",
+  };
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v !== "" && v != null)
+  ).toString();
+
+  const key = cacheKey("echotik-site", `${path}?${qs}`);
+  const cached = await cacheGet<ApiRow[]>(key);
+  let rows: ApiRow[];
+  if (cached) {
+    rows = cached;
+  } else {
+    const res = await fetch(`${BASE}${path}?${qs}`, {
+      headers: leaderboardHeaders(),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await res.text();
+    if (!text.trim().startsWith("{")) {
+      throw new Error(
+        `[echotik-site] ${path}: non-JSON (${res.status}) — ECHOTIK_WEB_COOKIE expired? re-export from browser`
+      );
+    }
+    const json = JSON.parse(text) as { code?: number; msg?: string; data?: unknown };
+    if (!Array.isArray(json.data)) {
+      throw new Error(`[echotik-site] ${path}: code=${json.code} msg=${json.msg ?? "unknown"}`);
+    }
+    rows = json.data;
+    if (rows.length > 0) await cacheSet(key, rows, 4 * 3600);
+  }
+
+  return rows.map((r, i) => {
+    const creator = normalizeInfluencer(r);
+    return {
+      ...creator,
+      metadata: { ...(creator.metadata ?? {}), rank: i + 1, endpoint: `site${path}` },
+    };
+  });
 }
