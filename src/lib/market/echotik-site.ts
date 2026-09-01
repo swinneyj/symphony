@@ -848,6 +848,9 @@ export async function fetchTopCreators(query: TopCreatorsQuery = {}): Promise<Ma
     const creator = normalizeInfluencer(r);
     return {
       ...creator,
+      // Rank at the TOP level too — the leaderboard UI reads c.rank directly
+      // (metadata.rank kept for backwards compat / debugging).
+      rank: i + 1,
       metadata: { ...(creator.metadata ?? {}), rank: i + 1, endpoint: `site${path}` },
     };
   });
