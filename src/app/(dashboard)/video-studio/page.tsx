@@ -3418,11 +3418,23 @@ function MarketTab({
       setDrillResults((prev) => ({ ...prev, [key]: rows }));
       if (data.notice) setSearchNotice(data.notice);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load products");
+      const msg = error instanceof Error ? error.message : "Failed to load products";
+      if (isEchoTikPlanGate(msg)) {
+        setSearchNotice(
+          "EchoTik plan gate: this session can't view creator product lists (Visitor tier). " +
+            "Re-export the cookie from a paid, logged-in EchoTik browser — see Settings → Market."
+        );
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setDrillLoading(null);
     }
   };
+
+  /** EchoTik's "paid feature on a visitor session" errors — surface friendly, not a raw toast. */
+  const isEchoTikPlanGate = (msg: string) =>
+    /401|100004|Unauthorized user|plan is Visitor|member plan/.test(msg);
 
   /** "What are they pushing right now": last 14 days of products from their videos. */
   const pullRecent = async (kind: "influencer", id: string, key: string) => {
@@ -3448,7 +3460,14 @@ function MarketTab({
       setRecentSelected([]);
       if (data.notice) setRecentNotice(data.notice);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load recent products");
+      const msg = error instanceof Error ? error.message : "Failed to load recent products";
+      if (isEchoTikPlanGate(msg)) {
+        setRecentNotice(
+          "EchoTik plan gate: recent-video products need a paid logged-in EchoTik session (Visitor tier can't)."
+        );
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setRecentLoading(false);
     }
