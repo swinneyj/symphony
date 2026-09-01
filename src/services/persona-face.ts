@@ -69,12 +69,15 @@ async function generateFaceImage(
   if (part.inlineData?.data) {
     const { put } = await import("@vercel/blob");
     const imgBuf = Buffer.from(part.inlineData.data, "base64");
-    // Public on purpose: generated faces are non-sensitive product assets and
-    // must render as raw <img> in the create-dialog preview (before a persona
-    // row exists to proxy through). The persona image proxy still gates the
-    // per-workspace persona UI. Videos/voice remain private.
+    // Private: the Blob store is configured with private access — `put` with
+    // access:"public" is rejected by Vercel ("Cannot use public access on a
+    // private store"). put() returns a SIGNED private URL that still renders
+    // in the raw <img> of the create-dialog preview (no persona row exists to
+    // proxy yet), and once attached to a persona the image proxy
+    // (/api/personas/[id]/image) streams the stored URL with the Bearer token.
+    // Videos/voice remain private too.
     const { url } = await put(`persona-faces/${seedHint}-${Date.now()}.png`, imgBuf, {
-      access: "public",
+      access: "private",
       contentType: part.inlineData.mimeType ?? "image/png",
       token: blobToken(),
     });
