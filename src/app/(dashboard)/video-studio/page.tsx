@@ -308,6 +308,7 @@ export default function VideoStudioPage() {
         <TabsContent value="market" className="mt-4">
           <MarketTab
             workspaceId={workspaceId!}
+            formulas={formulas}
             onAdopted={() => loadProducts(workspaceId!)}
             onGenerate={(ids) => {
               setBatchPreselect(ids);
@@ -625,16 +626,14 @@ function ProductsTab({
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="space-y-2">
           {products.map((product) => (
-            <Card key={product.id} className="overflow-hidden">
-              <div className="relative aspect-square bg-zinc-100">
+            <div key={product.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-background p-2.5 transition hover:border-primary/40">
+              <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border bg-zinc-100">
                 {product.originalImageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={`/api/products/${product.id}/image${
-                      sceneView[product.id] ? "?variant=scene" : ""
-                    }`}
+                    src={`/api/products/${product.id}/image${sceneView[product.id] ? "?variant=scene" : ""}`}
                     alt={product.name}
                     className="h-full w-full object-cover"
                     onError={(e) => {
@@ -643,92 +642,61 @@ function ProductsTab({
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center">
-                    <Package className="h-10 w-10 text-muted-foreground/40" />
+                    <Package className="h-5 w-5 text-muted-foreground/40" />
                   </div>
                 )}
                 {product.sceneImageUrl && (
                   <button
                     type="button"
-                    onClick={() =>
-                      setSceneView((v) => ({
-                        ...v,
-                        [product.id]: !v[product.id],
-                      }))
-                    }
-                    className={`absolute top-2 right-2 flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium shadow-sm transition-colors ${
-                      sceneView[product.id]
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-white/90 text-zinc-700 hover:bg-white"
+                    onClick={() => setSceneView((v) => ({ ...v, [product.id]: !v[product.id] }))}
+                    className={`absolute top-1 right-1 flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold shadow-sm transition-colors ${
+                      sceneView[product.id] ? "bg-primary text-primary-foreground" : "bg-white/90 text-zinc-700 hover:bg-white"
                     }`}
+                    title={sceneView[product.id] ? "Showing AI scene" : "Show AI scene"}
                   >
-                    <Wand2 className="h-3 w-3" />
-                    {sceneView[product.id] ? "Scene" : "AI Scene"}
+                    <Wand2 className="h-2.5 w-2.5" />
+                    {sceneView[product.id] ? "Scene" : "AI"}
                   </button>
                 )}
               </div>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1 basis-40">
+                <div className="flex items-center gap-2">
                   <p className="line-clamp-1 text-sm font-medium">{product.name}</p>
-                  <Badge className={cn("shrink-0", STATUS_STYLE[product.status])}>
-                    {product.status}
-                  </Badge>
+                  <Badge className={cn("shrink-0", STATUS_STYLE[product.status])}>{product.status}</Badge>
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   {product.price && <span className="font-medium">{product.price}</span>}
-                  <span className="capitalize">{product.sourceType}</span>
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={product.status === "processing"}
-                    onClick={() => handleProcess(product)}
-                  >
-                    <Play className="h-3.5 w-3.5" />
-                    Process
-                  </Button>
-                  <div className="flex min-w-0 flex-1 items-center gap-1">
-                    <select
-                      value={sceneFormula[product.id] ?? ""}
-                      onChange={(e) =>
-                        setSceneFormula((v) => ({
-                          ...v,
-                          [product.id]: e.target.value,
-                        }))
-                      }
-                      className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-xs text-foreground outline-none"
-                      title="Scene (formula) for AI regeneration"
-                    >
-                      <option value="">Scene…</option>
-                      {formulas.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!sceneFormula[product.id]}
-                      onClick={() =>
-                        handleGenerateScene(product, sceneFormula[product.id])
-                      }
-                    >
-                      <Wand2 className="h-3.5 w-3.5" />
-                      Scene
-                    </Button>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-red-600"
-                    onClick={() => handleDelete(product)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                  {product.price && product.sourceType ? " · " : ""}
+                  {product.sourceType && <span className="capitalize">{product.sourceType}</span>}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <select
+                  value={sceneFormula[product.id] ?? ""}
+                  onChange={(e) => setSceneFormula((v) => ({ ...v, [product.id]: e.target.value }))}
+                  className="h-8 w-32 rounded-md border border-input bg-transparent px-2 text-xs text-foreground outline-none"
+                  title="Scene (formula) for AI regeneration"
+                >
+                  <option value="">Scene…</option>
+                  {formulas.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+                <Button size="sm" variant="outline" disabled={product.status === "processing"} onClick={() => handleProcess(product)}>
+                  <Play className="h-3.5 w-3.5" />
+                  Process
+                </Button>
+                <Button size="sm" variant="outline" disabled={!sceneFormula[product.id]} onClick={() => handleGenerateScene(product, sceneFormula[product.id])}>
+                  <Wand2 className="h-3.5 w-3.5" />
+                  Scene
+                </Button>
+                <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(product)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -3241,10 +3209,12 @@ function ProductDetailDialog({
 
 function MarketTab({
   workspaceId,
+  formulas,
   onAdopted,
   onGenerate,
 }: {
   workspaceId: string;
+  formulas: Formula[];
   onAdopted: () => void;
   onGenerate?: (productIds: string[]) => void;
 }) {
@@ -3307,6 +3277,12 @@ function MarketTab({
   const [drillBulkAdopting, setDrillBulkAdopting] = useState(false);
   const [drillWhiteBgOnly, setDrillWhiteBgOnly] = useState(false);
   const [drillAdoptedIds, setDrillAdoptedIds] = useState<string[]>([]);
+  // ── Drill sort (GMV-first by default — pick the winners) ──
+  const [drillSort, setDrillSort] = useState<"gmv" | "sales" | "rank">("gmv");
+  // ── Batch quick-create (scene pick + videos per product) ──
+  const [drillSceneFormulaId, setDrillSceneFormulaId] = useState("");
+  const [drillVideosPerProduct, setDrillVideosPerProduct] = useState(1);
+  const [drillBatchCreating, setDrillBatchCreating] = useState(false);
 
   const setFilter = (key: string, value: string) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -3586,6 +3562,52 @@ function MarketTab({
     } finally {
       setDrillBulkAdopting(false);
     }
+  };
+
+  /** Create the batch straight from the added products: scene (formula) + videos-per-product. */
+  const createBatchFromDrill = async () => {
+    const ids = drillAdoptedIds;
+    if (ids.length === 0) return;
+    const formulaId = drillSceneFormulaId || formulas.find((f) => f.scenePromptTemplate)?.id || "";
+    if (!formulaId) {
+      toast.error("Pick a scene (formula) first — none found. Create one in the Formulas tab.");
+      return;
+    }
+    const count = drillVideosPerProduct;
+    setDrillBatchCreating(true);
+    try {
+      const res = await fetch(`/api/batches`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          name: `Top creators — ${new Date().toISOString().slice(0, 10)} (${ids.length}×${count})`,
+          formulaId,
+          productIds: ids,
+          videosPerProduct: count,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Batch create failed");
+      toast.success(`Batch created — ${data.totalCount ?? ids.length * count} videos queued`);
+      setDrillAdoptedIds([]); // consumed
+      onGenerate?.(ids); // jump to Batches with products still preselected
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Batch create failed");
+    } finally {
+      setDrillBatchCreating(false);
+    }
+  };
+
+  /** GMV-first ordering for the drill gallery (user: sort by highest GMV sales). */
+  const sortDrillRows = (rows: MarketRow[]): MarketRow[] => {
+    if (drillSort === "rank") return rows;
+    const key = drillSort === "gmv" ? "gmv30d" : "sales30d";
+    return [...rows].sort((a, b) => {
+      const av = a[key] ?? 0;
+      const bv = b[key] ?? 0;
+      return bv - av;
+    });
   };
 
   const loadWatched = useCallback(async () => {
@@ -4203,6 +4225,16 @@ function MarketTab({
                     {drillWhiteBgOnly ? " · white bg only" : ""}
                   </p>
                   <div className="flex flex-wrap items-center gap-1">
+                    <select
+                      value={drillSort}
+                      onChange={(e) => setDrillSort(e.target.value as "gmv" | "sales" | "rank")}
+                      className="h-7 rounded-md border bg-background px-1.5 text-xs"
+                      title="Sort by performance"
+                    >
+                      <option value="gmv">Sort: GMV</option>
+                      <option value="sales">Sort: Sales</option>
+                      <option value="rank">Sort: Default</option>
+                    </select>
                     {key.startsWith("influencer:") && (
                       <Button
                         size="sm"
@@ -4245,7 +4277,7 @@ function MarketTab({
                   </div>
                 </div>
                 <div className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {prows.map((p) => (
+                  {sortDrillRows(prows).map((p) => (
                     <DrillCard
                       key={p.sourceProductId}
                       p={p}
@@ -4257,12 +4289,63 @@ function MarketTab({
                 </div>
                 {drillAdoptedIds.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
-                    {onGenerate && (
-                      <Button size="sm" variant="secondary" onClick={() => onGenerate(drillAdoptedIds)}>
-                        Generate videos for {drillAdoptedIds.length} added →
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-medium">{drillAdoptedIds.length} added —</span>
+                      <select
+                        value={drillSceneFormulaId || ""}
+                        onChange={(e) => setDrillSceneFormulaId(e.target.value)}
+                        className="h-8 max-w-[220px] rounded-md border bg-background px-2 text-xs"
+                        title="Scene (formula) for the batch — render-scene formulas create the image first, then image-to-video"
+                      >
+                        {formulas.filter((f) => f.scenePromptTemplate).length > 0 ? (
+                          <>
+                            <option value="">Scene…</option>
+                            {formulas.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.scenePromptTemplate ? `🖼 ${f.name}` : f.name}
+                              </option>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            <option value="">Formula…</option>
+                            {formulas.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.name}
+                              </option>
+                            ))}
+                          </>
+                        )}
+                      </select>
+                      <div className="flex items-center gap-1" title="Videos per product">
+                        {[1, 5, 10, 15].map((n) => (
+                          <button
+                            key={n}
+                            onClick={() => setDrillVideosPerProduct(n)}
+                            className={`h-7 rounded-md border px-2 text-xs font-medium transition ${
+                              drillVideosPerProduct === n ? "border-primary bg-primary/10 text-foreground" : "bg-background text-muted-foreground"
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                        <span className="pl-1 text-[11px] text-muted-foreground">videos ea.</span>
+                      </div>
+                      <Button size="sm" onClick={() => void createBatchFromDrill()} disabled={drillBatchCreating}>
+                        {drillBatchCreating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+                        {drillBatchCreating
+                          ? "Creating…"
+                          : `Create batch · ${drillAdoptedIds.length * drillVideosPerProduct} videos`}
                       </Button>
-                    )}
-                    <p className="text-xs text-muted-foreground">Added — pick a formula in the Batches tab (or jump straight there).</p>
+                      {onGenerate && (
+                        <Button size="sm" variant="ghost" onClick={() => onGenerate(drillAdoptedIds)}>
+                          Just jump to Batches →
+                        </Button>
+                      )}
+                    </div>
+                    <p className="w-full text-[11px] text-muted-foreground">
+                      Scene image renders first, then image-to-video (engine cost applies per video).
+                    </p>
                   </div>
                 )}
 
