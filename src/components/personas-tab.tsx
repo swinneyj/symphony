@@ -12,6 +12,7 @@ import { Sparkles, Pencil, Trash2, Plus, Upload } from "lucide-react";
 export interface Persona {
   id: string;
   workspaceId: string | null;
+  createdById?: string | null;
   name: string;
   description: string | null;
   faceImageUrl: string | null;
@@ -61,6 +62,16 @@ export function PersonasTab({
   const [descLoading, setDescLoading] = useState(false);
   const [genModel, setGenModel] = useState("auto");
   const [editing, setEditing] = useState<Persona | null>(null);
+  // Current user id — system personas (shared demo rows) can only be deleted
+  // by the user who created them.
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((u) => setCurrentUserId(u?.id ?? null))
+      .catch(() => setCurrentUserId(null));
+  }, []);
 
   const reset = useCallback(() => {
     setName("");
@@ -193,8 +204,20 @@ export function PersonasTab({
 
   const remove = async (p: Persona) => {
     if (!confirm(`Delete persona "${p.name}"?`)) return;
-    const res = await fetch(`/api/personas/${p.id}`, { method: "DELETE" });
-    if (res.ok) onChanged();
+    try {
+      const res = await fetch(`/api/personas/${p.id}`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? `Delete failed (${res.status})`);
+      }
+      onChanged();
+    } catch (e) {
+      setGenError((e as Error).message);
+    }
   };
 
   return (
@@ -335,60 +358,79 @@ export function PersonasTab({
         </Card>
       ) : (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-          {personas.map((p) => (
-            <Card key={p.id} className="group relative overflow-hidden">
-              <Link href={`/video-studio/personas/${p.id}`} className="block">
-                <div className="relative aspect-[3/4] bg-muted">
-                  {p.faceImageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={`/api/personas/${p.id}/image`} alt={p.name} className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-4xl text-muted-foreground/40">{p.name[0]}</div>
-                  )}
-                  {p.isSystem && (
-                    <Badge className="absolute left-2 top-2 bg-primary/90">System</Badge>
-                  )}
-                </div>
-                <div className="p-3">
-                  <p className="truncate font-medium">{p.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {p.voiceName ?? "No voice"} · {p.faceRefUrls?.length ?? 0} face refs
-                  </p>
-                </div>
-              </Link>
-              {!p.isSystem && (
-                <div className="absolute right-2 top-2 hidden gap-1 group-hover:flex">
-                  <Button
-                    size="icon"
-                    variant="secondary"
-                    className="h-7 w-7"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setEditing(p);
-                      setName(p.name);
-                      setDescription(p.description ?? "");
-                      setPersonaPrompt(p.personaPrompt ?? "");
-                      setVoiceId(p.voiceId ?? "");
-                      setOpen(true);
-                    }}
+          {personas.map((p) => {
+            // System personas are shared demo rows — only their creator can
+            // edit/delete them; workspace personas are manageable by anyone
+            // with workspace access.
+            const canManage = !p.isSystem || p.createdById === currentUserId;
+            return (
+              <Card key={p.id} className="group relative overflow-hidden">
+                <Link href={`/video-studio/personas/${p.id}`} className="block">
+                  <div
+                    className={`relative bg-muted ${
+                      p.faceImageUrl ? "aspect-[3/4]" : "aspect-[4/3]"
+                    }`}
                   >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="destructive"
-                    className="h-7 w-7"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      remove(p);
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              )}
-            </Card>
-          ))}
+                    {p.faceImageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={`/api/personas/${p.id}/image?workspaceId=${workspaceId}`}
+                        alt={p.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted-foreground/10 text-lg font-semibold text-muted-foreground/60">
+                          {p.name[0]}
+                        </div>
+                        <span className="text-xs text-muted-foreground/50">No face yet</span>
+                      </div>
+                    )}
+                    {p.isSystem && (
+                      <Badge className="absolute left-2 top-2 bg-primary/90">System</Badge>
+                    )}
+                  </div>
+                  <div className="p-3">
+                    <p className="truncate font-medium">{p.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {p.voiceName ?? "No voice"} · {p.faceRefUrls?.length ?? 0} face refs
+                    </p>
+                  </div>
+                </Link>
+                {canManage && (
+                  <div className="absolute right-2 top-2 hidden gap-1 group-hover:flex">
+                    <Button
+                      size="icon"
+                      variant="secondary"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setEditing(p);
+                        setName(p.name);
+                        setDescription(p.description ?? "");
+                        setPersonaPrompt(p.personaPrompt ?? "");
+                        setVoiceId(p.voiceId ?? "");
+                        setOpen(true);
+                      }}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="destructive"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        remove(p);
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
