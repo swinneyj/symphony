@@ -136,6 +136,30 @@ function authHeaders(): Record<string, string> {
   };
 }
 
+/** Parse the ECHOTIK_WEB_COOKIE Netscape file into a `Cookie` header value. */
+function cookieHeader(): string {
+  const cookie = process.env.ECHOTIK_WEB_COOKIE;
+  if (!cookie) return "";
+  return cookie
+    .split("\n")
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.split("\t"))
+    .filter((p) => p.length >= 7)
+    .map((p) => `${p[5]}=${p[6]}`)
+    .join("; ");
+}
+
+/**
+ * Headers for endpoints that need the browser session cookie (not just Bearer).
+ * Most `/influencers/*` product/video endpoints 401 "Unauthorized user" with
+ * Bearer-only; the cookie is what carries the paid session. Falls back to
+ * Bearer-only when ECHOTIK_WEB_COOKIE isn't configured.
+ */
+function sessionHeaders(): Record<string, string> {
+  const cookie = cookieHeader();
+  return cookie ? { ...authHeaders(), Cookie: cookie } : authHeaders();
+}
+
 /**
  * Headers for the NEWER leaderboard endpoints (/influencers/leaderboard/*).
  * These auth by session COOKIE (not just Bearer) — ECHOTIK_WEB_COOKIE is the
@@ -144,20 +168,12 @@ function authHeaders(): Record<string, string> {
  * query param is ignored/rejected on these endpoints).
  */
 function leaderboardHeaders(): Record<string, string> {
-  const cookie = process.env.ECHOTIK_WEB_COOKIE;
+  const cookie = cookieHeader();
   if (!cookie) {
     throw new MissingSourceCredentialsError("echotik", ["ECHOTIK_WEB_COOKIE"]);
   }
-  const cookieHeader = cookie
-    .split("\n")
-    .filter((l) => l && !l.startsWith("#"))
-    .map((l) => l.split("\t"))
-    .filter((p) => p.length >= 7)
-    .map((p) => `${p[5]}=${p[6]}`)
-    .join("; ");
   return {
-    ...authHeaders(),
-    Cookie: cookieHeader,
+    ...sessionHeaders(),
     "Content-Type": "application/json",
     "x-secondary-currency": "CNY",
     "X-User-Id": "",
@@ -195,7 +211,7 @@ async function get(
   }
 
   const res = await fetch(`${BASE}${path}?${query}`, {
-    headers: authHeaders(),
+    headers: sessionHeaders(),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
@@ -204,9 +220,11 @@ async function get(
   }
   const json = await res.json();
   if (json.code !== 0) {
-    // 100004 = session expired/unauthorized — the user must re-export the cookie.
+    // 100004 = session unauthorized — cookie missing/expired or plan-gated.
     if (json.code === 100004) {
-      throw new Error("[echotik-site] session expired — re-export the EchoTik website cookie (ECHOTIK_WEB_TOKEN)");
+      throw new Error(
+        "[echotik-site] EchoTik rejected the session (cookie missing/expired or paid-plan gated) — re-export ECHOTIK_WEB_COOKIE from a logged-in paid browser"
+      );
     }
     throw new Error(`[echotik-site] ${path}: code=${json.code} msg=${json.msg ?? "unknown"}`);
   }
