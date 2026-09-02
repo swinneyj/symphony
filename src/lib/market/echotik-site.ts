@@ -609,9 +609,24 @@ export async function searchVideos(keyword: string, region = "US", limit = 20): 
   return rows.map(normalizeVideo).filter((v) => v.videoId);
 }
 
-/** Every product promoted by a creator/influencer (influencers/{id}/products). */
+/**
+ * Every product promoted by a creator/influencer. The site's creator "Products
+ * library" does NOT use /influencers/{id}/products (paid-gated 401) — it runs
+ * the global product library search with `related_influencers=<creatorId>`
+ * (verified live 2026-09-01 from the web app's network capture; sort
+ * `total_sale_nd_cnt` = the "Top Sold" tab). Same Bearer auth as search.
+ */
 export async function fetchInfluencerProducts(influencerId: string, limit = 24): Promise<MarketProduct[]> {
-  const rows = await getAll(`/influencers/${influencerId}/products`, { region: "US" }, limit);
+  const rows = await getAll(
+    "/products",
+    {
+      region: "US",
+      related_influencers: influencerId,
+      order: "total_sale_nd_cnt",
+      sort: "desc",
+    },
+    limit
+  );
   return rows.map((r, i) => normalizeLeaderboard(r, i + 1, "day", "US"));
 }
 
