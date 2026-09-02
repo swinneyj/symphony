@@ -332,6 +332,39 @@ export async function fetchInfluencerProducts(influencerId: string, limit = 24) 
   return { rows: await impl.fetchInfluencerProducts(influencerId, limit), dryRun: false };
 }
 
+/** Paged + server-filtered creator product list (sort/categories/keyword). */
+export interface InfluencerProductsPageFilter {
+  page?: number;
+  perPage?: number;
+  order?: string;
+  sort?: "asc" | "desc";
+  categories?: string[];
+  keyword?: string;
+}
+
+export async function fetchInfluencerProductsPage(
+  influencerId: string,
+  filter: InfluencerProductsPageFilter = {},
+  fresh = false
+) {
+  if (dryRunEnabled()) return { page: { products: [], page: 1, perPage: 24, total: 0, lastPage: 1 }, dryRun: true };
+  const impl = echotikImpl();
+  if (!("fetchInfluencerProductsPage" in impl)) {
+    throw new Error(`[market] influencer products page not implemented for source: echotik (API adapter)`);
+  }
+  return { page: await impl.fetchInfluencerProductsPage(influencerId, filter, fresh), dryRun: false };
+}
+
+/** Category filter options for a creator's products. */
+export async function fetchInfluencerProductFilters(influencerId: string) {
+  if (dryRunEnabled()) return { categories: [], dryRun: true };
+  const impl = echotikImpl();
+  if (!("fetchInfluencerProductFilters" in impl)) {
+    throw new Error(`[market] influencer product filters not implemented for source: echotik (API adapter)`);
+  }
+  return { categories: await impl.fetchInfluencerProductFilters(influencerId), dryRun: false };
+}
+
 /**
  * Products a creator promoted in the last `days` days ("what are they pushing
  * right now") — walks their recent videos, dedupes the nested products.
