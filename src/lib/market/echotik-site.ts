@@ -154,31 +154,107 @@ function cookieHeader(): string {
     .join("; ");
 }
 
-/**
- * Headers for endpoints that need the browser session cookie (not just Bearer).
- * Most `/influencers/*` product/video endpoints 401 "Unauthorized user" with
- * Bearer-only; the cookie is what carries the paid session. Falls back to
- * Bearer-only when ECHOTIK_WEB_COOKIE isn't configured.
- */
-function sessionHeaders(): Record<string, string> {
-  const cookie = cookieHeader();
+// ─── Session self-renewal ──────────────────────────────────────────────────
+// Verified live 2026-09-02: echotik_session dies ~2h after export while the
+// `token` cookie lives ~30d. The EchoTik SPA renews the session on load via
+// GET /api/v1/users (Bearer + session cookie → Set-Cookie: fresh
+// echotik_session). The leaderboard + influencer endpoints resolve the member
+// plan from that session, so a dead session re-gates paid boards as
+// Visitor/Free. Mirror the SPA: on plan-gate/401 failures, renew the session
+// once and retry, storing the renewed value in KV (cacheSet) so later
+// requests override the env jar's dead session without failing first.
+const SESSION_KV_KEY = "market:echotik-site:session";
+const SESSION_TTL_MS = 2 * 3600_000; // server grants ~2h
+let memSession: { v: string; at: number } | null = null;
+
+/** Expiry (epoch s) of the env jar's echotik_session, or 0 when absent. */
+function envSessionExpiry(): number {
+  const cookie = process.env.ECHOTIK_WEB_COOKIE ?? "";
+  for (const l of cookie.split("\n")) {
+    if (!l || l.startsWith("#")) continue;
+    const p = l.split("\t");
+    if (p.length >= 7 && p[5] === "echotik_session") {
+      const exp = Number(p[4]);
+      return Number.isFinite(exp) ? exp : 0;
+    }
+  }
+  return 0;
+}
+
+/** Cookie header with a renewed echotik_session substituted when the env jar's
+ *  session is expired (or the renew endpoint re-issued one). Falls back to the
+ *  plain env jar. */
+async function effectiveCookieHeader(): Promise<string> {
+  const jar = cookieHeader();
+  if (!jar) return "";
+  // Session still valid → env jar is authoritative; skip KV (zero overhead).
+  if (envSessionExpiry() * 1000 > Date.now() + 60_000) return jar;
+  if (!memSession) {
+    const kv = await cacheGet<{ v: string; at: number }>(SESSION_KV_KEY).catch(() => null);
+    if (kv && Date.now() - kv.at < SESSION_TTL_MS - 120_000) memSession = kv;
+  }
+  if (!memSession) return jar;
+  const parts = jar.split("; ");
+  const out: string[] = [];
+  let replaced = false;
+  for (const p of parts) {
+    if (p.startsWith("echotik_session=")) {
+      out.push(`echotik_session=${memSession.v}`);
+      replaced = true;
+    } else out.push(p);
+  }
+  if (!replaced) out.push(`echotik_session=${memSession.v}`);
+  return out.join("; ");
+}
+
+/** Renew the EchoTik session via the SPA's own endpoint; store the fresh
+ *  echotik_session (KV + in-memory). True when a new session was issued. */
+async function renewEchoTikSession(): Promise<boolean> {
+  const jar = cookieHeader();
+  if (!jar) return false;
+  const res = await fetch("https://echotik.live/api/v1/users", {
+    headers: { ...authHeaders(), Cookie: jar },
+    redirect: "manual",
+    signal: AbortSignal.timeout(15_000),
+  }).catch(() => null);
+  if (!res) return false;
+  let fresh: string | null = null;
+  // Node 20 undici exposes getSetCookie(); guard for other runtimes.
+  const setCookies = (typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : []) as string[];
+  for (const sc of setCookies) {
+    const [pair] = sc.split(";");
+    if (pair && pair.startsWith("echotik_session=")) fresh = pair.slice("echotik_session=".length);
+  }
+  if (!fresh) return false;
+  memSession = { v: fresh, at: Date.now() };
+  await cacheSet(SESSION_KV_KEY, memSession, Math.floor(SESSION_TTL_MS / 1000) + 300).catch(() => {});
+  return true;
+}
+
+/** Headers for endpoints that need the browser session cookie (not just Bearer).
+ *  Most `/influencers/*` product/video endpoints 401 "Unauthorized user" with
+ *  Bearer-only; the cookie is what carries the paid session. Falls back to
+ *  Bearer-only when ECHOTIK_WEB_COOKIE isn't configured. */
+async function sessionHeaders(): Promise<Record<string, string>> {
+  const cookie = await effectiveCookieHeader();
   return cookie ? { ...authHeaders(), Cookie: cookie } : authHeaders();
 }
 
 /**
  * Headers for the NEWER leaderboard endpoints (/influencers/leaderboard/*).
  * These auth by session COOKIE (not just Bearer) — ECHOTIK_WEB_COOKIE is the
- * full Netscape cookie file re-exported from the browser (28d expiry, same
- * cadence as the token). `x-region` here is the actual region selector (the
- * query param is ignored/rejected on these endpoints).
+ * full Netscape cookie file re-exported from the browser (token ~30d; the
+ * session cookie dies in ~2h and is auto-renewed via /api/v1/users).
+ * `x-region` here is the actual region selector (the query param is
+ * ignored/rejected on these endpoints).
  */
-function leaderboardHeaders(): Record<string, string> {
-  const cookie = cookieHeader();
+async function leaderboardHeaders(): Promise<Record<string, string>> {
+  const cookie = await effectiveCookieHeader();
   if (!cookie) {
     throw new MissingSourceCredentialsError("echotik", ["ECHOTIK_WEB_COOKIE"]);
   }
   return {
-    ...sessionHeaders(),
+    ...(await sessionHeaders()),
     "Content-Type": "application/json",
     "x-secondary-currency": "CNY",
     "X-User-Id": "",
@@ -219,15 +295,37 @@ async function get(
     if (cached) return cached;
   }
 
-  const res = await fetch(`${BASE}${path}?${query}`, {
-    headers: sessionHeaders(),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) {
+  // Session-gated call: 401/403, HTML error pages, or plan-gate/unauthorized
+  // JSON codes mean the ~2h echotik_session died — renew it (SPA endpoint) and
+  // retry once before surfacing the failure.
+  const doFetch = async (): Promise<{ res: Response; text: string }> => {
+    const res = await fetch(`${BASE}${path}?${query}`, {
+      headers: await sessionHeaders(),
+      signal: AbortSignal.timeout(30_000),
+    });
     const text = await res.text().catch(() => "");
+    return { res, text };
+  };
+  const sessionDead = (status: number, text: string): boolean => {
+    if (status === 401 || status === 403) return true;
+    if (!text.trim().startsWith("{")) return /oops|<!doctype|<!DOCTYPE|html/i.test(text.slice(0, 200));
+    const head = text.slice(0, 400);
+    return /"code":\s*(100004|50001)/.test(head) || /member plan is|Unauthorized user/i.test(head);
+  };
+  let { res, text } = await doFetch();
+  if (sessionDead(res.status, text) && cookieHeader()) {
+    const renewed = await renewEchoTikSession();
+    if (renewed) ({ res, text } = await doFetch());
+  }
+  if (!res.ok) {
     throw new Error(`[echotik-site] ${res.status} ${path}: ${text.slice(0, 200)}`);
   }
-  const json = await res.json();
+  let json: { code?: number; msg?: string; data?: unknown; meta?: Record<string, unknown> };
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new Error(`[echotik-site] ${path}: non-JSON (${res.status}) — ECHOTIK_WEB_COOKIE expired? re-export from browser`);
+  }
   if (json.code !== 0) {
     // 100004 = session unauthorized — cookie missing/expired or plan-gated.
     if (json.code === 100004) {
@@ -975,11 +1073,26 @@ export async function fetchTopCreators(query: TopCreatorsQuery = {}): Promise<Ma
   if (cached) {
     rows = cached;
   } else {
-    const res = await fetch(`${BASE}${path}?${qs}`, {
-      headers: leaderboardHeaders(),
-      signal: AbortSignal.timeout(30_000),
-    });
-    const text = await res.text();
+    const doFetch = async (): Promise<{ res: Response; text: string }> => {
+      const res = await fetch(`${BASE}${path}?${qs}`, {
+        headers: await leaderboardHeaders(),
+        signal: AbortSignal.timeout(30_000),
+      });
+      return { res, text: await res.text() };
+    };
+    let { res, text } = await doFetch();
+    // Same session-death signal as get(): expired ~2h echotik_session re-gates
+    // paid boards as Visitor/Free (code 50001) or HTML 500 — renew + retry once.
+    const sessionDead = (status: number, body: string): boolean => {
+      if (status === 401 || status === 403) return true;
+      if (!body.trim().startsWith("{")) return /oops|<!doctype|<!DOCTYPE|html/i.test(body.slice(0, 200));
+      const head = body.slice(0, 400);
+      return /"code":\s*(100004|50001)/.test(head) || /member plan is|Unauthorized user/i.test(head);
+    };
+    if (sessionDead(res.status, text)) {
+      const renewed = await renewEchoTikSession();
+      if (renewed) ({ res, text } = await doFetch());
+    }
     if (!text.trim().startsWith("{")) {
       throw new Error(
         `[echotik-site] ${path}: non-JSON (${res.status}) — ECHOTIK_WEB_COOKIE expired? re-export from browser`
