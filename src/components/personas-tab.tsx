@@ -187,8 +187,12 @@ export function PersonasTab({
   // text-to-image needed — the refs ARE the person. Server presigns previews.
   const uploadFaces = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    if (files.length > 5) {
-      setGenError("Upload at most 5 photos (2–5 gives the best identity consistency).");
+    // ADDITIVE: uploading again appends to the current set (picking a 3rd
+    // photo must not drop the first two). Cap the TOTAL at 5.
+    const total = genUrls.length + files.length;
+    if (files.length > 5 || total > 5) {
+      setGenError(`That's ${total} photos — keep it to 5 total (2–5 gives the best identity consistency). Remove one first or pick fewer.`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
     setUploadLoading(true);
@@ -202,7 +206,9 @@ export function PersonasTab({
       const prepared = await Promise.all(Array.from(files).map(prepareFaceFile));
       for (const f of prepared) form.append("files", f);
       form.append("workspaceId", workspaceId);
-      if (editing?.id) form.append("personaId", editing.id);
+      // NOTE: no personaId here — uploads only stage refs in the dialog; save()
+      // writes them (with any existing refs preserved). Sending personaId would
+      // replace the persona's refs in the DB with just this batch immediately.
       const res = await fetch("/api/personas/upload-faces", { method: "POST", body: form });
       const text = await res.text();
       let data: { error?: string; urls?: string[]; previewUrls?: string[] } = {};
@@ -214,8 +220,10 @@ export function PersonasTab({
       }
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
       if (!data.urls?.length) throw new Error("No photos were uploaded — try again");
-      setGenUrls(data.urls);
-      setGenPreviewUrls(data.previewUrls?.length ? data.previewUrls : data.urls);
+      setGenUrls((prev) => [...prev, ...data.urls!].slice(0, 5));
+      setGenPreviewUrls((prev) =>
+        [...prev, ...(data.previewUrls?.length ? data.previewUrls : data.urls!)].slice(0, 5)
+      );
       // DeepSeek is text-only — snap back to auto (vision) so the next
       // "Describe from my photos" run actually works.
       if (genModel === "deepseek-chat") setGenModel("auto");
@@ -225,6 +233,11 @@ export function PersonasTab({
       setUploadLoading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  };
+
+  const removeFace = (i: number) => {
+    setGenUrls((prev) => prev.filter((_, idx) => idx !== i));
+    setGenPreviewUrls((prev) => prev.filter((_, idx) => idx !== i));
   };
 
   const save = async () => {
@@ -379,12 +392,23 @@ export function PersonasTab({
               {genUrls.length > 0 && (
                 <div className="grid grid-cols-3 gap-2">
                   {genPreviewUrls.map((u, i) => (
-                    // Generated refs are RAW private Blob URLs — a browser <img>
-                    // 403s on those. The route returns short-lived PRESIGNED
-                    // preview URLs for display; the raw urls are what get saved
-                    // (served later via the /api/personas/[id]/image proxy).
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img key={i} src={u} alt={`face ${i + 1}`} className="aspect-[9/16] w-full rounded-lg object-cover border" />
+                    <div key={i} className="group relative">
+                      {/* Generated refs are RAW private Blob URLs — a browser <img>
+                          // 403s on those. The route returns short-lived PRESIGNED
+                          // preview URLs for display (or persona proxy ?ref=N when
+                          // editing); the raw urls are what get saved (served later
+                          // via the /api/personas/[id]/image proxy). */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={u} alt={`face ${i + 1}`} className="aspect-[9/16] w-full rounded-lg object-cover border" />
+                      <button
+                        type="button"
+                        onClick={() => removeFace(i)}
+                        className="absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white group-hover:flex"
+                        title={`Remove photo ${i + 1}`}
+                      >
+                        ✕
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -483,6 +507,20 @@ export function PersonasTab({
                         setDescription(p.description ?? "");
                         setPersonaPrompt(p.personaPrompt ?? "");
                         setVoiceId(p.voiceId ?? "");
+                        // Seed the photo set from stored refs so re-saving or
+                        // adding more photos PRESERVES them (raw urls kept in
+                        // state; previews served via the persona image proxy
+                        // since raw private Blob URLs 403 in a browser <img>).
+                        const stored = p.faceRefUrls ?? [];
+                        setGenUrls(stored);
+                        setGenPreviewUrls(
+                          stored.length
+                            ? stored.map(
+                                (_, i) =>
+                                  `/api/personas/${p.id}/image?workspaceId=${workspaceId}&ref=${i}`
+                              )
+                            : []
+                        );
                         setOpen(true);
                       }}
                     >
