@@ -374,6 +374,10 @@ function ProductsTab({
   const [manual, setManual] = useState({ name: "", price: "", description: "", imageUrl: "" });
   const [creating, setCreating] = useState(false);
   const [syncingShop, setSyncingShop] = useState(false);
+  // Bulk selection (mass delete) state.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
   // Per-product image view toggle: false = imported image, true = scene render.
   const [sceneView, setSceneView] = useState<Record<string, boolean>>({});
   // Per-product selected scene formula (dropdown on the card).
@@ -523,9 +527,74 @@ function ProductsTab({
     });
     if (res.ok) {
       toast.success("Deleted");
+      setSelectedIds((prev) => {
+        if (!prev.has(product.id)) return prev;
+        const next = new Set(prev);
+        next.delete(product.id);
+        return next;
+      });
       onChanged();
     } else {
       toast.error("Delete failed");
+    }
+  };
+
+  // Only act on selections whose products still exist — sync/delete reloads
+  // can drop products out from under a selection.
+  const liveSelectedIds = useMemo(
+    () => new Set(products.filter((p) => selectedIds.has(p.id)).map((p) => p.id)),
+    [products, selectedIds]
+  );
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () =>
+    setSelectedIds(
+      liveSelectedIds.size === products.length
+        ? new Set()
+        : new Set(products.map((p) => p.id))
+    );
+
+  const handleBulkDelete = async () => {
+    const count = liveSelectedIds.size;
+    if (count === 0) return;
+    const preview = products
+      .filter((p) => liveSelectedIds.has(p.id))
+      .slice(0, 3)
+      .map((p) => `"${p.name}"`)
+      .join(", ");
+    const ellipsis = count > 3 ? ` +${count - 3} more` : "";
+    if (
+      !confirm(
+        `Delete ${count} selected product${count === 1 ? "" : "s"}? This cannot be undone.\n\n${preview}${ellipsis}`
+      )
+    ) {
+      return;
+    }
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/products", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId, ids: [...liveSelectedIds] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Delete failed");
+      const deleted = typeof data.deleted === "number" ? data.deleted : count;
+      toast.success(`Deleted ${deleted} product${deleted === 1 ? "" : "s"}`);
+      setSelectedIds(new Set());
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -627,8 +696,62 @@ function ProductsTab({
         </Card>
       ) : (
         <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-muted/40 px-3 py-2">
+            <label className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={products.length > 0 && liveSelectedIds.size === products.length}
+                onChange={toggleSelectAll}
+                className="h-4 w-4"
+              />
+              Select all
+            </label>
+            <span className="text-xs text-muted-foreground">
+              {products.length} product{products.length === 1 ? "" : "s"}
+            </span>
+            {liveSelectedIds.size > 0 && (
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium">
+                  {liveSelectedIds.size} selected
+                </span>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={bulkDeleting}
+                  onClick={handleBulkDelete}
+                >
+                  {bulkDeleting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Delete selected
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </div>
           {products.map((product) => (
-            <div key={product.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-background p-2.5 transition hover:border-primary/40">
+            <div
+              key={product.id}
+              className={cn(
+                "flex flex-wrap items-center gap-3 rounded-lg border bg-background p-2.5 transition hover:border-primary/40",
+                selectedIds.has(product.id) && "border-primary/60 bg-primary/5"
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.has(product.id)}
+                onChange={() => toggleSelect(product.id)}
+                aria-label={`Select ${product.name}`}
+                className="h-4 w-4 shrink-0 cursor-pointer"
+              />
               <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border bg-zinc-100">
                 {product.originalImageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
