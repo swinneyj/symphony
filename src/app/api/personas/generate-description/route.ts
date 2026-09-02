@@ -133,30 +133,36 @@ export async function POST(request: Request) {
       });
 
     // Picked model first, then the rest of the auto chain as fallback so a bad
-    // pick / quota blip never dead-ends the user.
+    // pick / quota blip never dead-ends the user. Every model gets a shot —
+    // a 4xx on one provider (e.g. Gemini rejecting an image part shape) must
+    // fall through to the next, not abort the chain.
     const defaultChain = hasPhotos ? VISION_CHAIN : TEXT_CHAIN;
     const chain = pickedModel
       ? [pickedModel, ...defaultChain.filter((m) => m !== pickedModel)]
       : defaultChain;
     let res: Awaited<ReturnType<typeof attempt>> | null = null;
+    let lastErr = "";
     for (const model of chain) {
       const client = clientForModel(model);
-      if (!client) continue; // key for this provider not configured
+      if (!client) {
+        lastErr = `${model}: API key not configured`;
+        continue; // key for this provider not configured
+      }
       try {
         res = await attempt(client, model);
         if (res) break;
       } catch (err) {
         const status = (err as { status?: number })?.status;
-        console.warn(`[personas] generate-description ${model} failed (${status ?? "?"}): ${(err as Error).message?.slice(0, 200)}`);
-        // Auth/validation errors won't fix themselves down-chain; quota/5xx will.
-        if (status !== undefined && status !== 429 && status < 500) break;
+        const msg = (err as Error).message?.slice(0, 300) ?? String(err);
+        lastErr = `${model} (${status ?? "?"}): ${msg}`;
+        console.warn(`[personas] generate-description ${model} failed: ${lastErr}`);
       }
     }
 
     const raw = res?.choices?.[0]?.message?.content ?? "";
     if (!raw.trim()) {
       return NextResponse.json(
-        { error: "AI generation is unavailable right now — no model responded. Check that GEMINI_API_KEY is set on the deployment." },
+        { error: `AI generation is unavailable right now — every model failed. Last error: ${lastErr || "no model configured"}` },
         { status: 502 }
       );
     }
