@@ -126,6 +126,11 @@ async function tick() {
 
     console.log(`[video-worker] claiming ${jobs.length} job(s)`);
     await Promise.allSettled(jobs.map(processJob));
+    // Chained jobs (scene_render → footage → batch_video) are INSERTed while
+    // we process — the KV gate was already cleared, so a gated next poll would
+    // starve them until GATE_MAX_SKIP_MS. Reset lastDbPollAt so the next tick
+    // bypasses the gate and picks up anything the processors enqueued.
+    lastDbPollAt = 0;
   } catch (error) {
     console.error("[video-worker] tick error:", error);
   }
