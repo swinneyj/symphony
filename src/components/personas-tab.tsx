@@ -100,7 +100,15 @@ export function PersonasTab({
       const res = await fetch("/api/personas/generate-description", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspaceId, name: name.trim(), model: genModel === "auto" ? undefined : genModel }),
+        body: JSON.stringify({
+          workspaceId,
+          name: name.trim(),
+          model: genModel === "auto" ? undefined : genModel,
+          // When the creator uploaded their own photos ("clone me" path), the
+          // AI must describe the REAL person in them — not invent one from the
+          // name. Sending the raw urls lets the server presign + vision-analyze.
+          ...(genUrls.length > 0 ? { photoUrls: genUrls } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Generation failed");
@@ -158,6 +166,9 @@ export function PersonasTab({
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
       setGenUrls(data.urls);
       setGenPreviewUrls(data.previewUrls?.length ? data.previewUrls : data.urls);
+      // DeepSeek is text-only — snap back to auto (vision) so the next
+      // "Describe from my photos" run actually works.
+      if (genModel === "deepseek-chat") setGenModel("auto");
     } catch (e) {
       setGenError((e as Error).message);
     } finally {
@@ -253,9 +264,11 @@ export function PersonasTab({
                       className="h-6 rounded-md border border-input bg-background px-1.5 text-[11px]"
                       title="Which model powers the AI generation"
                     >
-                      <option value="auto">Auto (Gemini, free)</option>
+                      <option value="auto">{genUrls.length > 0 ? "Auto (Gemini vision)" : "Auto (Gemini, free)"}</option>
                       <option value="gemini-3.6-flash">Gemini Flash</option>
-                      <option value="deepseek-chat">DeepSeek</option>
+                      <option value="deepseek-chat" disabled={genUrls.length > 0}>
+                        {genUrls.length > 0 ? "DeepSeek (text-only)" : "DeepSeek"}
+                      </option>
                       <option value="gpt-4o-mini">GPT-4o mini</option>
                     </select>
                     <Button
@@ -265,12 +278,22 @@ export function PersonasTab({
                       className="h-6 px-2 text-[11px]"
                       onClick={generateDescription}
                       disabled={descLoading}
+                      title={
+                        genUrls.length > 0
+                          ? "Describes the person in your uploaded photos — not an AI-invented persona"
+                          : "Generates a face description from the name"
+                      }
                     >
                       <Sparkles className="h-3 w-3 mr-1" />
-                      {descLoading ? "Writing…" : "Generate with AI"}
+                      {descLoading ? "Writing…" : genUrls.length > 0 ? "✨ Describe from my photos" : "Generate with AI"}
                     </Button>
                   </div>
                 </div>
+                {genUrls.length > 0 && (
+                  <p className="-mt-1 mb-1 text-[11px] text-muted-foreground">
+                    Photos attached — AI describes the real person in them. Edit the text afterwards if needed.
+                  </p>
+                )}
                 <Textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
