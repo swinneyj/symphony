@@ -65,7 +65,11 @@ export async function GET(
       try {
         const token = blobToken();
         if (!token) return new Response("Blob token missing", { status: 500 });
-        const pathname = new URL(url).pathname;
+        // Strip the leading slash — new URL().pathname returns "/path" but
+        // presignUrl appends its own "/" → "//path" 404s (VERIFIED 2026-09-02,
+        // scripts/probes/presign-fix-probe.mjs). Use presignBlobGet instead of
+        // this inline copy where possible.
+        const pathname = new URL(url).pathname.replace(/^\//, "");
         const signed = await issueSignedToken({
           token,
           pathname,

@@ -64,18 +64,17 @@ async function generateFaceImage(
   const part = data.candidates?.[0]?.content?.parts?.[0];
   if (!part) throw new Error("gemini face image: empty response");
 
-  if (part.fileData?.fileUri) return part.fileData.fileUri;
+  // NOTE: whatever Gemini returns (inline base64 or a files API URI) we store
+  // into OUR private Blob store, so every URL returned here is a raw private
+  // Blob URL. Raw private URLs do NOT render in a browser <img> (403 without
+  // Bearer) — the generate-face ROUTE presigns short-lived preview URLs for
+  // the dialog, and the DB keeps these raw urls for the persona image proxy
+  // (/api/personas/[id]/image) to serve long-term with the Bearer token.
+  // See lib/blob-presign.ts for the verified 403-vs-200 evidence.
+  const { put } = await import("@vercel/blob");
 
   if (part.inlineData?.data) {
-    const { put } = await import("@vercel/blob");
     const imgBuf = Buffer.from(part.inlineData.data, "base64");
-    // Private: the Blob store is configured with private access — `put` with
-    // access:"public" is rejected by Vercel ("Cannot use public access on a
-    // private store"). put() returns a SIGNED private URL that still renders
-    // in the raw <img> of the create-dialog preview (no persona row exists to
-    // proxy yet), and once attached to a persona the image proxy
-    // (/api/personas/[id]/image) streams the stored URL with the Bearer token.
-    // Videos/voice remain private too.
     const { url } = await put(`persona-faces/${seedHint}-${Date.now()}.png`, imgBuf, {
       access: "private",
       contentType: part.inlineData.mimeType ?? "image/png",
@@ -83,13 +82,28 @@ async function generateFaceImage(
     });
     return url;
   }
+
+  if (part.fileData?.fileUri) {
+    // Gemini files API URI (large outputs) — download it with the API key and
+    // re-store into our private Blob so it stays behind the persona proxy.
+    const fileRes = await fetch(part.fileData.fileUri, {
+      headers: { "x-goog-api-key": key },
+    });
+    if (!fileRes.ok) {
+      throw new Error(`gemini face fileData download failed: ${fileRes.status}`);
+    }
+    const imgBuf = Buffer.from(await fileRes.arrayBuffer());
+    const { url } = await put(`persona-faces/${seedHint}-${Date.now()}.png`, imgBuf, {
+      access: "private",
+      contentType: fileRes.headers.get("content-type") ?? "image/png",
+      token: blobToken(),
+    });
+    return url;
+  }
+
   throw new Error("gemini face image: no image in response");
 }
 
-/**
- * Generates `count` (1–5, default 3) Nano Banana face images from a text
- * description. Returns private Blob URLs + the estimated media cost.
- */
 export async function generatePersonaFaces(
   description: string,
   count: number,

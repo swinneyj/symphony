@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Sparkles, Pencil, Trash2, Plus } from "lucide-react";
+import { Sparkles, Pencil, Trash2, Plus, Upload } from "lucide-react";
 export interface Persona {
   id: string;
   workspaceId: string | null;
@@ -50,7 +50,14 @@ export function PersonasTab({
   // AI face generation state
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+  // Raw private Blob URLs — what gets SAVED to the persona (served later via
+  // the /api/personas/[id]/image Bearer proxy).
   const [genUrls, setGenUrls] = useState<string[]>([]);
+  // Short-lived PRESIGNED URLs for <img> preview — raw private URLs 403 in a
+  // browser (see lib/blob-presign.ts). Mirrors data.urls vs data.previewUrls.
+  const [genPreviewUrls, setGenPreviewUrls] = useState<string[]>([]);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [descLoading, setDescLoading] = useState(false);
   const [genModel, setGenModel] = useState("auto");
   const [editing, setEditing] = useState<Persona | null>(null);
@@ -61,6 +68,7 @@ export function PersonasTab({
     setPersonaPrompt("");
     setVoiceId("");
     setGenUrls([]);
+    setGenPreviewUrls([]);
     setGenError(null);
     setGenModel("auto");
     setEditing(null);
@@ -110,10 +118,40 @@ export function PersonasTab({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Generation failed");
       setGenUrls(data.urls);
+      setGenPreviewUrls(data.previewUrls?.length ? data.previewUrls : data.urls);
     } catch (e) {
       setGenError((e as Error).message);
     } finally {
       setGenLoading(false);
+    }
+  };
+
+  // Upload 1–5 selfies/photos of a real person → private Blob → the persona's
+  // face refs (identity anchor for scene renders). The "clone me" path: no AI
+  // text-to-image needed — the refs ARE the person. Server presigns previews.
+  const uploadFaces = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    if (files.length > 5) {
+      setGenError("Upload at most 5 photos (2–5 gives the best identity consistency).");
+      return;
+    }
+    setUploadLoading(true);
+    setGenError(null);
+    try {
+      const form = new FormData();
+      for (const f of Array.from(files)) form.append("files", f);
+      form.append("workspaceId", workspaceId);
+      if (editing?.id) form.append("personaId", editing.id);
+      const res = await fetch("/api/personas/upload-faces", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      setGenUrls(data.urls);
+      setGenPreviewUrls(data.previewUrls?.length ? data.previewUrls : data.urls);
+    } catch (e) {
+      setGenError((e as Error).message);
+    } finally {
+      setUploadLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -218,18 +256,37 @@ export function PersonasTab({
                 />
               </div>
               <div className="flex items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={generateFaces} disabled={genLoading}>
+                <Button type="button" variant="outline" size="sm" onClick={generateFaces} disabled={genLoading || uploadLoading}>
                   <Sparkles className="h-4 w-4 mr-1.5" />
-                  {genLoading ? "Generating…" : genUrls.length > 0 ? "Regenerate faces" : "✨ Generate face with AI"}
+                  {genLoading ? "Generating…" : genUrls.length > 0 ? "Regenerate with AI" : "✨ Generate face with AI"}
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={genLoading || uploadLoading}
+                >
+                  <Upload className="h-4 w-4 mr-1.5" />
+                  {uploadLoading ? "Uploading…" : "📷 Upload my photos"}
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => uploadFaces(e.target.files)}
+                />
                 {genError && <span className="text-xs text-destructive">{genError}</span>}
               </div>
               {genUrls.length > 0 && (
                 <div className="grid grid-cols-3 gap-2">
-                  {genUrls.map((u, i) => (
-                    // Generated refs are private Blob URLs — the persona proxy
-                    // serves them, but during creation they're new (no persona
-                    // row yet), so show them via the raw URL fallback.
+                  {genPreviewUrls.map((u, i) => (
+                    // Generated refs are RAW private Blob URLs — a browser <img>
+                    // 403s on those. The route returns short-lived PRESIGNED
+                    // preview URLs for display; the raw urls are what get saved
+                    // (served later via the /api/personas/[id]/image proxy).
                     // eslint-disable-next-line @next/next/no-img-element
                     <img key={i} src={u} alt={`face ${i + 1}`} className="aspect-[9/16] w-full rounded-lg object-cover border" />
                   ))}
