@@ -31,6 +31,43 @@ interface Voice {
   provider: string;
 }
 
+/**
+ * Downscale/compress an uploaded face photo so N photos fit under Vercel's
+ * serverless request-body cap (~4.5MB). Face refs are identity anchors for
+ * renders — 1280px JPEG (q0.82) is plenty and lands ~150–400KB each.
+ * If the file is already small or can't be decoded, pass it through untouched
+ * (server-side size validation still applies).
+ */
+async function prepareFaceFile(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") || file.size < 300 * 1024) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxDim = 1280;
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.82)
+    );
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
+      type: "image/jpeg",
+    });
+  } catch {
+    return file; // not decodable here — let the server decide
+  }
+}
+
 export function PersonasTab({
   workspaceId,
   personas,
@@ -158,12 +195,25 @@ export function PersonasTab({
     setGenError(null);
     try {
       const form = new FormData();
-      for (const f of Array.from(files)) form.append("files", f);
+      // Phone photos are 2–6MB each; Vercel's serverless body cap (~4.5MB for
+      // the whole request) rejects 3+ raw photos with a non-JSON 413 before our
+      // route even runs. Downscale to ≤1280px JPEG (~200–400KB) — face refs
+      // only need ~1MP for identity anchoring in renders.
+      const prepared = await Promise.all(Array.from(files).map(prepareFaceFile));
+      for (const f of prepared) form.append("files", f);
       form.append("workspaceId", workspaceId);
       if (editing?.id) form.append("personaId", editing.id);
       const res = await fetch("/api/personas/upload-faces", { method: "POST", body: form });
-      const data = await res.json();
+      const text = await res.text();
+      let data: { error?: string; urls?: string[]; previewUrls?: string[] } = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        // Non-JSON body (e.g. platform 413 "Request Entity Too Large")
+        throw new Error(`Upload failed (HTTP ${res.status}). Try fewer or smaller photos.`);
+      }
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      if (!data.urls?.length) throw new Error("No photos were uploaded — try again");
       setGenUrls(data.urls);
       setGenPreviewUrls(data.previewUrls?.length ? data.previewUrls : data.urls);
       // DeepSeek is text-only — snap back to auto (vision) so the next
