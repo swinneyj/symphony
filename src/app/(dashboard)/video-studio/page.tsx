@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -2327,6 +2327,50 @@ interface MarketRow {
   metadata?: Record<string, unknown>;
 }
 
+// ── Drill filter bar (influencer drill: server + client filters) ───────────
+interface DrillFilterState {
+  /** "" = all; else an L1 category id from the filters route. Server-side. */
+  categoryId: string;
+  /** Server-side keyword search within the creator's products. */
+  keyword: string;
+  /** Client-side price band over loaded rows (priceMin). */
+  priceMin: string;
+  priceMax: string;
+  /** Client-side date band over loaded rows (create_time, YYYY-MM-DD). */
+  dateFrom: string;
+  dateTo: string;
+  /** all = server default · top = server sales sort · new = client created-desc. */
+  tab: "all" | "top" | "new";
+}
+interface DrillMeta {
+  page: number;
+  perPage: number;
+  total: number;
+  lastPage: number;
+}
+interface DrillCategory {
+  id: string;
+  name: string;
+  count: number;
+}
+const DRILL_DEFAULT_FILTER: DrillFilterState = {
+  categoryId: "",
+  keyword: "",
+  priceMin: "",
+  priceMax: "",
+  dateFrom: "",
+  dateTo: "",
+  tab: "all",
+};
+/** drillSort → EchoTik order key (all verified live 2026-09-02). */
+const DRILL_ORDER_KEYS: Record<string, string> = {
+  default: "",
+  sales: "total_sale_cnt",
+  gmv: "total_gmv_amt",
+  videos: "videos_count",
+  price: "avg_price",
+};
+
 // ── White-background detection (client-side canvas check, $0 API cost) ─────
 // Product covers live on cdn.echotik.live which sends `access-control-allow-
 // origin: *` (verified 2026-09-01) so a canvas pixel read is safe. Cached
@@ -3277,8 +3321,17 @@ function MarketTab({
   const [drillBulkAdopting, setDrillBulkAdopting] = useState(false);
   const [drillWhiteBgOnly, setDrillWhiteBgOnly] = useState(false);
   const [drillAdoptedIds, setDrillAdoptedIds] = useState<string[]>([]);
-  // ── Drill sort (GMV-first by default — pick the winners) ──
-  const [drillSort, setDrillSort] = useState<"gmv" | "sales" | "rank">("gmv");
+  // ── Drill sort (server-side: the EchoTik API sorts, we paginate) ──
+  const [drillSort, setDrillSort] = useState<"default" | "sales" | "gmv" | "videos" | "price">("default");
+  // ── Drill filter bar (per-drill server + client filters) ──
+  const [drillFilters, setDrillFilters] = useState<Record<string, DrillFilterState>>({});
+  const [drillMeta, setDrillMeta] = useState<Record<string, DrillMeta>>({});
+  const [drillCategories, setDrillCategories] = useState<Record<string, DrillCategory[]>>({});
+  const [drillLoadingMore, setDrillLoadingMore] = useState<string | null>(null);
+  const [drillExporting, setDrillExporting] = useState<string | null>(null);
+  // keyword draft per drill (applied to the server on debounce/Enter)
+  const drillKeywordDraftRef = useRef<Record<string, string>>({});
+  const drillKeywordTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   // ── Batch quick-create (scene pick + videos per product) ──
   const [drillSceneFormulaId, setDrillSceneFormulaId] = useState("");
   const [drillVideosPerProduct, setDrillVideosPerProduct] = useState(1);
@@ -3393,44 +3446,6 @@ function MarketTab({
     productId: p.productId ? String(p.productId) : null,
     metadata: (p.metadata as Record<string, unknown> | undefined) ?? undefined,
   });
-
-  /** Drill into an influencer's or shop's products (rows from live API). */
-  const drillProducts = async (kind: "influencer" | "shop", id: string) => {
-    const key = `${kind}:${id}`;
-    if (drillResults[key]) {
-      setDrillResults((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-      return;
-    }
-    setDrillLoading(key);
-    try {
-      const url =
-        kind === "influencer"
-          ? `/api/market/products/influencer-products?workspaceId=${workspaceId}&influencerId=${id}`
-          : `/api/market/products/seller-products?workspaceId=${workspaceId}&sellerId=${id}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load products");
-      const rows: MarketRow[] = (data.products ?? []).map(mapLiveRow);
-      setDrillResults((prev) => ({ ...prev, [key]: rows }));
-      if (data.notice) setSearchNotice(data.notice);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "Failed to load products";
-      if (isEchoTikPlanGate(msg)) {
-        setSearchNotice(
-          "EchoTik plan gate: this session can't view creator product lists (Visitor tier). " +
-            "Re-export the cookie from a paid, logged-in EchoTik browser — see Settings → Market."
-        );
-      } else {
-        toast.error(msg);
-      }
-    } finally {
-      setDrillLoading(null);
-    }
-  };
 
   /** EchoTik's "paid feature on a visitor session" errors — surface friendly, not a raw toast. */
   const isEchoTikPlanGate = (msg: string) =>
@@ -3618,15 +3633,229 @@ function MarketTab({
     }
   };
 
-  /** GMV-first ordering for the drill gallery (user: sort by highest GMV sales). */
-  const sortDrillRows = (rows: MarketRow[]): MarketRow[] => {
-    if (drillSort === "rank") return rows;
-    const key = drillSort === "gmv" ? "gmv30d" : "sales30d";
-    return [...rows].sort((a, b) => {
-      const av = a[key] ?? 0;
-      const bv = b[key] ?? 0;
-      return bv - av;
-    });
+  /**
+   * Ordering for the drill gallery. Influencer drills are server-sorted
+   * (drillSort → order=…); the "new" tab re-sorts client-side by create_time.
+   * Shop drills keep the old client-side GMV-first default.
+   */
+  const sortDrillRows = (key: string, rows: MarketRow[]): MarketRow[] => {
+    if (key.startsWith("influencer:")) return rows; // server already sorted
+    return [...rows].sort((a, b) => (b.gmv30d ?? 0) - (a.gmv30d ?? 0));
+  };
+
+  /** create_time from the raw row (YYYY-MM-DD HH:MM:SS, string-comparable). */
+  const drillCreatedAt = (p: MarketRow): string =>
+    String((p.metadata as Record<string, unknown> | undefined)?.createdAt ?? "");
+
+  /** Client-side filters (price band, date band, "new" tab) over loaded rows. */
+  const applyDrillFilters = (key: string, rows: MarketRow[]): MarketRow[] => {
+    const f = drillFilters[key] ?? DRILL_DEFAULT_FILTER;
+    let out = rows;
+    if (f.priceMin) {
+      const lo = Number(f.priceMin);
+      out = out.filter((p) => (p.priceMin ?? p.priceMax ?? 0) >= lo);
+    }
+    if (f.priceMax) {
+      const hi = Number(f.priceMax);
+      out = out.filter((p) => (p.priceMin ?? p.priceMax ?? 0) <= hi);
+    }
+    if (f.dateFrom) out = out.filter((p) => drillCreatedAt(p) >= f.dateFrom);
+    if (f.dateTo) out = out.filter((p) => drillCreatedAt(p) <= `${f.dateTo} 23:59:59`);
+    if (f.tab === "new") {
+      out = [...out].sort((a, b) => drillCreatedAt(b).localeCompare(drillCreatedAt(a)));
+    }
+    return out;
+  };
+
+  /** Fetch one page of an influencer drill with the current filter state. */
+  const fetchDrillPage = async (
+    key: string,
+    page: number,
+    append: boolean,
+    filterOverride?: DrillFilterState
+  ) => {
+    const [, id] = key.split(":");
+    // React state is async — callers pass the just-computed filter explicitly
+    // so this never reads the stale pre-change value from the closure.
+    const f = filterOverride ?? drillFilters[key] ?? DRILL_DEFAULT_FILTER;
+    const url =
+      `/api/market/products/influencer-products?workspaceId=${workspaceId}&influencerId=${id}` +
+      `&page=${page}&perPage=24&order=${DRILL_ORDER_KEYS[drillSort] ?? ""}&sort=desc` +
+      (f.tab === "top" ? "&order=total_sale_cnt" : "") +
+      (f.categoryId ? `&categories=${encodeURIComponent(f.categoryId)}` : "") +
+      (f.keyword ? `&keyword=${encodeURIComponent(f.keyword.trim())}` : "");
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Failed to load products");
+    const rows: MarketRow[] = (data.products ?? []).map(mapLiveRow);
+    setDrillResults((prev) =>
+      append ? { ...prev, [key]: [...(prev[key] ?? []), ...rows] } : { ...prev, [key]: rows }
+    );
+    setDrillMeta((prev) => ({
+      ...prev,
+      [key]: {
+        page: Number(data.page ?? page),
+        perPage: Number(data.perPage ?? 24),
+        total: Number(data.total ?? rows.length),
+        lastPage: Number(data.lastPage ?? page),
+      },
+    }));
+    if (data.notice) setSearchNotice(data.notice);
+  };
+
+  /** Open/close an influencer/shop drill (toggle). */
+  const drillProducts = async (kind: "influencer" | "shop", id: string) => {
+    const key = `${kind}:${id}`;
+    if (drillResults[key]) {
+      setDrillResults((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    setDrillLoading(key);
+    try {
+      if (kind === "influencer") {
+        setDrillFilters((prev) => ({ ...prev, [key]: { ...DRILL_DEFAULT_FILTER } }));
+        setDrillMeta((prev) => ({ ...prev, [key]: { page: 1, perPage: 24, total: 0, lastPage: 1 } }));
+        // categories once per drill (cached server-side 6h)
+        fetch(`/api/market/products/influencer-filters?workspaceId=${workspaceId}&influencerId=${id}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d && setDrillCategories((prev) => ({ ...prev, [key]: d.categories ?? [] })))
+          .catch(() => {});
+        await fetchDrillPage(key, 1, false);
+      } else {
+        const url = `/api/market/products/seller-products?workspaceId=${workspaceId}&sellerId=${id}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed to load products");
+        const rows: MarketRow[] = (data.products ?? []).map(mapLiveRow);
+        setDrillResults((prev) => ({ ...prev, [key]: rows }));
+        if (data.notice) setSearchNotice(data.notice);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Failed to load products";
+      if (isEchoTikPlanGate(msg)) {
+        setSearchNotice(
+          "EchoTik plan gate: this session can't view creator product lists (Visitor tier). " +
+            "Re-export the cookie from a paid, logged-in EchoTik browser — see Settings → Market."
+        );
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setDrillLoading(null);
+    }
+  };
+
+  /** Server-side filter change (category/keyword/tab-top/sort) → reload page 1. */
+  const setDrillServerFilter = (key: string, patch: Partial<DrillFilterState>) => {
+    const next = { ...(drillFilters[key] ?? DRILL_DEFAULT_FILTER), ...patch };
+    setDrillFilters((prev) => ({ ...prev, [key]: next }));
+    void fetchDrillPage(key, 1, false, next).catch((e) =>
+      toast.error(e instanceof Error ? e.message : "Filter failed")
+    );
+  };
+
+  const commitDrillKeyword = (key: string) => {
+    const kw = (drillKeywordDraftRef.current[key] ?? "").trim();
+    const next = { ...(drillFilters[key] ?? DRILL_DEFAULT_FILTER), keyword: kw };
+    setDrillFilters((prev) => ({ ...prev, [key]: next }));
+    void fetchDrillPage(key, 1, false, next).catch(() => {});
+  };
+
+  /** Sort change applies to every open influencer drill. */
+  const changeDrillSort = (next: "default" | "sales" | "gmv" | "videos" | "price") => {
+    setDrillSort(next);
+    for (const key of Object.keys(drillResults)) {
+      if (key.startsWith("influencer:")) {
+        void fetchDrillPage(key, 1, false).catch(() => {});
+      }
+    }
+  };
+
+  /** Append the next page (load more). */
+  const loadMoreDrill = async (key: string) => {
+    const meta = drillMeta[key];
+    if (!meta || drillLoadingMore === key) return;
+    setDrillLoadingMore(key);
+    try {
+      await fetchDrillPage(key, meta.page + 1, true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Load more failed");
+    } finally {
+      setDrillLoadingMore(null);
+    }
+  };
+
+  /** ZIP download: selected rows if any are checked, else all visible rows. */
+  const downloadDrillZip = async (key: string) => {
+    setDrillExporting(key);
+    try {
+      const visible = applyDrillFilters(key, sortDrillRows(key, drillResults[key] ?? []));
+      const sel = drillSelected[key] ?? [];
+      const pick = sel.length
+        ? visible.filter((p) => sel.includes(p.sourceProductId))
+        : visible;
+      const urls = pick
+        .map((p) => p.imageUrl)
+        .filter((u): u is string => !!u)
+        .slice(0, 100);
+      if (urls.length === 0) {
+        toast.error("No product images to download");
+        return;
+      }
+      const res = await fetch("/api/market/products/export-zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          urls,
+          productIds: pick.slice(0, 100).map((p) => p.sourceProductId),
+          influencerId: key.startsWith("influencer:") ? key.slice("influencer:".length) : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? "Export failed");
+      }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `products-${key.replace(":", "-")}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast.success(`Downloaded ${pick.length} image${pick.length === 1 ? "" : "s"}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Download failed");
+    } finally {
+      setDrillExporting(null);
+    }
+  };
+
+  /** CSV of the currently visible (filtered) rows. */
+  const exportDrillCsv = (key: string) => {
+    const visible = applyDrillFilters(key, sortDrillRows(key, drillResults[key] ?? []));
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const header = ["Product", "Price", "Sales", "GMV", "Commission", "Category", "Created", "Image URL"];
+    const lines = visible.map((p) =>
+      [
+        esc(p.name),
+        esc(p.priceMin ?? ""),
+        esc(p.sales30d ?? ""),
+        esc(p.gmv30d ?? ""),
+        esc(p.commissionRate != null ? `${(p.commissionRate * 100).toFixed(0)}%` : ""),
+        esc(p.categoryL1 ?? ""),
+        esc(drillCreatedAt(p)),
+        esc(p.imageUrl ?? ""),
+      ].join(",")
+    );
+    const blob = new Blob([[header.join(","), ...lines].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `products-${key.replace(":", "-")}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
 
   const loadWatched = useCallback(async () => {
@@ -4236,41 +4465,95 @@ function MarketTab({
             </div>
 
             {/* Drill-down products (influencer / shop) */}
-            {Object.entries(drillResults).map(([key, prows]) => (
+            {Object.entries(drillResults).map(([key, prows]) => {
+              const isInfluencer = key.startsWith("influencer:");
+              const f = drillFilters[key] ?? DRILL_DEFAULT_FILTER;
+              const meta = drillMeta[key];
+              const cats = drillCategories[key] ?? [];
+              const visible = applyDrillFilters(key, sortDrillRows(key, prows));
+              const selCount = (drillSelected[key] ?? []).length;
+              const totalShown = meta?.total ?? prows.length;
+              return (
               <div key={key} className="border-t">
                 <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                   <p className="text-xs font-medium text-muted-foreground">
-                    {key.startsWith("influencer:") ? "Influencer's products" : "Shop's products"} ({prows.length})
+                    {isInfluencer ? "Influencer's products" : "Shop's products"} ({totalShown}
+                    {meta && meta.total > prows.length ? ` · loaded ${prows.length}` : ""})
                     {drillWhiteBgOnly ? " · white bg only" : ""}
+                    {f.priceMin || f.priceMax || f.dateFrom || f.dateTo
+                      ? ` · showing ${visible.length}` : ""}
                   </p>
                   <div className="flex flex-wrap items-center gap-1">
-                    <select
-                      value={drillSort}
-                      onChange={(e) => setDrillSort(e.target.value as "gmv" | "sales" | "rank")}
-                      className="h-7 rounded-md border bg-background px-1.5 text-xs"
-                      title="Sort by performance"
-                    >
-                      <option value="gmv">Sort: GMV</option>
-                      <option value="sales">Sort: Sales</option>
-                      <option value="rank">Sort: Default</option>
-                    </select>
-                    {key.startsWith("influencer:") && (
+                    {isInfluencer && (
+                      <>
+                        <select
+                          value={drillSort}
+                          onChange={(e) => changeDrillSort(e.target.value as typeof drillSort)}
+                          className="h-7 rounded-md border bg-background px-1.5 text-xs"
+                          title="Server-side sort (EchoTik API)"
+                        >
+                          <option value="default">Sort: Default</option>
+                          <option value="sales">Sort: Top Sold</option>
+                          <option value="gmv">Sort: GMV</option>
+                          <option value="videos">Sort: Videos</option>
+                          <option value="price">Sort: Price</option>
+                        </select>
+                        <select
+                          value={f.categoryId}
+                          onChange={(e) => setDrillServerFilter(key, { categoryId: e.target.value })}
+                          className="h-7 max-w-[190px] rounded-md border bg-background px-1.5 text-xs"
+                          title="Category (server-side)"
+                        >
+                          <option value="">All categories</option>
+                          {cats.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.count ? ` (${c.count})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          defaultValue={f.keyword}
+                          placeholder="Search…"
+                          onChange={(e) => {
+                            drillKeywordDraftRef.current[key] = e.target.value;
+                            if (drillKeywordTimerRef.current[key]) clearTimeout(drillKeywordTimerRef.current[key]);
+                            drillKeywordTimerRef.current[key] = setTimeout(() => commitDrillKeyword(key), 600);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              if (drillKeywordTimerRef.current[key]) clearTimeout(drillKeywordTimerRef.current[key]);
+                              commitDrillKeyword(key);
+                            }
+                          }}
+                          className="h-7 w-28 rounded-md border bg-background px-1.5 text-xs"
+                          title="Search within this creator's products (server-side)"
+                        />
+                      </>
+                    )}
+                    {isInfluencer && (
                       <Button
                         size="sm"
-                        variant={recentFor === key ? "secondary" : "outline"}
-                        disabled={recentLoading}
-                        onClick={() => void pullRecent("influencer", key.slice("influencer:".length), key)}
-                        title="What they've pushed in the last 14 days (from their recent videos)"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() =>
+                          setDrillFilters((prev) => ({
+                            ...prev,
+                            [key]: { ...(prev[key] ?? DRILL_DEFAULT_FILTER), tab: f.tab === "new" ? "all" : "new" },
+                          }))
+                        }
+                        title={f.tab === "new" ? "Back to default order" : "Newest products first (by publish date)"}
                       >
-                        {recentLoading && recentFor === key ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Clock className="h-3.5 w-3.5" />
-                        )}
-                        {recentFor === key ? "Hide recent" : "Last 14 days"}
+                        {f.tab === "new" ? "✕ New" : "New"}
                       </Button>
                     )}
-                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => selectAllDrill(key, prows)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => selectAllDrill(key, visible)}
+                      title="Select all visible (filtered) products"
+                    >
                       All
                     </Button>
                     <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => clearDrill(key)}>
@@ -4286,17 +4569,110 @@ function MarketTab({
                       <ImageIcon className="h-3 w-3" />
                       WB only
                     </Button>
-                    <Button size="sm" onClick={() => void bulkAddDrill(key)} disabled={drillBulkAdopting || (drillSelected[key] ?? []).length === 0}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 px-2 text-xs"
+                      onClick={() => exportDrillCsv(key)}
+                      title="Download the visible products as CSV"
+                    >
+                      <Download className="h-3 w-3" />
+                      CSV
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 px-2 text-xs"
+                      disabled={drillExporting === key}
+                      onClick={() => void downloadDrillZip(key)}
+                      title={selCount ? `Download ${selCount} selected image(s) as ZIP` : "Download all visible images as ZIP (white-bg filter applies)"}
+                    >
+                      {drillExporting === key ? <Loader2 className="h-3 w-3 animate-spin" /> : <SlidersHorizontal className="h-3 w-3" />}
+                      ZIP{selCount ? ` (${selCount})` : ""}
+                    </Button>
+                    {isInfluencer && (
+                      <Button
+                        size="sm"
+                        variant={recentFor === key ? "secondary" : "outline"}
+                        disabled={recentLoading}
+                        onClick={() => void pullRecent("influencer", key.slice("influencer:".length), key)}
+                        title="What they've pushed in the last 14 days (from their recent videos)"
+                      >
+                        {recentLoading && recentFor === key ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Clock className="h-3.5 w-3.5" />
+                        )}
+                        {recentFor === key ? "Hide recent" : "Last 14 days"}
+                      </Button>
+                    )}
+                    <Button size="sm" onClick={() => void bulkAddDrill(key)} disabled={drillBulkAdopting || selCount === 0}>
                       {drillBulkAdopting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                      Add {(drillSelected[key] ?? []).length || 0} to Products
+                      Add {selCount || 0} to Products
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setDrillResults((prev) => { const n = { ...prev }; delete n[key]; return n; })}>
                       Close
                     </Button>
                   </div>
                 </div>
+                {isInfluencer && (
+                  <div className="flex flex-wrap items-center gap-1.5 px-3 pb-1">
+                    <span className="text-[11px] text-muted-foreground">Price:</span>
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder="Min $"
+                      value={f.priceMin}
+                      onChange={(e) =>
+                        setDrillFilters((prev) => ({ ...prev, [key]: { ...(prev[key] ?? DRILL_DEFAULT_FILTER), priceMin: e.target.value } }))
+                      }
+                      className="h-7 w-20 rounded-md border bg-background px-1.5 text-xs"
+                    />
+                    <span className="text-[11px] text-muted-foreground">–</span>
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder="Max $"
+                      value={f.priceMax}
+                      onChange={(e) =>
+                        setDrillFilters((prev) => ({ ...prev, [key]: { ...(prev[key] ?? DRILL_DEFAULT_FILTER), priceMax: e.target.value } }))
+                      }
+                      className="h-7 w-20 rounded-md border bg-background px-1.5 text-xs"
+                    />
+                    <span className="ml-1 text-[11px] text-muted-foreground">Created:</span>
+                    <input
+                      type="date"
+                      value={f.dateFrom}
+                      onChange={(e) =>
+                        setDrillFilters((prev) => ({ ...prev, [key]: { ...(prev[key] ?? DRILL_DEFAULT_FILTER), dateFrom: e.target.value } }))
+                      }
+                      className="h-7 rounded-md border bg-background px-1.5 text-xs"
+                    />
+                    <span className="text-[11px] text-muted-foreground">–</span>
+                    <input
+                      type="date"
+                      value={f.dateTo}
+                      onChange={(e) =>
+                        setDrillFilters((prev) => ({ ...prev, [key]: { ...(prev[key] ?? DRILL_DEFAULT_FILTER), dateTo: e.target.value } }))
+                      }
+                      className="h-7 rounded-md border bg-background px-1.5 text-xs"
+                    />
+                  </div>
+                )}
+                {isInfluencer && (f.priceMin || f.priceMax || f.dateFrom || f.dateTo) && (
+                  <div className="flex flex-wrap items-center gap-2 px-3 pb-1">
+                    <span className="text-[11px] text-muted-foreground">Client filters:</span>
+                    {f.priceMin && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">≥ ${f.priceMin}</span>}
+                    {f.priceMax && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">≤ ${f.priceMax}</span>}
+                    {f.dateFrom && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">since {f.dateFrom}</span>}
+                    {f.dateTo && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">until {f.dateTo}</span>}
+                    <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[11px]" onClick={() => setDrillFilters((prev) => ({ ...prev, [key]: { ...(prev[key] ?? DRILL_DEFAULT_FILTER), priceMin: "", priceMax: "", dateFrom: "", dateTo: "" } }))}>
+                      <X className="h-3 w-3" /> clear
+                    </Button>
+                  </div>
+                )}
                 <div className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {sortDrillRows(prows).map((p) => (
+                  {visible.map((p) => (
                     <DrillCard
                       key={p.sourceProductId}
                       p={p}
@@ -4306,6 +4682,24 @@ function MarketTab({
                     />
                   ))}
                 </div>
+                {isInfluencer && meta && meta.page < meta.lastPage && (
+                  <div className="flex items-center justify-center gap-2 px-3 pb-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      disabled={drillLoadingMore === key}
+                      onClick={() => void loadMoreDrill(key)}
+                    >
+                      {drillLoadingMore === key ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        "Load more"
+                      )}{" "}
+                      (page {meta.page}/{meta.lastPage})
+                    </Button>
+                  </div>
+                )}
                 {drillAdoptedIds.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -4455,7 +4849,8 @@ function MarketTab({
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
       )}

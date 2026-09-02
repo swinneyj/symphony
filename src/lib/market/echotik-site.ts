@@ -67,6 +67,7 @@ const CACHE_TTL_SECONDS: Record<string, number> = {
   "/search/sellers": 30 * 60,
   "/search/videos": 30 * 60,
   "/influencers/{id}/products": 6 * 3600,
+  "/influencers/{id}/products/filters": 6 * 3600,
   // Recency pull ("what are they pushing now") — short TTL keeps it fresh.
   "/influencers/{id}/videos": 30 * 60,
 };
@@ -196,10 +197,14 @@ function ttlFor(path: string): number | undefined {
   return CACHE_TTL_SECONDS[template] ?? CACHE_TTL_SECONDS[path];
 }
 
-/** Single-page GET; `data` may be an array (lists) or object (detail). Cached. */
+/** Single-page GET; `data` may be an array (lists) or object (detail). Cached.
+ * `fresh` skips the KV read AND write (used when signed CDN URLs go stale —
+ * cover_urls carry a short-lived signature, so a cached row may 403 on
+ * download long before its TTL expires). */
 async function get(
   path: string,
-  params: Record<string, string | number | undefined>
+  params: Record<string, string | number | undefined>,
+  fresh = false
 ): Promise<{ rows: ApiRow[]; object: ApiRow | null; meta: Record<string, unknown> }> {
   const qs: Record<string, string> = {};
   for (const [k, v] of Object.entries(params)) {
@@ -207,7 +212,7 @@ async function get(
   }
   const query = new URLSearchParams(qs).toString();
   const ttl = ttlFor(path);
-  if (ttl) {
+  if (ttl && !fresh) {
     const cached = await cacheGet<{ rows: ApiRow[]; object: ApiRow | null; meta: Record<string, unknown> }>(
       cacheKey("echotik-site", `${path}?${query}`)
     );
@@ -235,7 +240,7 @@ async function get(
   const rows = Array.isArray(json.data) ? (json.data as ApiRow[]) : [];
   const object = json.data && typeof json.data === "object" && !Array.isArray(json.data) ? (json.data as ApiRow) : null;
   const meta = (json.meta ?? {}) as Record<string, unknown>;
-  if (ttl && (rows.length > 0 || object)) {
+  if (ttl && !fresh && (rows.length > 0 || object)) {
     await cacheSet(cacheKey("echotik-site", `${path}?${query}`), { rows, object, meta }, ttl);
   }
   return { rows, object, meta };
@@ -265,7 +270,12 @@ async function getAll(
 function normalizeLeaderboard(r: ApiRow, rank: number, period: MarketQuery["period"], region: string): MarketProduct {
   const price = parseNum(r.avg_price) ?? parseNum(r.real_price) ?? parseNum(r.min_price);
   const priceMax = parseNum(r.max_price) ?? price;
-  const [catL1, catL2, catL3] = splitCategories(r.categories ?? r.category);
+  // Creator-product rows carry a plain category_name string (categories=null);
+  // leaderboard/search rows carry the categories object — try both.
+  const cats = splitCategories(r.categories ?? r.category);
+  const catL1 = cats[0] ?? str(r.category_name) ?? null;
+  const catL2 = cats[1] ?? null;
+  const catL3 = cats[2] ?? null;
   const seller = typeof r.seller === "object" && r.seller ? (r.seller as Record<string, unknown>) : null;
   return {
     source: "echotik" as MarketSource,
@@ -298,6 +308,7 @@ function normalizeLeaderboard(r: ApiRow, rank: number, period: MarketQuery["peri
       reviewCount: parseNum(r.review_count),
       productRating: parseNum(r.product_rating),
       conversionRate: parsePct(r.conversion_rate),
+      createdAt: str(r.create_time),
     },
   };
 }
@@ -632,6 +643,107 @@ export async function fetchInfluencerProducts(influencerId: string, limit = 24):
     limit
   );
   return rows.map((r, i) => normalizeLeaderboard(r, i + 1, "day", "US"));
+}
+
+// ─── Creator product list: server-side filters + pagination ────────────────
+// Verified live 2026-09-02 against the web SPA (Basic plan session): the
+// creator products tab calls /influencers/{id}/products with
+// order ∈ {total_sale_cnt, total_gmv_amt, videos_count}, sort, page, per_page
+// (≤50), product_categories (comma-separated L1 ids), keyword. is_hot is NOT
+// available on Basic (50001 plan gate) — do not send it.
+
+export interface InfluencerProductsFilter {
+  page?: number;
+  perPage?: number;
+  /** "" (default) | total_sale_cnt | total_gmv_amt | videos_count */
+  order?: string;
+  sort?: "asc" | "desc";
+  /** L1 category ids from fetchInfluencerProductFilters. */
+  categories?: string[];
+  /** Server-side keyword search within the creator's products. */
+  keyword?: string;
+}
+
+export interface InfluencerProductsPage {
+  products: MarketProduct[];
+  page: number;
+  perPage: number;
+  total: number;
+  lastPage: number;
+}
+
+export async function fetchInfluencerProductsPage(
+  influencerId: string,
+  f: InfluencerProductsFilter = {},
+  fresh = false
+): Promise<InfluencerProductsPage> {
+  const page = Math.max(1, f.page ?? 1);
+  const perPage = Math.min(50, Math.max(1, f.perPage ?? 24));
+  const { rows, meta } = await get(
+    `/influencers/${influencerId}/products`,
+    {
+      page,
+      per_page: perPage,
+      order: f.order ?? "",
+      sort: f.sort ?? "desc",
+      product_categories: f.categories?.length ? f.categories.join(",") : undefined,
+      keyword: f.keyword?.trim() ? f.keyword.trim() : undefined,
+    },
+    fresh
+  );
+  return {
+    products: rows.map((r, i) =>
+      normalizeLeaderboard(r, (page - 1) * perPage + i + 1, "day", "US")
+    ),
+    page,
+    perPage,
+    total: Number(meta.total ?? rows.length),
+    lastPage: Number(meta.last_page ?? page),
+  };
+}
+
+/**
+ * Category filter options for a creator's products.
+ *
+ * The web app's /influencers/{id}/products/filters endpoint returns the full
+ * list to browsers, but a WAF truncates it to `{"count": N}` entries for
+ * non-browser clients (verified 2026-09-02: VPS curl/Node get count-only,
+ * the SPA in Chrome gets id+name+count). ids/names are the stable TikTok Shop
+ * L1 taxonomy, so we fall back to that map when the API short-circuits.
+ */
+export interface InfluencerCategoryFilter {
+  id: string;
+  name: string;
+  count: number;
+}
+
+const L1_CATEGORY_FALLBACK: InfluencerCategoryFilter[] = [
+  { id: "601450", name: "Beauty & Personal Care", count: 0 },
+  { id: "700437", name: "Food & Beverages", count: 0 },
+  { id: "601739", name: "Phones & Electronics", count: 0 },
+  { id: "600942", name: "Household Appliances", count: 0 },
+  { id: "700645", name: "Health", count: 0 },
+  { id: "600024", name: "Kitchenware", count: 0 },
+  { id: "603014", name: "Sports & Outdoor", count: 0 },
+  { id: "600001", name: "Home Supplies", count: 0 },
+  { id: "605196", name: "Automotive & Motorcycle", count: 0 },
+  { id: "824328", name: "Menswear & Underwear", count: 0 },
+  { id: "604453", name: "Furniture", count: 0 },
+  { id: "604968", name: "Home Improvement", count: 0 },
+  { id: "604579", name: "Tools & Hardware", count: 0 },
+  { id: "602118", name: "Pet Supplies", count: 0 },
+  { id: "601152", name: "Womenswear & Underwear", count: 0 },
+];
+
+export async function fetchInfluencerProductFilters(
+  influencerId: string
+): Promise<InfluencerCategoryFilter[]> {
+  const { object } = await get(`/influencers/${influencerId}/products/filters`, {});
+  const cats = (object?.product_categories as Array<Record<string, unknown>> | undefined) ?? [];
+  const real = cats
+    .filter((c) => String(c.id ?? "") !== "" && str(c.name) !== null && str(c.name) !== "All")
+    .map((c) => ({ id: String(c.id), name: str(c.name) ?? "?", count: Number(c.count ?? 0) }));
+  return real.length >= 2 ? real : L1_CATEGORY_FALLBACK;
 }
 
 // ─── Recency pull ("what are they pushing right now") ───────────────────────
