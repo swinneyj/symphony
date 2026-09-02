@@ -399,7 +399,7 @@ export function PersonasTab({
                           // editing); the raw urls are what get saved (served later
                           // via the /api/personas/[id]/image proxy). */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={u} alt={`face ${i + 1}`} className="aspect-[9/16] w-full rounded-lg object-cover border" />
+                      <img src={u} alt={`face ${i + 1}`} className="aspect-[3/4] w-full rounded-lg object-cover border" />
                       <button
                         type="button"
                         onClick={() => removeFace(i)}
