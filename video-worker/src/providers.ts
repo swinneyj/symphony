@@ -218,6 +218,10 @@ async function generateSeedance(req: FootageRequest): Promise<string> {
   });
 }
 
+/** Kling 1.0/3.0 only accept 5s or 10s — fal rejects any other literal
+ * (6 → "Input should be '5' or '10'"). Snap to the nearest allowed value. */
+const klingDuration = (sec: number) => (sec >= 8 ? 10 : 5);
+
 async function generateKling(req: FootageRequest): Promise<string> {
   const key = requireKey("kling");
   // Verified fal.ai model id. The former v2.5 path was accepted by the queue
@@ -226,7 +230,7 @@ async function generateKling(req: FootageRequest): Promise<string> {
   return falSubmit("/fal-ai/kling-video/v3/pro/image-to-video", key, {
     start_image_url: req.imageUrl,
     prompt: req.prompt,
-    duration: String(Math.min(Math.max(req.durationSec, 5), 10)),
+    duration: String(klingDuration(req.durationSec)),
     ...(req.aspectRatio ? { aspect_ratio: req.aspectRatio } : {}),
     ...(req.resolution === "1080p" ? { resolution: "1080p" } : {}),
     ...(req.seed !== undefined ? { seed: req.seed } : {}),
@@ -238,7 +242,7 @@ async function generateKlingV1(req: FootageRequest): Promise<string> {
   return falSubmit("/fal-ai/kling-video/v1/standard/image-to-video", key, {
     image_url: req.imageUrl,
     prompt: req.prompt,
-    duration: String(Math.min(Math.max(req.durationSec, 5), 10)),
+    duration: String(klingDuration(req.durationSec)),
     aspect_ratio: req.aspectRatio ?? "9:16",
     ...(req.resolution === "1080p" ? { resolution: "1080p" } : {}),
     ...(req.seed !== undefined ? { seed: req.seed } : {}),
