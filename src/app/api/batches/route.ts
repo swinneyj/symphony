@@ -7,6 +7,7 @@ import { eq, desc, inArray, and } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { actualMediaCost } from "@/lib/usage";
 import { renderScript } from "@/lib/video/script-fill";
+import { buildPersonaScenePrompt } from "@/lib/video/persona-scene";
 
 /**
  * Flatten a Formula Studio node graph into per-product formula config.
@@ -301,16 +302,28 @@ export async function POST(request: Request) {
     // Graph-authored formulas win over flat fields (per-node data).
     const cfg = formula.nodeGraph ? flattenGraph(formula.nodeGraph) : null;
     const scriptTemplate = cfg?.scriptTemplate ?? formula.scriptTemplate;
-    const gScenePrompt = cfg?.scenePromptTemplate ?? null;
+    let gScenePrompt = cfg?.scenePromptTemplate ?? null;
     const gMotionPreset = cfg?.motionPreset ?? null;
     const gDurationSec = cfg?.durationSec ?? null;
     const gQuality = cfg?.quality ?? null;
     const overlayTemplate = cfg?.overlayTemplate ?? formula.overlayTemplate;
     const boomerang = cfg?.boomerang ?? formula.boomerang;
+    // AI-influencer persona override: when a face-ref persona is selected and
+    // the formula wasn't authored for that persona, swap the scene prompt to a
+    // presenter shot ("persona presents the product") so the influencer
+    // actually appears in the video. Product-only formula templates ("do not
+    // add people") otherwise win and the persona never shows up.
+    const personaHasFaceRefs = (persona?.faceRefUrls?.length ?? 0) > 0;
+    if (personaHasFaceRefs && formula.personaId !== persona?.id && persona) {
+      gScenePrompt = buildPersonaScenePrompt(persona);
+    }
     // source_frame='render' formulas must run the scene_render job FIRST so the
     // video is generated from a re-created scene (product photo as reference),
     // not the flat listing photo. The worker chains scene_render → footage.
-    const needsSceneRender = formula.sourceFrame === "render";
+    // A face-ref persona ALSO forces scene render — the persona is composited
+    // into the frame at scene-render time, so footage directly on the listing
+    // photo would never contain the influencer.
+    const needsSceneRender = formula.sourceFrame === "render" || personaHasFaceRefs;
     // Keep compatibility with databases that have not applied the optional
     // Kling-specific enum migration yet; the exact model travels with jobs.
     const dbProvider = provider === "kling_v1" || provider === "kling_v3" ? "kling" : provider;

@@ -78,13 +78,19 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
      if (sourceFrame === "render" && (jobMeta.sourceImageUrl || !product?.regenerated_image_url)) {
        // Graph/run-view scene prompt override wins over the formula row.
        const scenePromptTemplate = jobMeta.scenePromptTemplate ?? formula?.scene_prompt_template ?? null;
+       const hasPersona = Array.isArray(jobMeta.personaRefs) && jobMeta.personaRefs.length > 0;
        const prompt = [
          "Only use the attached image as a reference for the scale and dimension of the products.",
          scenePromptTemplate?.trim() ||
            "Place the product on a clean neutral table with soft natural lighting.",
          // Grounding clause: prevents the "floating product" look where the
          // subject hovers with no surface contact. Applies to EVERY formula.
-         "Rest the product firmly on a visible surface (table, shelf, floor, or counter) with a soft contact shadow directly beneath it. The product must sit solidly on that surface — never float, hover, or appear levitating above it.",
+         // Persona shots are held by the influencer instead — a surface clause
+         // would fight the "holding the product" instruction, so it is swapped
+         // for a hands-composition clause.
+         hasPersona
+           ? "The person's hands hold the product naturally — product stays fully visible, not hidden behind fingers, and the product itself must not float or detach from the hand."
+           : "Rest the product firmly on a visible surface (table, shelf, floor, or counter) with a soft contact shadow directly beneath it. The product must sit solidly on that surface — never float, hover, or appear levitating above it.",
          "Keep all product details, text, and logos identical.",
        ].join(" ");
        const result = await generateSceneImage({
