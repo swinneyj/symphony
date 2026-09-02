@@ -128,7 +128,11 @@ function authHeaders(): Record<string, string> {
     throw new MissingSourceCredentialsError("echotik", ["ECHOTIK_WEB_TOKEN"]);
   }
   return {
-    Authorization: `Bearer ${token}`,
+    // The cookie stores the token URL-encoded (3611276%7C…); the SPA sends it
+    // decoded (3611276|…) as Bearer. Without decodeURIComponent every request
+    // reads as an unauthenticated Visitor (verified live 2026-09-02: encoded
+    // Bearer -> 10001/50001, decoded -> code 0 with creator products).
+    Authorization: "Bearer " + decodeURIComponent(token),
     "x-lang": "en",
     "x-currency": "USD",
     "x-region": "US",
