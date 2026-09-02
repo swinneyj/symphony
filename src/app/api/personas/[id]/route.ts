@@ -84,19 +84,30 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
 
     const body = await request.json().catch(() => ({}));
     const workspaceId = body.workspaceId;
-    if (!workspaceId || typeof workspaceId !== "string") {
-      return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
-    }
-    if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const [existing] = await db.select().from(personas).where(eq(personas.id, id)).limit(1);
     if (!existing) {
       return NextResponse.json({ error: "Persona not found" }, { status: 404 });
     }
-    if (existing.workspaceId !== workspaceId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    // System personas (workspaceId null) are shared demo rows — only the user
+    // who created them may delete them (they're visible in every workspace, so
+    // a workspaceId check would never pass). Workspace personas require the
+    // caller to be a member of that workspace.
+    if (existing.workspaceId === null) {
+      if (existing.createdById !== session.user.id) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    } else {
+      if (!workspaceId || typeof workspaceId !== "string") {
+        return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
+      }
+      if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (existing.workspaceId !== workspaceId) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     await db.delete(personas).where(eq(personas.id, id));

@@ -61,18 +61,30 @@ export default function PersonaDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   // System personas (workspaceId null) need ?workspaceId= on read APIs —
-  // resolve the user's workspace like the formula run page does.
+  // resolve the user's workspace like the formula run page does. Wait for
+  // that resolution before the first load so system personas never 403.
+  const [wsResolved, setWsResolved] = useState(false);
+
   useEffect(() => {
+    let cancelled = false;
     fetch("/api/workspaces")
       .then((r) => (r.ok ? r.json() : []))
       .then((ws) => {
+        if (cancelled) return;
         if (Array.isArray(ws) && ws.length > 0) setWorkspaceId(ws[0].id);
+        setWsResolved(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setWsResolved(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const load = useCallback(async () => {
     try {
+      setError(null);
       const wsQuery = workspaceId ? `?workspaceId=${workspaceId}` : "";
       const pRes = await fetch(`/api/personas/${id}${wsQuery}`);
       if (!pRes.ok) {
@@ -97,8 +109,8 @@ export default function PersonaDetailPage() {
   }, [id, workspaceId]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (wsResolved) load();
+  }, [load, wsResolved]);
 
   const swapVoice = async (voiceId: string) => {
     await fetch(`/api/personas/${id}`, {
