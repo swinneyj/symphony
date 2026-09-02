@@ -5,6 +5,7 @@ import { personas, aiGenerations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 import { generatePersonaFaces } from "@/services/persona-face";
+import { presignBlobGet } from "@/lib/blob-presign";
 
 /**
  * POST /api/personas/generate-face
@@ -13,6 +14,12 @@ import { generatePersonaFaces } from "@/services/persona-face";
  * private Blob, and sets them as the persona's face refs
  * (faceImageUrl = first, faceRefUrls = all). Costs ~$0.04–0.08/img, recorded
  * as an ai_generations row (result.costUsd).
+ *
+ * Response: { urls, previewUrls, costUsd } — `urls` are the RAW private Blob
+ * URLs (store these in the DB; served later through the Bearer proxy), while
+ * `previewUrls` are short-lived PRESIGNED URLs that render in a browser
+ * <img> immediately (raw private URLs 403 a browser fetch — see
+ * lib/blob-presign.ts). The create dialog shows previewUrls but saves urls.
  */
 export async function POST(request: Request) {
   try {
@@ -82,7 +89,17 @@ export async function POST(request: Request) {
       result: { urls, costUsd, personaId },
     });
 
-    return NextResponse.json({ urls, costUsd, personaId });
+    // Short-lived presigned URLs for the create-dialog preview (<img> can't
+    // fetch raw private Blob URLs — 403 without a Bearer token). DB keeps
+    // the raw urls (served via /api/personas/[id]/image proxy afterwards).
+    let previewUrls: string[] = [];
+    try {
+      previewUrls = await Promise.all(urls.map((u) => presignBlobGet(u)));
+    } catch (presignError) {
+      console.warn(`[personas] presign preview failed (raw urls still returned): ${(presignError as Error).message}`);
+    }
+
+    return NextResponse.json({ urls, previewUrls, costUsd, personaId });
   } catch (error) {
     console.error("Error generating persona faces:", error);
     return NextResponse.json(
