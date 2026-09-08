@@ -494,6 +494,9 @@ export default function TikTokPage() {
                         <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">
                           TikTok currently allows @{creator.creator_username} to post videos up to {creator.max_video_post_duration_sec} seconds. Symphony checks this video before enabling Post to TikTok.
                         </p>
+                        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-900">
+                          Until TikTok completes this Direct Post audit, TikTok may restrict posts to a private creator account with “Only me” visibility. Choose that visibility for the audit test post.
+                        </p>
                         <div className="space-y-2">
                           <Label htmlFor="privacy-level">Who can view this video?</Label>
                           <select
@@ -643,6 +646,12 @@ export default function TikTokPage() {
                             View the published post on TikTok <ExternalLink className="h-3 w-3" />
                           </a>
                         )}
+                      </div>
+                    )}
+                    {status?.status === "PUBLISH_COMPLETE" && !status.publicaly_available_post_id?.length && (
+                      <div className="space-y-1 rounded-md border border-emerald-500/30 bg-background p-3 text-xs">
+                        <p className="font-medium text-emerald-700">TikTok completed the post</p>
+                        <p className="text-muted-foreground">TikTok did not return a public post ID. For an unaudited client, open the connected creator’s private videos on TikTok to verify the result.</p>
                       </div>
                     )}
                   </div>
