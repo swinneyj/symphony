@@ -287,7 +287,7 @@ export default function TikTokPage() {
             <Music2 className="h-6 w-6" /> TikTok Integration
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connect a creator with Login Kit, then upload a draft or publish a test video.
+            Connect a creator with Login Kit, then upload a draft or publish a video directly to TikTok.
           </p>
           <p className="mt-2 text-xs font-medium text-muted-foreground">
             Website: <a className="underline" href="https://symphonyapp.company">https://symphonyapp.company</a>
