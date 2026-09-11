@@ -85,14 +85,20 @@ export function getTikTokRedirectUri() {
 }
 
 async function parseTikTokResponse<T>(response: Response, context: string) {
-  const payload = (await response.json()) as TikTokEnvelope<T> & TikTokTokenResponse;
+  let payload: TikTokEnvelope<T> & TikTokTokenResponse;
+  try {
+    payload = (await response.json()) as TikTokEnvelope<T> & TikTokTokenResponse;
+  } catch {
+    throw new TikTokApiError(`${context} returned an invalid response (${response.status}).`, `http_${response.status}`);
+  }
   const code = payload.error?.code ||
     (typeof payload.error === "string" ? payload.error : undefined);
 
   if (!response.ok || (code && code !== "ok")) {
     const message = payload.error?.message || payload.error_description || `${context} failed`;
     const logId = payload.error?.log_id || payload.log_id;
-    throw new TikTokApiError(message, code || `http_${response.status}`, logId);
+    const diagnostic = [code || `http_${response.status}`, logId && `log_id=${logId}`].filter(Boolean).join(", ");
+    throw new TikTokApiError(`${message} (${diagnostic})`, code || `http_${response.status}`, logId);
   }
 
   return payload;

@@ -149,8 +149,13 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("TikTok publishing error:", error);
+    const tiktokError = error as { code?: string; logId?: string };
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "TikTok publishing failed" },
+      {
+        error: error instanceof Error ? error.message : "TikTok publishing failed",
+        code: tiktokError.code,
+        logId: tiktokError.logId,
+      },
       { status: 502 }
     );
   }

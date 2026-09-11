@@ -227,8 +227,13 @@ export default function TikTokPage() {
       formData.set("video", video);
 
       const response = await fetch("/api/tiktok/publish", { method: "POST", body: formData });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "TikTok publishing failed");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (data.code === "unaudited_client_can_only_post_to_private_accounts") {
+          throw new Error("TikTok requires the connected account to be Private while this app is unaudited. Set @justin_swinn's TikTok account privacy to Private, then retry with Only me visibility.");
+        }
+        throw new Error(data.error || "TikTok publishing failed");
+      }
       setResult(data);
       setStatus({ status: mode === "direct" ? "PROCESSING" : "UPLOAD_COMPLETE" });
     } catch (publishError) {
