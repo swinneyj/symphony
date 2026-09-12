@@ -310,7 +310,7 @@ function extractTikTokVariantImage(html: string): string | null {
       for (const item of Object.values(record)) visit(item);
     };
     visit(root);
-    const saleProperties = productModel?.sale_properties;
+    const saleProperties = (productModel as Record<string, unknown> | null)?.sale_properties;
     if (!Array.isArray(saleProperties)) return null;
     for (const property of saleProperties) {
       const values = (property as Record<string, unknown>)?.property_values;

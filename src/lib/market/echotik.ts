@@ -14,6 +14,16 @@
 import type { MarketCreator, MarketProduct, MarketQuery, MarketSource } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 
+// Image proxy routes historically imported this helper from the API adapter.
+// Keep that public export stable while the website adapter owns the actual
+// cover URL resolution logic.
+export {
+  resolveCoverUrl,
+  fetchProductAnalytics,
+  fetchProductVideos,
+  fetchSellerProducts,
+} from "./echotik-site";
+
 const BASE = "https://open.echotik.live/api/v2";
 
 function authHeader(): string {
