@@ -11,7 +11,8 @@ The video-worker skips `product_process`; only this container claims it.
 |---|---|---|
 | `DATABASE_URL` | yes | Neon connection string |
 | `BLOB_READ_WRITE_TOKEN` | yes | Vercel Blob token (upload destination) |
-| `POLL_INTERVAL_MS` | no | default 5000 |
+| `POLL_INTERVAL_MS` | no | default 60000; backs off when idle |
+| `MAX_IDLE_INTERVAL_MS` | no | default 300000 |
 | `WORKER_CONCURRENCY` | no | default 2 |
 | `WORKER_MAX_RETRIES` | no | default 3 |
 | `WORKER_STALE_MINUTES` | no | default 15 (crash recovery) |

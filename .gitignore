@@ -46,3 +46,4 @@ next-env.d.ts
 ads-worker/.build-assets/
 __pycache__/
 *.log
+.env*.local

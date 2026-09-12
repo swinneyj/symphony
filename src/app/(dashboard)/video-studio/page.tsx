@@ -2021,6 +2021,20 @@ interface BatchDetailJob {
   productName: string;
   productImage: string | null;
   productOriginalImage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function jobProgress(job: BatchDetailJob): { percent: number; label: string } {
+  if (job.status === "done") return { percent: 100, label: "Complete" };
+  if (job.status === "failed") return { percent: 0, label: "Failed" };
+  if (job.status === "queued") return { percent: 5, label: "Waiting for worker" };
+  switch (job.jobType) {
+    case "scene_render": return { percent: 25, label: "Rendering scene" };
+    case "footage": return { percent: 60, label: "Generating video" };
+    case "batch_video": return { percent: 90, label: "Assembling final video" };
+    default: return { percent: 50, label: "Processing" };
+  }
 }
 
 const ENGINES = [
@@ -2177,7 +2191,13 @@ function BatchStudioTab({
       const res = await fetch(`/api/batches/${batchId}`);
       if (!res.ok) throw new Error("Failed to load batch detail");
       const data = await res.json();
-      setDetail(data.jobs);
+      // A product produces internal footage/scene jobs and one customer-facing
+      // batch_video job. Show only the final assembled deliverable once it
+      // exists; otherwise show the active footage job so progress is visible.
+      const finalJobs = data.jobs.filter((j: BatchDetailJob) => j.jobType === "batch_video");
+      setDetail(finalJobs.length > 0
+        ? finalJobs
+        : data.jobs.filter((j: BatchDetailJob) => j.jobType === "footage"));
       // Poll while anything is still queued/running.
       const active = data.jobs.some((j: BatchDetailJob) => j.status === "queued" || j.status === "running");
       if (active) {
@@ -2386,7 +2406,8 @@ function BatchStudioTab({
                     </p>
                   )}
                   {detail?.map((job) => (
-                    <div key={job.id} className="flex flex-wrap items-center gap-3 text-sm">
+                    <div key={job.id} className="space-y-2 rounded-md border p-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-3">
                       <img
                         src={job.productImage ?? job.productOriginalImage ?? ""}
                         alt=""
@@ -2440,6 +2461,25 @@ function BatchStudioTab({
                           {job.error}
                         </span>
                       )}
+                      </div>
+                      {job.status === "queued" || job.status === "running" ? (() => {
+                        const progress = jobProgress(job);
+                        const elapsed = Math.max(0, Math.round((Date.now() - new Date(job.updatedAt).getTime()) / 1000));
+                        return (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                              <span className="flex items-center gap-1.5">
+                                {job.status === "running" && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />}
+                                {progress.label}
+                              </span>
+                              <span>{progress.percent}% · {elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`}</span>
+                            </div>
+                            <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                              <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progress.percent}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })() : null}
                     </div>
                   ))}
                 </div>

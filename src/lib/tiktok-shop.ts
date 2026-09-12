@@ -30,7 +30,7 @@ const TIMEOUT_MS = 20_000;
 export type ShopCredentials = {
   appKey: string;
   appSecret: string;
-  accessToken: string;
+  accessToken?: string;
 };
 
 /** Creator app creds from env (static) + live access token per connected creator. */
@@ -39,9 +39,6 @@ export function getShopCredentials(accessToken?: string): ShopCredentials {
   const appSecret = process.env.TIKTOK_SHOP_APP_SECRET ?? "";
   if (!appKey || !appSecret) {
     throw new Error("TikTok Shop is not configured (TIKTOK_SHOP_APP_KEY / TIKTOK_SHOP_APP_SECRET)");
-  }
-  if (!accessToken) {
-    throw new Error("No TikTok Shop creator access token — connect your creator account first");
   }
   return { appKey, appSecret, accessToken };
 }
@@ -270,7 +267,7 @@ export async function fetchShopProductsPage(
 
   const query = new URLSearchParams({ ...params, sign });
   const res = await fetch(`${SHOP_API}/affiliate_creator/202405/showcases/products?${query.toString()}`, {
-    headers: { "x-tts-access-token": creds.accessToken },
+    headers: { "x-tts-access-token": creds.accessToken ?? "" },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
@@ -352,7 +349,7 @@ export async function searchShopProducts(
   const res = await fetch(
     `${SHOP_API}/affiliate_creator/202509/shop_products?${query.toString()}`,
     {
-      headers: { "x-tts-access-token": creds.accessToken },
+      headers: { "x-tts-access-token": creds.accessToken ?? "" },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     }
   );

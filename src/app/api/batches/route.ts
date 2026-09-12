@@ -166,11 +166,14 @@ export async function GET(request: Request) {
         engine: batch.provider ?? "sora",
         voiceProvider: batch.voiceId ? (voiceProviderBy.get(batch.voiceId) ?? null) : null,
       });
+      const deliverables = batchJobs.some((j) => j.jobType === "batch_video")
+        ? batchJobs.filter((j) => j.jobType === "batch_video")
+        : batchJobs.filter((j) => j.jobType === "footage");
       return {
         ...batch,
-        jobsTotal: batchJobs.length,
-        jobsDone: batchJobs.filter((j) => j.status === "done").length,
-        jobsFailed: batchJobs.filter((j) => j.status === "failed").length,
+        jobsTotal: deliverables.length,
+        jobsDone: deliverables.filter((j) => j.status === "done").length,
+        jobsFailed: deliverables.filter((j) => j.status === "failed").length,
         aiCostUsd: llmCostUsd + media.totalUsd,
         aiLlmCostUsd: llmCostUsd,
         aiLlmCalls: calls,

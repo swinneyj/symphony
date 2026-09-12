@@ -34,7 +34,8 @@ docker run -d --name video-worker --restart unless-stopped \
 |---|---|---|
 | `DATABASE_URL` | — (required) | Neon Postgres connection string (same as Vercel) |
 | `BLOB_READ_WRITE_TOKEN` | — (required) | Vercel Blob read-write token (same as Vercel) |
-| `POLL_INTERVAL_MS` | `5000` | Poll loop interval |
+| `POLL_INTERVAL_MS` | `60000` | Poll loop interval when work is found |
+| `MAX_IDLE_INTERVAL_MS` | `300000` | Maximum interval after repeated empty polls |
 | `WORKER_CONCURRENCY` | `3` | Max jobs claimed per tick |
 | `WORKER_MAX_RETRIES` | `3` | Retries before a job is marked failed |
 | `WORKER_STALE_MINUTES` | `15` | Running jobs older than this are requeued (crash recovery) |
