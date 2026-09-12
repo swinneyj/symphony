@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { products } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { products, videoBatchJobs } from "@/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -85,7 +85,7 @@ export async function PATCH(
 
 /**
  * DELETE /api/products/[id]
- * Hard-deletes the product (jobs referencing it keep job rows, productId set null).
+ * Cancels active jobs before deleting the product.
  */
 export async function DELETE(_request: Request, { params }: RouteContext) {
   try {
@@ -103,6 +103,13 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    await db
+      .update(videoBatchJobs)
+      .set({ status: "cancelled", error: "Cancelled when product was deleted", updatedAt: new Date() })
+      .where(and(
+        eq(videoBatchJobs.productId, id),
+        inArray(videoBatchJobs.status, ["queued", "running"]),
+      ));
     await db.delete(products).where(eq(products.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {

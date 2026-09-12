@@ -377,6 +377,7 @@ function ProductsTab({
   // Bulk selection (mass delete) state.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ product: Product; scene: boolean } | null>(null);
 
   // Per-product image view toggle: false = imported image, true = scene render.
   const [sceneView, setSceneView] = useState<Record<string, boolean>>({});
@@ -754,15 +755,23 @@ function ProductsTab({
               />
               <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border bg-zinc-100">
                 {product.originalImageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={`/api/products/${product.id}/image${sceneView[product.id] ? "?variant=scene" : ""}`}
-                    alt={product.name}
-                    className="h-full w-full object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
+                  <button
+                    type="button"
+                    className="block h-full w-full cursor-zoom-in"
+                    onClick={() => setImagePreview({ product, scene: Boolean(sceneView[product.id]) })}
+                    title="Open larger image"
+                    aria-label={`Open larger image for ${product.name}`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/products/${product.id}/image${sceneView[product.id] ? "?variant=scene" : ""}`}
+                      alt={product.name}
+                      className="h-full w-full object-cover transition-transform hover:scale-105"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  </button>
                 ) : (
                   <div className="flex h-full items-center justify-center">
                     <Package className="h-5 w-5 text-muted-foreground/40" />
@@ -823,6 +832,26 @@ function ProductsTab({
           ))}
         </div>
       )}
+      <Dialog open={Boolean(imagePreview)} onOpenChange={(open) => !open && setImagePreview(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="line-clamp-2 pr-8">{imagePreview?.product.name}</DialogTitle>
+            <DialogDescription>
+              {imagePreview?.scene ? "AI scene image" : "Imported product image"}
+            </DialogDescription>
+          </DialogHeader>
+          {imagePreview && (
+            <div className="flex max-h-[75vh] min-h-64 items-center justify-center overflow-hidden rounded-lg border bg-zinc-50 p-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/api/products/${imagePreview.product.id}/image${imagePreview.scene ? "?variant=scene" : ""}`}
+                alt={imagePreview.product.name}
+                className="max-h-[70vh] max-w-full object-contain"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

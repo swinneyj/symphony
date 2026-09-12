@@ -174,10 +174,9 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
     : og.image
       ? absolutize(og.image, parsed)
       : null;
-  // Prefer the full-resolution TikTok gallery over the tiny social OG thumb.
-  // Keep distinct angles/details so Image Studio can use them as references.
-  const galleryImageUrls = findTikTokImages(html);
-  if (galleryImageUrls.length > 0) originalImageUrl = galleryImageUrls[0];
+  // Only trust TikTok's product-scoped social image here. Scanning every CDN
+  // URL in the page can pick recommendation/ad imagery from another product.
+  const galleryImageUrls = originalImageUrl ? [originalImageUrl] : [];
   // TikTok CDN thumbs default to 260:260 — request the 720:720 variant so
   // the video pipeline gets a usable source (verified serving 200).
   if (originalImageUrl) {
@@ -278,34 +277,6 @@ function extractJsonLdPrice(html: string): string | null {
   const re = /"offers"\s*:\s*{[^}]*?"price"\s*:\s*"?([\d.,]+)"?/i;
   const m = html.match(re);
   return m ? m[1] : null;
-}
-
-/**
- * Find the first TikTok CDN product image embedded in raw HTML.
- * TikTok Shop PDPs ship the gallery as img.src / JSON fields under
- * tiktokcdn domains even when og:image is absent. Prefer full-size
- * (non-260:260 thumbnail) URLs and escape any backslash-escaped slashes
- * that appear inside serialized JSON strings.
- */
-function findTikTokImages(html: string): string[] {
-  // Match https://<sub>.tiktokcdn(.com|.us|...)/... up to a quote/space.
-  const re =
-    /https?:\\?\/\\?\/[a-z0-9.-]*tiktokcdn[a-z0-9.-]*\\?\/[^\s"'<>\\]+/gi;
-  const candidates = html.match(re) ?? [];
-  const bestByAsset = new Map<string, { url: string; pixels: number; order: number }>();
-  for (const [order, raw] of candidates.entries()) {
-    const url = decodeEntities(raw.replace(/\\\//g, "/"));
-    if (!/\.(jpe?g|png|webp)(\?|$)/i.test(url)) continue;
-    const dimensions = url.match(/(?:resize|crop)-webp:(\d+):(\d+)\.webp/i);
-    const pixels = dimensions ? Number(dimensions[1]) * Number(dimensions[2]) : 0;
-    const assetKey = url.split("?")[0].split("~")[0];
-    const previous = bestByAsset.get(assetKey);
-    if (!previous || pixels > previous.pixels) bestByAsset.set(assetKey, { url, pixels, order });
-  }
-  return [...bestByAsset.values()]
-    .sort((a, b) => a.order - b.order)
-    .map((entry) => entry.url)
-    .slice(0, 6);
 }
 
 function absolutize(url: string, base: URL): string {

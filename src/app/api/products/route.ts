@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { products, users } from "@/db/schema";
+import { products, users, videoBatchJobs } from "@/db/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
 
@@ -132,8 +132,8 @@ export async function POST(request: Request) {
  * DELETE /api/products
  * Bulk-deletes products within one workspace. Body:
  * { workspaceId: string, ids: string[] } (max 1000 ids).
- * Same hard-delete semantics as DELETE /api/products/[id] — jobs that
- * reference deleted products keep their rows with productId set null.
+ * Queued/running jobs are cancelled before the products are removed so a
+ * cleanup action cannot continue consuming provider credits in the background.
  */
 export async function DELETE(request: Request) {
   try {
@@ -174,15 +174,30 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const deleted = await db
-      .delete(products)
-      .where(
-        and(
-          eq(products.workspaceId, workspaceId),
-          inArray(products.id, uniqueIds)
-        )
-      )
-      .returning({ id: products.id });
+    const productFilter = and(
+      eq(products.workspaceId, workspaceId),
+      inArray(products.id, uniqueIds)
+    );
+    const ownedProducts = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(productFilter);
+    const ownedIds = ownedProducts.map((product) => product.id);
+
+    if (ownedIds.length > 0) {
+      await db
+        .update(videoBatchJobs)
+        .set({ status: "cancelled", error: "Cancelled when product was deleted", updatedAt: new Date() })
+        .where(and(
+          eq(videoBatchJobs.workspaceId, workspaceId),
+          inArray(videoBatchJobs.productId, ownedIds),
+          inArray(videoBatchJobs.status, ["queued", "running"]),
+        ));
+    }
+
+    const deleted = ownedIds.length > 0
+      ? await db.delete(products).where(productFilter).returning({ id: products.id })
+      : [];
 
     return NextResponse.json({ deleted: deleted.length });
   } catch (error) {
