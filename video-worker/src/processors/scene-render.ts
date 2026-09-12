@@ -51,6 +51,8 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
        personaPrompt?: string | null;
        strictProvider?: boolean;
        productCleanup?: boolean;
+       /** Preserve the source packaging verbatim for clean references. */
+       fidelityLock?: boolean;
        };
 
      let product: ProductRow | null = null;
@@ -80,11 +82,27 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
      let dryRun = false;
      let imageProvider = "passthrough";
      let imageModel = "none";
+     const isProductCleanup = Boolean(jobMeta.productCleanup);
      if (sourceFrame === "render" && (jobMeta.sourceImageUrl || !product?.regenerated_image_url)) {
+       // Packaging text cannot be reliably re-typeset by an image model. For
+       // fidelity-locked clean references, keep the original product image
+       // verbatim and avoid spending a generation call that could hallucinate
+       // logos, nutrition facts, or flavor names.
+       if (isProductCleanup && jobMeta.fidelityLock) {
+         sceneUrl = imageUrl;
+         imageProvider = "source-preserved";
+         imageModel = "none";
+         if (product) {
+           await sql`
+             UPDATE products
+             SET processed_image_url = ${sceneUrl}, status = 'ready', updated_at = now()
+             WHERE id = ${product.id}
+           `;
+         }
+       } else {
        // Graph/run-view scene prompt override wins over the formula row.
        const scenePromptTemplate = jobMeta.scenePromptTemplate ?? formula?.scene_prompt_template ?? null;
        const hasPersona = Array.isArray(jobMeta.personaRefs) && jobMeta.personaRefs.length > 0;
-       const isProductCleanup = Boolean(jobMeta.productCleanup);
        const prompt = [
          "Only use the attached image as a reference for the scale and dimension of the products.",
          scenePromptTemplate?.trim() ||
@@ -129,6 +147,7 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
            UPDATE products SET scene_image_url = ${sceneUrl}, updated_at = now()
            WHERE id = ${product.id}
          `;
+       }
        }
      }
 

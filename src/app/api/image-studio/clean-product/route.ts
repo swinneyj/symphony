@@ -44,6 +44,7 @@ export async function POST(request: Request) {
         sourceImageUrl: product.originalImageUrl,
         referenceImageUrls: refs,
         productCleanup: true,
+        fidelityLock: true,
         quality: "pro",
         strictProvider: true,
         requestedImageModel: "gemini-3-pro-image",

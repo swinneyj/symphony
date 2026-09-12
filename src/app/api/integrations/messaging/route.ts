@@ -70,6 +70,7 @@ export async function POST(request: Request) {
         sourceImageUrl: product.originalImageUrl,
         referenceImageUrls: ((product.metadata ?? {}) as { galleryImageUrls?: string[] }).galleryImageUrls ?? [],
         productCleanup: true,
+        fidelityLock: true,
         quality: "pro",
         strictProvider: true,
         requestedImageModel: "gemini-3-pro-image",
