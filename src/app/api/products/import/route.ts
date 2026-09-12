@@ -18,7 +18,8 @@ import { hasWorkspaceAccess } from "@/lib/workspace-access";
  */
 export async function POST(request: Request) {
   try {
-    const session = await auth();
+    const internal = request.headers.get("x-symphony-integration-secret") === process.env.MESSAGING_WEBHOOK_SECRET;
+    const session = internal ? { user: { id: process.env.MESSAGING_USER_ID ?? "" } } : await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Max 20 URLs per batch" }, { status: 400 });
     }
 
-    if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
+    if (!internal && !(await hasWorkspaceAccess(workspaceId, session.user.id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

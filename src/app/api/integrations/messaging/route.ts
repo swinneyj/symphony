@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { products, videoBatchJobs } from "@/db/schema";
-import { importOne } from "@/app/api/products/import/route";
 import { flagJobs } from "@/lib/market/cache";
 
 export const runtime = "nodejs";
@@ -30,7 +29,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const product = await importOne(productLink, workspaceId, userId);
+    const importResponse = await fetch(new URL("/api/products/import", request.url), {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-symphony-integration-secret": process.env.MESSAGING_WEBHOOK_SECRET ?? "" },
+      body: JSON.stringify({ workspaceId, url: productLink }),
+    });
+    const importPayload = (await importResponse.json()) as { imported?: Array<typeof products.$inferSelect>; error?: string; failed?: Array<{ error?: string }> };
+    const product = importPayload.imported?.[0];
+    if (!importResponse.ok || !product) throw new Error(importPayload.failed?.[0]?.error ?? importPayload.error ?? "Product import failed");
     const [job] = await db.insert(videoBatchJobs).values({
       workspaceId,
       productId: product.id,
