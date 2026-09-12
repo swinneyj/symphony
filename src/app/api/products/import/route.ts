@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { products } from "@/db/schema";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
+import { and, desc, eq } from "drizzle-orm";
 
 /**
  * POST /api/products/import
@@ -92,6 +93,17 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
   } catch {
     throw new Error("Invalid URL");
   }
+
+  // Webhook providers retry deliveries, and users commonly resend the same
+  // share link while waiting. Reuse the latest matching product rather than
+  // creating another product and another cleanup job.
+  const [existing] = await db
+    .select()
+    .from(products)
+    .where(and(eq(products.workspaceId, workspaceId), eq(products.sourceUrl, parsed.toString())))
+    .orderBy(desc(products.createdAt))
+    .limit(1);
+  if (existing) return existing;
 
   let html: string;
   let finalUrl: string | null = null;

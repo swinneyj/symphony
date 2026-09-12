@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { products, videoBatchJobs, workspaceMembers } from "@/db/schema";
 import { flagJobs } from "@/lib/market/cache";
@@ -40,6 +40,23 @@ export async function POST(request: Request) {
     const importPayload = (await importResponse.json()) as { imported?: Array<typeof products.$inferSelect>; error?: string; failed?: Array<{ error?: string }> };
     const product = importPayload.imported?.[0];
     if (!importResponse.ok || !product) throw new Error(importPayload.failed?.[0]?.error ?? importPayload.error ?? "Product import failed");
+    if (product.processedImageUrl) {
+      return await reply(source, payload, `Already ready: ${product.name}. The clean product reference is available in Image Studio. Product ID: ${product.id}`);
+    }
+    const [activeJob] = await db
+      .select({ id: videoBatchJobs.id })
+      .from(videoBatchJobs)
+      .where(and(
+        eq(videoBatchJobs.workspaceId, workspaceId),
+        eq(videoBatchJobs.productId, product.id),
+        eq(videoBatchJobs.jobType, "scene_render"),
+        inArray(videoBatchJobs.status, ["queued", "running"]),
+      ))
+      .orderBy(desc(videoBatchJobs.createdAt))
+      .limit(1);
+    if (activeJob) {
+      return await reply(source, payload, `Already imported ${product.name}. The clean-reference job is still running. Product ID: ${product.id}. Job ID: ${activeJob.id}`);
+    }
     const [job] = await db.insert(videoBatchJobs).values({
       workspaceId,
       productId: product.id,
