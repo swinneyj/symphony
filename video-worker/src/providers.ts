@@ -363,6 +363,8 @@ export async function generateCloneVideo(
 export interface SceneRenderRequest {
   /** Product image (listing photo or processed cutout) used as reference only. */
   imageUrl: string;
+  /** Additional product/detail/composition references, in user-selected order. */
+  referenceImageUrls?: string[];
   /** Scene description, e.g. "dark brown wood vanity table, natural lighting". */
   prompt: string;
   quality: "standard" | "pro";
@@ -374,11 +376,15 @@ export interface SceneRenderRequest {
   personaRefs?: string[];
   /** AI-influencer persona style clause appended to the prompt. */
   personaPrompt?: string | null;
+  /** Image Studio quality contract: never silently substitute another model. */
+  strictProvider?: boolean;
 }
 
 export interface SceneRenderResult {
   url: string;
   dryRun: boolean;
+  provider: "google" | "openai" | "fal" | "dry-run";
+  model: string;
 }
 
 /**
@@ -447,28 +453,39 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
         contentType: "image/png",
         token: blobToken(),
       });
-      return { url, dryRun: true };
+      return { url, dryRun: true, provider: "dry-run", model: "placeholder" };
     }
-    return { url: `dryrun:scene:${Date.now()}`, dryRun: true };
+    return { url: `dryrun:scene:${Date.now()}`, dryRun: true, provider: "dry-run", model: "placeholder" };
   }
 
-  // Primary: Gemini 2.5 Flash Image ("Nano Banana Pro") via the Google REST
-  // API — the GEMINI_API_KEY is verified-good, and this model is the best at
-  // preserving product text/logos. NOTE: must read GEMINI_API_KEY directly —
+  // Pro maps to the actual Nano Banana Pro model. Standard uses Google's
+  // current production-scale image model. NOTE: must read GEMINI_API_KEY directly —
   // requireKey("veo") maps to FAL_KEY (KEY_BY_ENGINE.veo), which Gemini
   // rejects with 400 "API key not valid".
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("Missing GEMINI_API_KEY for scene render");
+  const model = req.quality === "pro" ? "gemini-3-pro-image" : "gemini-3.1-flash-image";
   try {
-    const url = await geminiImageEdit(key, req.imageUrl, req.prompt, req.quality, req.aspectRatio, req.imageSize, req.personaRefs, req.personaPrompt);
-    return { url, dryRun: false };
+    const url = await geminiImageEdit(
+      key,
+      model,
+      req.imageUrl,
+      req.referenceImageUrls,
+      req.prompt,
+      req.aspectRatio,
+      req.imageSize,
+      req.personaRefs,
+      req.personaPrompt
+    );
+    return { url, dryRun: false, provider: "google", model };
   } catch (primaryError) {
+    if (req.strictProvider) throw primaryError;
     console.warn(
       `[video-worker] gemini scene image failed, falling back to openai gpt-image-1: ${(primaryError as Error).message}`
     );
     try {
       const url = await openaiImageEdit(req.imageUrl, req.prompt);
-      return { url, dryRun: false };
+      return { url, dryRun: false, provider: "openai", model: "gpt-image-1" };
     } catch (openaiError) {
       console.warn(
         `[video-worker] openai scene image failed, falling back to fal flux: ${(openaiError as Error).message}`
@@ -484,7 +501,7 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
           aspect_ratio: req.aspectRatio ?? "9:16",
           output_format: "png",
         });
-        return { url, dryRun: false };
+        return { url, dryRun: false, provider: "fal", model: "flux-pro/v1.1" };
       }
       throw primaryError;
     }
@@ -492,38 +509,43 @@ export async function generateSceneImage(req: SceneRenderRequest): Promise<Scene
 }
 
 /**
- * Gemini 2.5 Flash Image image-edit call:
- * POST /v1beta/models/gemini-2.5-flash-image:generateContent
- * Input: text prompt + the product photo as inline base64 (reference only).
+ * Gemini native image-edit call. Input: text prompt + ordered product/detail/
+ * persona references as inline image parts.
  * Output: inline base64 PNG (or fileData URI) → stored to private Blob.
  */
 async function geminiImageEdit(
   key: string,
+  model: "gemini-3-pro-image" | "gemini-3.1-flash-image",
   imageUrl: string,
+  referenceImageUrls: string[] | undefined,
   prompt: string,
-  quality: "standard" | "pro",
   aspectRatio?: string,
   imageSize?: "1K" | "2K" | "4K",
   personaRefs?: string[],
   personaPrompt?: string | null
 ): Promise<string> {
-  // Product photo first, then persona face refs — all inline references.
-  const refUrls = [imageUrl, ...(personaRefs ?? [])].filter(Boolean);
+  // Product hero first, then supporting product refs, then persona refs. Gemini
+  // Pro supports up to 14 inputs; keep six product refs at high fidelity.
+  const refUrls = [...new Set([imageUrl, ...(referenceImageUrls ?? []).slice(0, 5), ...(personaRefs ?? [])])]
+    .filter(Boolean)
+    .slice(0, 14);
   const parts: Array<Record<string, unknown>> = [
     { text: personaPrompt ? `${prompt}\nStyle: ${personaPrompt}` : prompt },
   ];
   for (const refUrl of refUrls) {
+    const isPrivateBlob = refUrl.includes(".blob.vercel-storage.com");
     const res = await fetch(refUrl, {
-      headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
+      headers: isPrivateBlob && blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
     });
     if (!res.ok) throw new Error(`failed to fetch reference image for scene render: ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > 20 * 1024 * 1024) throw new Error("reference image exceeds 20MB");
     const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/png";
     parts.push({ inline_data: { mime_type: mime, data: buf.toString("base64") } });
   }
 
   const gen = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${key}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -551,7 +573,12 @@ async function geminiImageEdit(
       };
     }>;
   };
-  const part = data.candidates?.[0]?.content?.parts?.[0];
+  const responseParts = data.candidates?.[0]?.content?.parts ?? [];
+  // Pro may return interim thought parts. The final image is the last image
+  // part that is not marked as a thought.
+  const part = [...responseParts].reverse().find((candidate) =>
+    (candidate.inlineData?.data || candidate.fileData?.fileUri) && !(candidate as { thought?: boolean }).thought
+  ) ?? [...responseParts].reverse().find((candidate) => candidate.inlineData?.data || candidate.fileData?.fileUri);
   if (!part) throw new Error("gemini scene image: empty response");
   if (part.fileData?.fileUri) return part.fileData.fileUri;
 

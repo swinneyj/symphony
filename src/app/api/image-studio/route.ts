@@ -11,14 +11,15 @@ export const maxDuration = 60;
 /**
  * POST /api/image-studio — Higgsfield-style image generation (Image Studio).
  *
- * Body (JSON): workspaceId, sourceImageUrl (product/reference image),
+ * Body (JSON): workspaceId, sourceImageUrl (primary product image),
+ * referenceImageUrls (up to five supporting product/detail references),
  * prompt (custom scene prompt), aspectRatio ("9:16"|"16:9"|"1:1"|"4:5"),
  * imageSize ("1K"|"2K"|"4K"), batchSize (1-4).
  *
  * Creates one `kling` batch + N `scene_render` jobs (N = batchSize). The
- * worker re-renders the product into an ORIGINAL scene (input image used only
- * as a scale/dimension reference) via Gemini 2.5 Flash Image (Nano Banana
- * Pro), with openai/flux fallbacks. noChain=true → no auto-footage.
+ * worker re-renders the product into an ORIGINAL scene via the actual Gemini
+ * 3 Pro Image model. This studio path is strict: provider failures are shown
+ * instead of silently lowering quality through a fallback.
  * Poll GET /api/batches/[batchId] for sceneImageUrl per job.
  */
 export async function POST(request: Request) {
@@ -31,6 +32,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const workspaceId = (body.workspaceId as string) ?? "";
     const sourceImageUrl = (body.sourceImageUrl as string) ?? "";
+    const referenceImageUrls = Array.isArray(body.referenceImageUrls)
+      ? [...new Set(body.referenceImageUrls.filter((url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url)))].slice(0, 5)
+      : [];
     const prompt = (body.prompt as string) ?? "";
     const aspectRatio = (body.aspectRatio as string) ?? "9:16";
     const imageSize = (body.imageSize as string) ?? "2K";
@@ -75,8 +79,11 @@ export async function POST(request: Request) {
         status: "queued",
         metadata: {
           sourceImageUrl,
+          referenceImageUrls,
           scenePromptTemplate: prompt.trim(),
           quality: "pro",
+          strictProvider: true,
+          requestedImageModel: "gemini-3-pro-image",
           aspectRatio,
           imageSize,
           noChain: true,

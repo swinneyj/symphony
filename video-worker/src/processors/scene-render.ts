@@ -30,6 +30,7 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
      };
      const jobMeta = (job.metadata ?? {}) as {
        sourceImageUrl?: string;
+       referenceImageUrls?: string[];
        scenePromptTemplate?: string;
        quality?: string;
        aspectRatio?: string;
@@ -48,6 +49,8 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
        /** AI-influencer persona: face refs for identity + style clause. */
        personaRefs?: string[];
        personaPrompt?: string | null;
+       strictProvider?: boolean;
+       productCleanup?: boolean;
        };
 
      let product: ProductRow | null = null;
@@ -75,10 +78,13 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
      const sourceFrame = formula?.source_frame ?? "render";
      let sceneUrl = product?.regenerated_image_url ?? imageUrl;
      let dryRun = false;
+     let imageProvider = "passthrough";
+     let imageModel = "none";
      if (sourceFrame === "render" && (jobMeta.sourceImageUrl || !product?.regenerated_image_url)) {
        // Graph/run-view scene prompt override wins over the formula row.
        const scenePromptTemplate = jobMeta.scenePromptTemplate ?? formula?.scene_prompt_template ?? null;
        const hasPersona = Array.isArray(jobMeta.personaRefs) && jobMeta.personaRefs.length > 0;
+       const isProductCleanup = Boolean(jobMeta.productCleanup);
        const prompt = [
          "Only use the attached image as a reference for the scale and dimension of the products.",
          scenePromptTemplate?.trim() ||
@@ -88,25 +94,37 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
          // Persona shots are held by the influencer instead — a surface clause
          // would fight the "holding the product" instruction, so it is swapped
          // for a hands-composition clause.
-         hasPersona
+         isProductCleanup
+           ? "Place the isolated product on a seamless pure white background with only a subtle grounding shadow; do not add a table, counter, props, people, hands, scenery, or text overlays."
+           : hasPersona
            ? "The person's hands hold the product naturally — product stays fully visible, not hidden behind fingers, and the product itself must not float or detach from the hand."
            : "Rest the product firmly on a visible surface (table, shelf, floor, or counter) with a soft contact shadow directly beneath it. The product must sit solidly on that surface — never float, hover, or appear levitating above it.",
          "Keep all product details, text, and logos identical.",
        ].join(" ");
        const result = await generateSceneImage({
          imageUrl,
+         referenceImageUrls: jobMeta.referenceImageUrls,
          prompt,
          quality: (jobMeta.quality ?? formula?.quality ?? "standard") === "pro" ? "pro" : "standard",
          personaRefs: jobMeta.personaRefs,
          personaPrompt: jobMeta.personaPrompt,
+         strictProvider: jobMeta.strictProvider,
          ...(jobMeta.aspectRatio ? { aspectRatio: jobMeta.aspectRatio } : {}),
          ...(jobMeta.imageSize ? { imageSize: jobMeta.imageSize } : {}),
        });
        sceneUrl = result.url;
        dryRun = result.dryRun;
+       imageProvider = result.provider;
+       imageModel = result.model;
        // Store on the product too — the UI can preview the render before a batch is approved.
        // (Standalone Image Studio jobs have no product row; skip.)
-       if (product) {
+       if (product && jobMeta.productCleanup) {
+         await sql`
+           UPDATE products
+           SET processed_image_url = ${sceneUrl}, status = 'ready', updated_at = now()
+           WHERE id = ${product.id}
+         `;
+       } else if (product) {
          await sql`
            UPDATE products SET scene_image_url = ${sceneUrl}, updated_at = now()
            WHERE id = ${product.id}
@@ -114,7 +132,14 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
        }
      }
 
-     await markDone(job.id, { scene_image_url: sceneUrl });
+     await markDone(job.id, {
+       scene_image_url: sceneUrl,
+       metadata: {
+         ...jobMeta,
+         imageProvider,
+         imageModel,
+       },
+     });
      if (job.batch_id) await updateBatchProgress(job.batch_id);
 
      // Chain: scene_render done → enqueue footage from the rendered frame.

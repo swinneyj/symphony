@@ -45,9 +45,18 @@ import { cn } from "@/lib/utils";
 interface StudioProduct {
   id: string;
   name: string;
+  description?: string | null;
   originalImageUrl: string | null;
   processedImageUrl: string | null;
   sceneImageUrl?: string | null;
+  status?: "raw" | "processing" | "ready" | "failed";
+  metadata?: { galleryImageUrls?: string[] } | null;
+}
+
+interface StudioReference {
+  name: string;
+  url: string;
+  previewUrl: string;
 }
 
 interface BatchJob {
@@ -121,8 +130,28 @@ const FONT_STACKS: Record<OverlayFont, string> = {
   bebas: '"Bebas Neue", Impact, sans-serif',
 };
 
+const PRODUCT_CATEGORIES = [
+  ["auto", "Auto-detect from product"],
+  ["food-beverage", "Food & beverage"],
+  ["supplements", "Supplements & wellness"],
+  ["beauty", "Beauty & skincare"],
+  ["home", "Home & kitchen"],
+  ["fashion", "Fashion & accessories"],
+  ["electronics", "Electronics"],
+  ["pet", "Pet products"],
+  ["other", "Other"],
+] as const;
+
 const DEFAULT_PROMPT =
-  "Only use the attached image as a reference for the scale and dimensions of the product. Put the products on a dark brown wood makeup vanity table with natural lighting and photorealistic, matching lighting.";
+  "Create a photorealistic TikTok Shop product scene on a light marble kitchen countertop with soft natural window light. Arrange the product units with realistic spacing, contact shadows, reflections, and matching perspective. Preserve the exact packaging, label, logo, colors, proportions, and readable text from the references. No hands or people in this still image. Leave clean negative space for captions.";
+
+function galleryReferences(product: StudioProduct): StudioReference[] {
+  const hero = product.originalImageUrl;
+  return (product.metadata?.galleryImageUrls ?? [])
+    .filter((url) => url && url !== hero)
+    .slice(0, 5)
+    .map((url, index) => ({ name: `TikTok gallery view ${index + 2}`, url, previewUrl: url }));
+}
 
 // ─── Polling helper ─────────────────────────────────────────────────────────
 
@@ -202,12 +231,23 @@ async function saveToLibrary(opts: {
 export function ImageStudioTab({
   workspaceId,
   products,
+  onProductsChanged,
 }: {
   workspaceId: string;
   products: StudioProduct[];
+  onProductsChanged?: () => void | Promise<void>;
 }) {
   // Stage 1 state
   const [productId, setProductId] = useState("");
+  const [productUrl, setProductUrl] = useState("");
+  const [importingProduct, setImportingProduct] = useState(false);
+  const [preparingProductId, setPreparingProductId] = useState<string | null>(null);
+  const [productCategory, setProductCategory] = useState("auto");
+  const [references, setReferences] = useState<StudioReference[]>([]);
+  const [uploadingReferences, setUploadingReferences] = useState(false);
+  const [creatorVideoUrl, setCreatorVideoUrl] = useState("");
+  const [analyzingCreator, setAnalyzingCreator] = useState(false);
+  const [creatorAnalysis, setCreatorAnalysis] = useState("");
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [buildingPrompt, setBuildingPrompt] = useState(false);
   const [aspectRatio, setAspectRatio] = useState("9:16");
@@ -224,6 +264,9 @@ export function ImageStudioTab({
   const [videoRatio, setVideoRatio] = useState("9:16");
   const [outputCount, setOutputCount] = useState(1);
   const [durationSec, setDurationSec] = useState(5);
+  const [motionPrompt, setMotionPrompt] = useState(
+    "Subtle natural product motion with physically realistic contact, stable packaging, and a gentle handheld camera push-in."
+  );
   const [vidBatchId, setVidBatchId] = useState<string | null>(null);
   const [vidResults, setVidResults] = useState<BatchJob[]>([]);
   const [vidBusy, setVidBusy] = useState(false);
@@ -242,14 +285,150 @@ export function ImageStudioTab({
   const [playingVideo, setPlayingVideo] = useState<{ url: string; title: string } | null>(null);
 
   const product = products.find((p) => p.id === productId);
-  const sourceImage = product?.sceneImageUrl ?? product?.processedImageUrl ?? product?.originalImageUrl ?? null;
+  // A previous lifestyle render must never become the product-truth source.
+  const sourceImage = product?.processedImageUrl ?? product?.originalImageUrl ?? null;
+
+  useEffect(() => {
+    if (!preparingProductId) return;
+    const current = products.find((entry) => entry.id === preparingProductId);
+    if ((current?.status === "ready" && current.processedImageUrl) || current?.status === "failed") return;
+    const timer = window.setInterval(() => void onProductsChanged?.(), 3000);
+    return () => window.clearInterval(timer);
+  }, [onProductsChanged, preparingProductId, products]);
+
+  const productReferencePreparing =
+    preparingProductId === productId && product?.status !== "failed" && !product?.processedImageUrl;
+
+  const importProduct = async () => {
+    if (!productUrl.trim()) {
+      toast.error("Paste a TikTok Shop product link first");
+      return;
+    }
+    setImportingProduct(true);
+    try {
+      const res = await fetch("/api/products/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, url: productUrl.trim() }),
+      });
+      const data = await res.json();
+      const imported = data.imported?.[0] as StudioProduct | undefined;
+      if (!res.ok || !imported) throw new Error(data.failed?.[0]?.error ?? data.error ?? "Import failed");
+      if (!imported.originalImageUrl) throw new Error("TikTok did not expose a usable product image");
+
+      setProductId(imported.id);
+      setProductUrl("");
+      setPrompt(DEFAULT_PROMPT);
+      setReferences(galleryReferences(imported));
+      setPreparingProductId(imported.id);
+      await onProductsChanged?.();
+      const processRes = await fetch("/api/image-studio/clean-product", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, productId: imported.id }),
+      });
+      const processData = await processRes.json();
+      if (!processRes.ok) throw new Error(processData.error ?? "Could not prepare product reference");
+      toast.success("Product imported — building the clean Pro reference now");
+    } catch (error) {
+      setPreparingProductId(null);
+      toast.error(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      setImportingProduct(false);
+    }
+  };
+
+  const uploadReferences = async (files: FileList | null) => {
+    if (!files?.length) return;
+    if (files.length + references.length > 5) {
+      toast.error("Use up to five supporting images (six product references total)");
+      return;
+    }
+    setUploadingReferences(true);
+    try {
+      const form = new FormData();
+      form.append("workspaceId", workspaceId);
+      Array.from(files).forEach((file) => form.append("files", file));
+      const res = await fetch("/api/image-studio/references", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      setReferences((current) => [...current, ...(data.references as StudioReference[])]);
+      toast.success(`${files.length} supporting reference${files.length === 1 ? "" : "s"} added`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setUploadingReferences(false);
+    }
+  };
+
+  const analyzeCreatorVideo = async () => {
+    if (!product) {
+      toast.error("Import or select the product first");
+      return;
+    }
+    if (!creatorVideoUrl.trim()) {
+      toast.error("Paste a creator video link first");
+      return;
+    }
+    setAnalyzingCreator(true);
+    setCreatorAnalysis("");
+    try {
+      const ingestRes = await fetch("/api/ads/steal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, url: creatorVideoUrl.trim() }),
+      });
+      const source = await ingestRes.json();
+      if (!ingestRes.ok || !source.id) throw new Error(source.error ?? "Could not ingest creator video");
+
+      let prepared: Record<string, unknown> | null = null;
+      for (let attempt = 0; attempt < 75; attempt++) {
+        const detailRes = await fetch(`/api/ads/steal/${source.id}`, { cache: "no-store" });
+        const detail = await detailRes.json();
+        if (!detailRes.ok) throw new Error(detail.error ?? "Could not read creator video status");
+        if (detail.status === "transcribed") {
+          prepared = detail;
+          break;
+        }
+        if (detail.status === "failed") throw new Error(detail.error ?? "Creator video analysis failed");
+        await new Promise((resolve) => window.setTimeout(resolve, 4000));
+      }
+      if (!prepared) throw new Error("Creator video preparation timed out");
+
+      const analyzeRes = await fetch("/api/image-studio/creator-reference", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sourceId: source.id,
+          productName: product.name,
+          productDescription: product.description,
+          category: productCategory,
+        }),
+      });
+      const plan = await analyzeRes.json();
+      if (!analyzeRes.ok) throw new Error(plan.error ?? "Creator analysis failed");
+      setPrompt(plan.imagePrompt);
+      setMotionPrompt(plan.videoPrompt);
+      setCreatorAnalysis(plan.creativeAnalysis);
+      if (Array.isArray(plan.overlayLines) && plan.overlayLines.length > 0) {
+        const lines: string[] = plan.overlayLines.slice(0, 3).map((line: unknown) => String(line));
+        setOverlayLines(lines);
+        setOverlayBoxes(lines.map((_, index) => defaultOverlayBox(0.12 + index * 0.18)));
+      }
+      toast.success("Creator flow analyzed — image, motion, and captions are ready");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Creator analysis failed");
+    } finally {
+      setAnalyzingCreator(false);
+    }
+  };
 
   /** GPT Library: expand the short idea into a production Nano Banana prompt. */
   const buildPromptWithGpt = useCallback(async () => {
     setBuildingPrompt(true);
     try {
       const context = product
-        ? `Product: ${product.name}\nAspect ratio: ${aspectRatio}, image size: ${imageSize}. Scene render for a TikTok Shop product video — keep the product accurate (label, logo, colors, proportions) and leave clean negative space for captions.`
+        ? `Product: ${product.name}\nProduct description: ${product.description ?? "Not provided"}\nCategory: ${productCategory}\nReferences: ${references.length > 0 ? `Image 1 is the clean primary product reference; Images 2-${references.length + 1} are supporting product/detail references.` : "Use the product image as the primary reference."}\nAspect ratio: ${aspectRatio}, image size: ${imageSize}. This still becomes the first frame of a TikTok Shop video. Preserve exact packaging, label, logo, colors, readable text, proportions, and product count. Use physically believable surface contact, perspective, shadows, and reflections. Leave negative space for captions.`
         : `Aspect ratio: ${aspectRatio}, image size: ${imageSize}. Scene render for a TikTok Shop product video — leave clean negative space for captions.`;
       const res = await fetch("/api/gpt/prompts", {
         method: "POST",
@@ -267,7 +446,7 @@ export function ImageStudioTab({
     } finally {
       setBuildingPrompt(false);
     }
-  }, [product, prompt, aspectRatio, imageSize]);
+  }, [product, productCategory, references.length, prompt, aspectRatio, imageSize]);
 
   // Poll stage 1 (images done when every job has a sceneImageUrl or failed)
   useBatchPoll(
@@ -320,6 +499,7 @@ export function ImageStudioTab({
         body: JSON.stringify({
           workspaceId,
           sourceImageUrl: sourceImage,
+          referenceImageUrls: references.map((reference) => reference.url),
           prompt: prompt.trim(),
           aspectRatio,
           imageSize,
@@ -355,6 +535,7 @@ export function ImageStudioTab({
           aspectRatio: videoRatio,
           outputCount,
           durationSec,
+          prompt: motionPrompt.trim(),
         }),
       });
       const data = await res.json();
@@ -425,12 +606,41 @@ export function ImageStudioTab({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="rounded-lg border bg-muted/20 p-4">
+            <div className="mb-2">
+              <Label htmlFor="studio-product-url">TikTok Shop product link</Label>
+              <p className="text-xs text-muted-foreground">
+                Paste a winning product. Symphony imports it and prepares a clean white-background reference.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                id="studio-product-url"
+                value={productUrl}
+                onChange={(event) => setProductUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void importProduct();
+                }}
+                placeholder="https://www.tiktok.com/t/..."
+              />
+              <Button onClick={importProduct} disabled={importingProduct || !productUrl.trim()}>
+                {importingProduct ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {importingProduct ? "Importing…" : "Import & clean"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label>Product</Label>
               <select
                 value={productId}
-                onChange={(e) => setProductId(e.target.value)}
+                onChange={(event) => {
+                  const nextProduct = products.find((entry) => entry.id === event.target.value);
+                  setProductId(event.target.value);
+                  setReferences(nextProduct ? galleryReferences(nextProduct) : []);
+                  setPrompt(DEFAULT_PROMPT);
+                }}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <option value="">Select a product…</option>
@@ -438,6 +648,18 @@ export function ImageStudioTab({
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Product category</Label>
+              <select
+                value={productCategory}
+                onChange={(event) => setProductCategory(event.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {PRODUCT_CATEGORIES.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
                 ))}
               </select>
             </div>
@@ -458,7 +680,7 @@ export function ImageStudioTab({
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-2">
-              <Label>Quality</Label>
+              <Label>Native Pro resolution</Label>
               <select
                 value={imageSize}
                 onChange={(e) => setImageSize(e.target.value as "1K" | "2K" | "4K")}
@@ -484,11 +706,100 @@ export function ImageStudioTab({
               </select>
             </div>
             <div className="flex items-end">
-              <Button onClick={runImageGen} disabled={genBusy || !sourceImage} className="w-full">
-                {genBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-                {genBusy ? "Generating…" : "Generate images"}
+              <Button
+                onClick={runImageGen}
+                disabled={genBusy || !sourceImage || productReferencePreparing}
+                className="w-full"
+              >
+                {genBusy || productReferencePreparing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                {productReferencePreparing ? "Cleaning reference…" : genBusy ? "Generating…" : "Generate images"}
               </Button>
             </div>
+          </div>
+
+          <div className="space-y-2 rounded-lg border p-4">
+            <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+              <div>
+                <Label htmlFor="studio-reference-images">Supporting product images</Label>
+                <p className="text-xs text-muted-foreground">
+                  Optional detail, side, back, or multi-pack views. Image 1 is the primary product; add up to five more.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" asChild disabled={uploadingReferences || references.length >= 5}>
+                <label htmlFor="studio-reference-images" className="cursor-pointer">
+                  {uploadingReferences ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  Add images
+                </label>
+              </Button>
+              <Input
+                id="studio-reference-images"
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  void uploadReferences(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </div>
+            {references.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {references.map((reference, index) => (
+                  <div key={reference.url} className="relative">
+                    <img
+                      src={reference.previewUrl}
+                      alt={`Supporting reference ${index + 2}`}
+                      className="h-20 w-20 rounded-md border bg-white object-contain"
+                    />
+                    <Badge className="absolute bottom-1 left-1 text-[10px]">Image {index + 2}</Badge>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${reference.name}`}
+                      className="absolute -right-1.5 -top-1.5 rounded-full bg-background p-0.5 shadow"
+                      onClick={() => setReferences((current) => current.filter((entry) => entry.url !== reference.url))}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20">
+            <div className="mb-2">
+              <Label htmlFor="studio-creator-video">Mimic a winning creator flow <span className="font-normal text-muted-foreground">(optional)</span></Label>
+              <p className="text-xs text-muted-foreground">
+                Paste a creator video. Symphony analyzes its hook, shot structure, pacing, motion, and caption rhythm, then creates an original product-specific adaptation.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                id="studio-creator-video"
+                value={creatorVideoUrl}
+                onChange={(event) => setCreatorVideoUrl(event.target.value)}
+                placeholder="https://www.tiktok.com/t/..."
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={analyzeCreatorVideo}
+                disabled={analyzingCreator || !creatorVideoUrl.trim() || !product}
+              >
+                {analyzingCreator ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                {analyzingCreator ? "Analyzing flow…" : "Analyze creator"}
+              </Button>
+            </div>
+            {analyzingCreator && (
+              <p className="mt-2 text-xs text-muted-foreground">Downloading, transcribing, and visually analyzing the video. This can take 1–3 minutes.</p>
+            )}
+            {creatorAnalysis && (
+              <div className="mt-3 rounded-md bg-background p-3 text-xs">
+                <p className="mb-1 font-medium">Adaptation strategy</p>
+                <p className="text-muted-foreground">{creatorAnalysis}</p>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -517,12 +828,16 @@ export function ImageStudioTab({
             />
           </div>
 
-          {sourceImage && (
+          {sourceImage && product && (
             <div className="flex items-center gap-3 rounded-md border p-3">
-              <img src={`/api/products/${product!.id}/image`} alt="" className="h-16 w-16 rounded object-cover" />
+              <div className="relative">
+                <img src={`/api/products/${product.id}/image?variant=${product.processedImageUrl ? "processed" : "original"}`} alt="" className="h-16 w-16 rounded bg-white object-contain" />
+                <Badge className="absolute bottom-0 left-0 text-[10px]">Image 1</Badge>
+              </div>
               <div className="text-xs text-muted-foreground">
                 <p className="font-medium text-foreground">{product?.name}</p>
-                <p>Used as reference only (scale + dimensions).</p>
+                <p>{product.processedImageUrl ? "Clean product reference ready." : "Using imported image until cleanup finishes."}</p>
+                <p>{references.length + 1} total reference{references.length === 0 ? "" : "s"} sent to Nano Banana Pro.</p>
               </div>
             </div>
           )}
@@ -536,6 +851,10 @@ export function ImageStudioTab({
                   <div key={j.id} className="space-y-1.5">
                     {j.sceneImageUrl ? (
                       <>
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>{String(j.metadata.imageModel ?? "gemini-3-pro-image")}</span>
+                          <span>{imageSize}</span>
+                        </div>
                         <img
                           src={`/api/image-studio/jobs/${j.id}/asset?kind=scene`}
                           alt={`render ${i + 1}`}
@@ -683,6 +1002,19 @@ export function ImageStudioTab({
                   {vidBusy ? "Generating…" : "Generate videos"}
                 </Button>
                 {vidBusy && <Badge variant="outline">~1-3 min</Badge>}
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Motion prompt</Label>
+                  {creatorAnalysis && <Badge variant="outline">From creator flow</Badge>}
+                </div>
+                <Textarea
+                  rows={4}
+                  value={motionPrompt}
+                  onChange={(event) => setMotionPrompt(event.target.value)}
+                  placeholder="Describe only the movement, camera action, timing, and hand/product interaction…"
+                />
               </div>
 
               {vidResults.length > 0 && (

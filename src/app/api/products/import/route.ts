@@ -143,12 +143,10 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
     : og.image
       ? absolutize(og.image, parsed)
       : null;
-  // Fallback: TikTok Shop PDPs often ship the gallery in embedded JSON/img
-  // tags with no og:image at all (e.g. security-check'd pages). Hunt for
-  // any tiktokcdn image URL in the raw HTML before giving up.
-  if (!originalImageUrl) {
-    originalImageUrl = findTikTokImage(html);
-  }
+  // Prefer the full-resolution TikTok gallery over the tiny social OG thumb.
+  // Keep distinct angles/details so Image Studio can use them as references.
+  const galleryImageUrls = findTikTokImages(html);
+  if (galleryImageUrls.length > 0) originalImageUrl = galleryImageUrls[0];
   // TikTok CDN thumbs default to 260:260 — request the 720:720 variant so
   // the video pipeline gets a usable source (verified serving 200).
   if (originalImageUrl) {
@@ -184,7 +182,7 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
       sourceUrl: resolvedUrl || parsed.toString(),
       tiktokProductId,
       status: "raw",
-      metadata: { og: { ...og, image: originalImageUrl }, ogInfo },
+      metadata: { og: { ...og, image: originalImageUrl }, ogInfo, galleryImageUrls },
     })
     .returning();
 
@@ -240,18 +238,25 @@ function extractJsonLdPrice(html: string): string | null {
  * (non-260:260 thumbnail) URLs and escape any backslash-escaped slashes
  * that appear inside serialized JSON strings.
  */
-function findTikTokImage(html: string): string | null {
+function findTikTokImages(html: string): string[] {
   // Match https://<sub>.tiktokcdn(.com|.us|...)/... up to a quote/space.
   const re =
     /https?:\\?\/\\?\/[a-z0-9.-]*tiktokcdn[a-z0-9.-]*\\?\/[^\s"'<>\\]+/gi;
   const candidates = html.match(re) ?? [];
-  for (const raw of candidates) {
-    const url = raw.replace(/\\\//g, "/");
+  const bestByAsset = new Map<string, { url: string; pixels: number; order: number }>();
+  for (const [order, raw] of candidates.entries()) {
+    const url = decodeEntities(raw.replace(/\\\//g, "/"));
     if (!/\.(jpe?g|png|webp)(\?|$)/i.test(url)) continue;
-    if (/:260:260\.webp/i.test(url)) continue; // skip tiny thumbs
-    return url;
+    const dimensions = url.match(/(?:resize|crop)-webp:(\d+):(\d+)\.webp/i);
+    const pixels = dimensions ? Number(dimensions[1]) * Number(dimensions[2]) : 0;
+    const assetKey = url.split("?")[0].split("~")[0];
+    const previous = bestByAsset.get(assetKey);
+    if (!previous || pixels > previous.pixels) bestByAsset.set(assetKey, { url, pixels, order });
   }
-  return null;
+  return [...bestByAsset.values()]
+    .sort((a, b) => a.order - b.order)
+    .map((entry) => entry.url)
+    .slice(0, 6);
 }
 
 function absolutize(url: string, base: URL): string {
