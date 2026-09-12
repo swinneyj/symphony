@@ -167,8 +167,8 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
   }
   const price = og.priceAmount || extractJsonLdPrice(html);
 
-  // Resolved product page (e.g. https://www.tiktok.com/view/product/<id>)
-  // without the short-link noise, for dedup + TikTok Shop integration.
+  // Resolve TikTok's stable product ID from either the share redirect or the
+  // Shop PDP. Query parameters on both forms change between requests.
   let resolvedUrl: string | null = null;
   let tiktokProductId: string | null = null;
   try {
@@ -176,9 +176,27 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
     if (final.hostname === "www.tiktok.com" && final.pathname.startsWith("/view/product/")) {
       resolvedUrl = final.origin + final.pathname;
       tiktokProductId = final.pathname.split("/").pop() || null;
+    } else if (final.hostname === "shop.tiktok.com") {
+      const pdpMatch = final.pathname.match(/\/(?:[a-z]{2}\/)?pdp\/(\d+)/i);
+      if (pdpMatch) {
+        tiktokProductId = pdpMatch[1];
+        resolvedUrl = `${final.origin}${final.pathname}`;
+      }
     }
   } catch {
     /* keep null */
+  }
+
+  // The first URL check handles literal webhook retries. This second check
+  // handles TikTok short links whose redirect query changes on every fetch.
+  if (tiktokProductId) {
+    const [existingTikTokProduct] = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.workspaceId, workspaceId), eq(products.tiktokProductId, tiktokProductId)))
+      .orderBy(desc(products.createdAt))
+      .limit(1);
+    if (existingTikTokProduct) return existingTikTokProduct;
   }
 
   const [product] = await db
