@@ -67,7 +67,9 @@ export async function POST(request: Request) {
 function authorized(request: Request) {
   const secret = process.env.MESSAGING_WEBHOOK_SECRET;
   if (!secret) return false;
-  return request.headers.get("authorization") === `Bearer ${secret}` || request.headers.get("x-webhook-secret") === secret;
+  return request.headers.get("authorization") === `Bearer ${secret}` ||
+    request.headers.get("x-webhook-secret") === secret ||
+    request.headers.get("x-telegram-bot-api-secret-token") === secret;
 }
 
 function inferSource(request: Request) {
