@@ -22,12 +22,17 @@ jobs:
         env:
           ORACLE_VPS_HOST: ${{ secrets.ORACLE_VPS_HOST }}
           ORACLE_VPS_SSH_KEY: ${{ secrets.ORACLE_VPS_SSH_KEY }}
+          ORACLE_VPS_SSH_KEY_B64: ${{ secrets.ORACLE_VPS_SSH_KEY_B64 }}
         run: |
           set -euo pipefail
           test -n "$ORACLE_VPS_HOST" || { echo "Missing ORACLE_VPS_HOST"; exit 1; }
-          test -n "$ORACLE_VPS_SSH_KEY" || { echo "Missing ORACLE_VPS_SSH_KEY"; exit 1; }
+          test -n "${ORACLE_VPS_SSH_KEY_B64:-$ORACLE_VPS_SSH_KEY}" || { echo "Missing SSH key secret"; exit 1; }
           install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$ORACLE_VPS_SSH_KEY" > "$HOME/.ssh/oracle_worker_key"
+          if [ -n "${ORACLE_VPS_SSH_KEY_B64:-}" ]; then
+            printf '%s' "$ORACLE_VPS_SSH_KEY_B64" | base64 --decode > "$HOME/.ssh/oracle_worker_key"
+          else
+            printf '%s\n' "$ORACLE_VPS_SSH_KEY" > "$HOME/.ssh/oracle_worker_key"
+          fi
           chmod 600 "$HOME/.ssh/oracle_worker_key"
           ssh-keyscan -H "$ORACLE_VPS_HOST" >> "$HOME/.ssh/known_hosts"
 
