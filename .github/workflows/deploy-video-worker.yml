@@ -41,10 +41,13 @@ jobs:
         env:
           ORACLE_VPS_HOST: ${{ secrets.ORACLE_VPS_HOST }}
           ORACLE_VPS_USER: ${{ secrets.ORACLE_VPS_USER }}
+          BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
           test -n "$ORACLE_VPS_USER" || { echo "Missing ORACLE_VPS_USER"; exit 1; }
-          ssh -i "$HOME/.ssh/oracle_worker_key" "$ORACLE_VPS_USER@$ORACLE_VPS_HOST" 'bash -se' <<'REMOTE'
+          test -n "$BWS_ACCESS_TOKEN" || { echo "Missing BWS_ACCESS_TOKEN"; exit 1; }
+          printf -v BWS_ESCAPED '%q' "$BWS_ACCESS_TOKEN"
+          ssh -i "$HOME/.ssh/oracle_worker_key" "$ORACLE_VPS_USER@$ORACLE_VPS_HOST" "BWS_ACCESS_TOKEN=$BWS_ESCAPED bash -se" <<'REMOTE'
           set -euo pipefail
           cd /home/opc/symphony
           git fetch origin main
@@ -56,6 +59,7 @@ jobs:
             --name symphony-video-worker \
             --restart unless-stopped \
             -p 8081:8080 \
+            -e BWS_ACCESS_TOKEN="$BWS_ACCESS_TOKEN" \
             symphony-video-worker:latest \
             sh -c 'bws run --project-id 74f0a638-b3d9-4878-989d-b491001819bb -- node dist/index.js'
           sleep 8
