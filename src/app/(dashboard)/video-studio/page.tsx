@@ -68,6 +68,7 @@ interface Product {
   processedImageUrl: string | null;
   sceneImageUrl?: string | null;
   sourceType: "manual" | "link" | "tiktok_showcase";
+  tiktokProductId?: string | null;
   status: "raw" | "processing" | "ready" | "failed";
   latestJobStatus?: "queued" | "running" | "done" | "failed" | "cancelled" | null;
   metadata?: { galleryImageUrls?: string[] } | null;
@@ -396,6 +397,7 @@ function ProductsTab({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [imagePreview, setImagePreview] = useState<{ product: Product; scene: boolean } | null>(null);
+  const [echoTikProduct, setEchoTikProduct] = useState<DetailProduct | null>(null);
 
   // Per-product image view toggle: false = imported image, true = scene render.
   const [sceneView, setSceneView] = useState<Record<string, boolean>>({});
@@ -850,6 +852,26 @@ function ProductsTab({
                   <Wand2 className="h-3.5 w-3.5" />
                   Scene
                 </Button>
+                {product.tiktokProductId && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEchoTikProduct({
+                      source: "echotik",
+                      sourceProductId: product.tiktokProductId!,
+                      name: product.name,
+                      imageUrl: product.originalImageUrl,
+                      priceMin: product.price ? Number(product.price) : null,
+                      priceMax: product.price ? Number(product.price) : null,
+                      currency: "USD",
+                      categoryL1: null,
+                    })}
+                    title="Open EchoTik sales, GMV, creator, and video insights"
+                  >
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    EchoTik
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(product)}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -878,6 +900,12 @@ function ProductsTab({
           )}
         </DialogContent>
       </Dialog>
+      <ProductDetailDialog
+        open={Boolean(echoTikProduct)}
+        onOpenChange={(open) => !open && setEchoTikProduct(null)}
+        product={echoTikProduct}
+        workspaceId={workspaceId}
+      />
     </div>
   );
 }
