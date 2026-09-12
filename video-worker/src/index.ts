@@ -11,9 +11,10 @@ import { handleV2VEdit } from "./processors/v2v-edit.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const BLOB_TOKEN = blobToken();
-// Keep idle polling gentle on Neon. The loop backs off further when empty.
-const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 60_000);
-const MAX_IDLE_INTERVAL_MS = Number(process.env.MAX_IDLE_INTERVAL_MS ?? 300_000);
+// Keep the queue responsive for interactive Image Studio jobs while backing
+// off when idle. Operators can override these via environment variables.
+const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 5_000);
+const MAX_IDLE_INTERVAL_MS = Number(process.env.MAX_IDLE_INTERVAL_MS ?? 30_000);
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 3);
 const MAX_RETRIES = Number(process.env.WORKER_MAX_RETRIES ?? 3);
 const STALE_MINUTES = Number(process.env.WORKER_STALE_MINUTES ?? 15);

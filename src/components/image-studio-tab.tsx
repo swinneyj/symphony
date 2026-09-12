@@ -145,6 +145,14 @@ const PRODUCT_CATEGORIES = [
 const DEFAULT_PROMPT =
   "Create a photorealistic TikTok Shop product scene on a light marble kitchen countertop with soft natural window light. Arrange the product units with realistic spacing, contact shadows, reflections, and matching perspective. Preserve the exact packaging, label, logo, colors, proportions, and readable text from the references. No hands or people in this still image. Leave clean negative space for captions.";
 
+function defaultPromptForProduct(product: StudioProduct | undefined, category: string) {
+  const name = product?.name.toLowerCase() ?? "";
+  if (name.includes("stroller") || name.includes("car seat") || category === "fashion") {
+    return "Create a photorealistic lifestyle image of the exact product from the reference, fully assembled and correctly proportioned, centered on a clean paved walkway in a beautiful vibrant park. Use warm natural daylight, realistic soft shadows, lush green trees, colorful flowers, and a softly blurred background. Preserve the exact materials, shape, wheels, seat, harness, canopy, accessories, colors, proportions, and branding shown in the reference. No baby, no hands, no extra product, no invented accessories, no text or graphics. Keep the product fully visible and leave clean negative space for captions.";
+  }
+  return DEFAULT_PROMPT;
+}
+
 function galleryReferences(product: StudioProduct): StudioReference[] {
   const hero = product.originalImageUrl;
   return (product.metadata?.galleryImageUrls ?? [])
@@ -318,7 +326,7 @@ export function ImageStudioTab({
 
       setProductId(imported.id);
       setProductUrl("");
-      setPrompt(DEFAULT_PROMPT);
+      setPrompt(defaultPromptForProduct(imported, productCategory));
       setReferences(galleryReferences(imported));
       setPreparingProductId(imported.id);
       await onProductsChanged?.();
@@ -639,7 +647,7 @@ export function ImageStudioTab({
                   const nextProduct = products.find((entry) => entry.id === event.target.value);
                   setProductId(event.target.value);
                   setReferences(nextProduct ? galleryReferences(nextProduct) : []);
-                  setPrompt(DEFAULT_PROMPT);
+                  setPrompt(defaultPromptForProduct(nextProduct, productCategory));
                 }}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
@@ -864,13 +872,13 @@ export function ImageStudioTab({
                               ? "border-blue-600 ring-2 ring-blue-600/30"
                               : "border-border hover:border-blue-400"
                           )}
-                          onClick={() => setApprovedImage(j.sceneImageUrl)}
+                          onClick={() => setApprovedImage((current) => current === j.sceneImageUrl ? null : j.sceneImageUrl)}
                         />
                         <Button
                           size="sm"
                           variant={approvedImage === j.sceneImageUrl ? "default" : "outline"}
                           className="w-full"
-                          onClick={() => setApprovedImage(j.sceneImageUrl)}
+                          onClick={() => setApprovedImage((current) => current === j.sceneImageUrl ? null : j.sceneImageUrl)}
                         >
                           {approvedImage === j.sceneImageUrl && <CheckCircle2 className="h-3.5 w-3.5" />}
                           {approvedImage === j.sceneImageUrl ? "Approved" : "Use this"}
