@@ -69,6 +69,7 @@ interface Product {
   sceneImageUrl?: string | null;
   sourceType: "manual" | "link" | "tiktok_showcase";
   status: "raw" | "processing" | "ready" | "failed";
+  latestJobStatus?: "queued" | "running" | "done" | "failed" | "cancelled" | null;
   metadata?: { galleryImageUrls?: string[] } | null;
 }
 
@@ -185,6 +186,18 @@ export default function VideoStudioPage() {
     loadPersonas(workspaceId);
     loadBatches(workspaceId);
   }, [workspaceId, loadProducts, loadFormulas, loadVoices, loadPersonas, loadBatches]);
+
+  // Keep the Products tab in sync with Telegram imports and worker progress.
+  // Poll only while this tab is visible so background tabs do not create
+  // unnecessary database traffic. This removes the need for a manual refresh
+  // after an import finishes or a processed image becomes ready.
+  useEffect(() => {
+    if (!workspaceId || activeTab !== "products") return;
+    const timer = window.setInterval(() => {
+      void loadProducts(workspaceId);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [workspaceId, activeTab, loadProducts]);
 
   if (loading) {
     return (
@@ -799,7 +812,15 @@ function ProductsTab({
               <div className="min-w-0 flex-1 basis-40">
                 <div className="flex items-center gap-2">
                   <p className="line-clamp-1 text-sm font-medium">{product.name}</p>
-                  <Badge className={cn("shrink-0", STATUS_STYLE[product.status])}>{product.status}</Badge>
+                  <Badge className={cn("shrink-0", STATUS_STYLE[product.status])} title={product.latestJobStatus ? `Worker job: ${product.latestJobStatus}` : undefined}>
+                    {product.status === "processing" && product.latestJobStatus === "queued"
+                      ? "queued"
+                      : product.status === "processing" && product.latestJobStatus === "running"
+                      ? "processing"
+                      : product.status === "processing" && product.latestJobStatus === "done"
+                      ? "syncing"
+                      : product.status}
+                  </Badge>
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {product.price && <span className="font-medium">{product.price}</span>}

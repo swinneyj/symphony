@@ -60,7 +60,27 @@ export async function GET(request: Request) {
       .where(and(...conditions))
       .orderBy(desc(products.createdAt));
 
-    return NextResponse.json(rows);
+    const productIds = rows.map((row) => row.id);
+    const jobs = productIds.length
+      ? await db
+          .select({
+            productId: videoBatchJobs.productId,
+            status: videoBatchJobs.status,
+            updatedAt: videoBatchJobs.updatedAt,
+          })
+          .from(videoBatchJobs)
+          .where(and(eq(videoBatchJobs.workspaceId, workspaceId), inArray(videoBatchJobs.productId, productIds)))
+          .orderBy(desc(videoBatchJobs.createdAt))
+      : [];
+    const latestJobByProduct = new Map<string, (typeof jobs)[number]>();
+    for (const job of jobs) {
+      if (job.productId && !latestJobByProduct.has(job.productId)) latestJobByProduct.set(job.productId, job);
+    }
+    return NextResponse.json(rows.map((row) => ({
+      ...row,
+      latestJobStatus: latestJobByProduct.get(row.id)?.status ?? null,
+      latestJobUpdatedAt: latestJobByProduct.get(row.id)?.updatedAt ?? null,
+    })));
   } catch (error) {
     console.error("Error listing products:", error);
     return NextResponse.json(
