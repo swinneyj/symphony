@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 img-worker: owns video_batch_jobs of type product_process.
-Downloads the product image → rembg background removal → transparent PNG →
+Downloads the product image → rembg background removal → clean white PNG →
 Vercel Blob → products.processed_image_url + status=ready.
 
 The video-worker explicitly skips product_process; only this worker claims it.
@@ -23,36 +23,8 @@ from PIL import Image
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 BLOB_TOKEN = (os.environ.get("BLOB_READ_WRITE_TOKEN") or os.environ.get("BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN") or "").strip() or None
-POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "5000"))
-
-
-# ── Neon compute gate ────────────────────────────────────────────────────────
-# Skip the DB poll unless a KV job-flag is set (see neon-compute-frugality.md:
-# every DB wake costs the full 5-min suspend delay). Gate is best-effort:
-# any failure → poll the DB as usual.
-GATE_URL = os.environ.get("WORKER_GATE_URL", "https://www.symphonyapp.company/api/cron/worker-gate")
-GATE_SECRET = os.environ.get("CRON_SECRET", "")
-
-
-def _gate_headers():
-    return {"Authorization": f"Bearer {GATE_SECRET}"} if GATE_SECRET else {}
-
-
-def gate_open(worker):
-    try:
-        req = urllib.request.Request(f"{GATE_URL}?w={worker}", headers=_gate_headers())
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return bool(json.loads(r.read().decode()).get("due", False))
-    except Exception:
-        return True  # gate unreachable → poll DB as usual
-
-
-def gate_clear(worker):
-    try:
-        req = urllib.request.Request(f"{GATE_URL}?w={worker}", method="DELETE", headers=_gate_headers())
-        urllib.request.urlopen(req, timeout=5).read()
-    except Exception:
-        pass
+POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "60000"))
+MAX_IDLE_MS = int(os.environ.get("MAX_IDLE_INTERVAL_MS", "300000"))
 CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "2"))
 MAX_RETRIES = int(os.environ.get("WORKER_MAX_RETRIES", "3"))
 STALE_MINUTES = int(os.environ.get("WORKER_STALE_MINUTES", "15"))
@@ -165,7 +137,9 @@ def process_job(cur, job_id, workspace_id, product_id):
         nw, nh = max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale))
         resample = getattr(Image, "Resampling", Image).LANCZOS
         cutout = cutout.resize((nw, nh), resample)
-        canvas = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+        # A clean, opaque white reference matches the manual product-studio
+        # workflow and gives image models an unambiguous product silhouette.
+        canvas = Image.new("RGBA", (W, H), (255, 255, 255, 255))
         canvas.paste(cutout, ((W - nw) // 2, (H - nh) // 2), cutout)
         buf = io.BytesIO()
         canvas.save(buf, format="PNG")
@@ -219,11 +193,12 @@ def tick(conn):
             print(f"[img-worker] requeued {reclaimed} stale job(s)")
         jobs = claim(cur, CONCURRENCY)
         if not jobs:
-            gate_clear("img")
-            return
+            conn.commit()
+            return False
         for job_id, workspace_id, product_id in jobs:
             process_job(cur, job_id, workspace_id, product_id)
         conn.commit()
+        return True
 
 
 def main():
@@ -244,10 +219,11 @@ def main():
 
     conn = connect()
     print(f"[img-worker] starting poll={POLL_MS}ms concurrency={CONCURRENCY}")
+    idle_ms = POLL_MS
     while True:
         try:
-            if gate_open("img"):
-                tick(conn)
+            had_work = tick(conn)
+            idle_ms = POLL_MS if had_work else min(idle_ms * 2, MAX_IDLE_MS)
         except Exception as e:
             print(f"[img-worker] tick error: {e}", file=sys.stderr)
             try:
@@ -260,7 +236,7 @@ def main():
                 pass
             time.sleep(2)
             conn = connect()
-        time.sleep(POLL_MS / 1000.0)
+        time.sleep(idle_ms / 1000.0)
 
 
 if __name__ == "__main__":

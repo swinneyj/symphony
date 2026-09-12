@@ -1,0 +1,59 @@
+name: Deploy video worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "video-worker/**"
+      - ".github/workflows/deploy-video-worker.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: video-worker-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          ORACLE_VPS_HOST: ${{ secrets.ORACLE_VPS_HOST }}
+          ORACLE_VPS_SSH_KEY: ${{ secrets.ORACLE_VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$ORACLE_VPS_HOST" || { echo "Missing ORACLE_VPS_HOST"; exit 1; }
+          test -n "$ORACLE_VPS_SSH_KEY" || { echo "Missing ORACLE_VPS_SSH_KEY"; exit 1; }
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$ORACLE_VPS_SSH_KEY" > "$HOME/.ssh/oracle_worker_key"
+          chmod 600 "$HOME/.ssh/oracle_worker_key"
+          ssh-keyscan -H "$ORACLE_VPS_HOST" >> "$HOME/.ssh/known_hosts"
+
+      - name: Build and restart worker on Oracle VPS
+        shell: bash
+        env:
+          ORACLE_VPS_HOST: ${{ secrets.ORACLE_VPS_HOST }}
+          ORACLE_VPS_USER: ${{ secrets.ORACLE_VPS_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$ORACLE_VPS_USER" || { echo "Missing ORACLE_VPS_USER"; exit 1; }
+          ssh -i "$HOME/.ssh/oracle_worker_key" "$ORACLE_VPS_USER@$ORACLE_VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /home/opc/symphony
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          docker build -t symphony-video-worker:latest ./video-worker
+          docker rm -f symphony-video-worker 2>/dev/null || true
+          docker run -d \
+            --name symphony-video-worker \
+            --restart unless-stopped \
+            -p 8081:8080 \
+            symphony-video-worker:latest \
+            sh -c 'bws run --project-id 74f0a638-b3d9-4878-989d-b491001819bb -- node dist/index.js'
+          sleep 3
+          curl --fail --silent http://127.0.0.1:8081/ >/dev/null
+          docker ps --filter name=symphony-video-worker --format 'worker={{.Status}}'
+          REMOTE

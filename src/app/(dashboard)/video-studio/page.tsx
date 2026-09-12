@@ -69,6 +69,7 @@ interface Product {
   sceneImageUrl?: string | null;
   sourceType: "manual" | "link" | "tiktok_showcase";
   status: "raw" | "processing" | "ready" | "failed";
+  metadata?: { galleryImageUrls?: string[] } | null;
 }
 
 interface Formula {
@@ -322,7 +323,11 @@ export default function VideoStudioPage() {
         </TabsContent>
 
         <TabsContent value="image-studio" className="mt-4">
-          <ImageStudioTab workspaceId={workspaceId!} products={products} />
+          <ImageStudioTab
+            workspaceId={workspaceId!}
+            products={products}
+            onProductsChanged={() => loadProducts(workspaceId!)}
+          />
         </TabsContent>
 
         <TabsContent value="downloader" className="mt-4">

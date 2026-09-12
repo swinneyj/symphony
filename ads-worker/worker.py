@@ -6,9 +6,10 @@ Claims ad_sources with status='queued', downloads the video (yt-dlp),
 extracts audio (ffmpeg), transcribes (faster-whisper "small", CPU),
 then writes transcript segments + raw text back to the row.
 
-The app (Vercel) never touches the video bytes — the original ad is
-downloaded to /tmp, transcribed, and deleted. We keep the transcript
-(our own remix source), not the copyrighted video.
+The app (Vercel) never touches the source video bytes directly. The worker
+downloads the ad to /tmp for transcription, then removes the temporary file;
+when a Blob token is available it retains a private analysis copy so the
+multimodal creator-flow analyzer can inspect shot sequence and pacing.
 
 Status flow: queued → downloading → transcribing → transcribed | failed
 """
@@ -21,7 +22,6 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlencode
-import urllib.request
 import http.server
 import threading
 
@@ -38,36 +38,8 @@ BLOB_TOKEN = (
     or os.environ.get("BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN")
     or ""
 ).strip() or None
-POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "5000"))
-
-
-# ── Neon compute gate ────────────────────────────────────────────────────────
-# Skip the DB poll unless a KV job-flag is set (see neon-compute-frugality.md:
-# every DB wake costs the full 5-min suspend delay). Gate is best-effort:
-# any failure → poll the DB as usual.
-GATE_URL = os.environ.get("WORKER_GATE_URL", "https://www.symphonyapp.company/api/cron/worker-gate")
-GATE_SECRET = os.environ.get("CRON_SECRET", "")
-
-
-def _gate_headers():
-    return {"Authorization": f"Bearer {GATE_SECRET}"} if GATE_SECRET else {}
-
-
-def gate_open(worker):
-    try:
-        req = urllib.request.Request(f"{GATE_URL}?w={worker}", headers=_gate_headers())
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return bool(json.loads(r.read().decode()).get("due", False))
-    except Exception:
-        return True  # gate unreachable → poll DB as usual
-
-
-def gate_clear(worker):
-    try:
-        req = urllib.request.Request(f"{GATE_URL}?w={worker}", method="DELETE", headers=_gate_headers())
-        urllib.request.urlopen(req, timeout=5).read()
-    except Exception:
-        pass
+POLL_MS = int(os.environ.get("POLL_INTERVAL_MS", "60000"))
+MAX_IDLE_MS = int(os.environ.get("MAX_IDLE_INTERVAL_MS", "300000"))
 CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "2"))
 STALE_MINUTES = int(os.environ.get("WORKER_STALE_MINUTES", "15"))
 HEALTH_PORT = int(os.environ.get("PORT", "8082"))
@@ -132,12 +104,6 @@ def mark_transcribing(cur, source_id):
     )
 
 
-class TikTokLinkError(RuntimeError):
-    """Definitive TikTok link problem (product page, no video id) — NOT a
-    transient network failure. Re-raise instead of falling back to yt-dlp,
-    whose bot-wall errors (curl 28 etc.) mask the real reason."""
-
-
 def download_tiktok_direct(url, workdir):
     """TikTok video download that works from datacenter IPs.
 
@@ -159,13 +125,13 @@ def download_tiktok_direct(url, workdir):
     resp = session.get(url, timeout=30)
     resp.raise_for_status()
     if "/view/product/" in resp.url:
-        raise TikTokLinkError(
-            "This is a TikTok Shop product link, not a video — paste the "
-            "video link instead, or use the Shop import flow."
+        raise RuntimeError(
+            "This is a TikTok Shop product link, not a video — product resolution "
+            "isn't wired up yet. Paste an ad video URL or upload the file."
         )
     m = re.search(r"/video/(\d+)", resp.url)
     if not m:
-        raise TikTokLinkError(f"no TikTok video id found at {resp.url[:120]}")
+        raise RuntimeError(f"no TikTok video id found at {resp.url[:120]}")
     page = resp.text
     if m.group(1) not in page:  # short-link interstitial — refetch canonical page
         page = session.get(resp.url, timeout=30).text
@@ -262,10 +228,6 @@ def download_video(url, workdir, platform, blob_token):
         # direct page-parse path works (see download_tiktok_direct).
         try:
             return download_tiktok_direct(url, workdir)
-        except TikTokLinkError:
-            # Definitive link problem — surface the real reason, don't mask
-            # it with yt-dlp's bot-wall curl error.
-            raise
         except Exception as direct_err:  # noqa: BLE001 — fall back to yt-dlp
             print(
                 f"[ads-worker] direct tiktok download failed, falling back to yt-dlp: {direct_err}",
@@ -399,6 +361,16 @@ def process_row(conn, cur, source_id, source_url, video_url, platform):
         video_path, title, author = download_video(dl_url, workdir, platform, BLOB_TOKEN)
         mark_transcribing(cur, source_id)
         conn.commit()
+        # Keep a private copy long enough for Symphony's multimodal creator-
+        # reference analyzer to inspect shot structure and motion. It is never
+        # published or reused as generated footage.
+        stored_video_url = video_url
+        if BLOB_TOKEN:
+            stored_video_url = blob_put(
+                f"ad-sources/{source_id}.mp4",
+                open(video_path, "rb").read(),
+                "video/mp4",
+            )
         wav_path = extract_audio(video_path, workdir)
         segs, raw_text = transcribe(wav_path)
         if not raw_text:
@@ -408,10 +380,11 @@ def process_row(conn, cur, source_id, source_url, video_url, platform):
             UPDATE ad_sources
             SET status = 'transcribed', transcript = %s, raw_text = %s,
                 title = COALESCE(title, %s), author_name = COALESCE(author_name, %s),
+                video_url = COALESCE(%s, video_url),
                 error = NULL, updated_at = now()
             WHERE id = %s
             """,
-            (json.dumps(segs), raw_text, title, author, source_id),
+            (json.dumps(segs), raw_text, title, author, stored_video_url, source_id),
         )
         conn.commit()
         print(f"[ads-worker] transcribed source={source_id} segments={len(segs)} words={len(raw_text.split())}")
@@ -484,17 +457,6 @@ def extract_mp3(video_path, workdir):
     return mp3_path
 
 
-def strip_audio(video_path, workdir):
-    """ffmpeg: video → same video, no audio track (fast, stream-copied video)."""
-    muted_path = os.path.join(workdir, "muted.mp4")
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-i", video_path, "-an",
-         "-c:v", "copy", "-movflags", "+faststart", muted_path],
-        check=True, timeout=300,
-    )
-    return muted_path
-
-
 def detect_platform(url):
     if "tiktok.com" in url:
         return "tiktok"
@@ -503,34 +465,6 @@ def detect_platform(url):
     if "instagram.com" in url:
         return "instagram"
     return "other"
-
-
-def safe_filename(name, ext):
-    base = re.sub(r"[^\w\- ]+", "_", name or "download").strip("_") or "download"
-    return f"{base[:80]}.{ext}"
-
-
-def probe_video(path):
-    """Best-effort ffprobe → (width, height, duration_s). All None on failure."""
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-print_format", "json",
-             "-show_streams", "-show_format", path],
-            capture_output=True, text=True, timeout=60, check=True,
-        ).stdout
-        data = json.loads(out)
-        duration = None
-        width = height = None
-        for s in data.get("streams", []):
-            if s.get("codec_type") == "video":
-                width = s.get("width")
-                height = s.get("height")
-                duration = duration or s.get("duration")
-        if not duration:
-            duration = (data.get("format") or {}).get("duration")
-        return width, height, int(float(duration)) if duration else None
-    except Exception:  # noqa: BLE001 — metadata is best-effort
-        return None, None, None
 
 
 def claim_downloads(cur, limit):
@@ -545,7 +479,7 @@ def claim_downloads(cur, limit):
           LIMIT %s
           FOR UPDATE SKIP LOCKED
         )
-        RETURNING id, workspace_id, source_url, platform, want_audio, mute_video, created_by_id
+        RETURNING id, workspace_id, source_url, platform, want_audio
         """,
         (limit,),
     )
@@ -566,19 +500,16 @@ def requeue_stale_downloads(cur):
     return cur.rowcount
 
 
-def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio, mute_video, created_by):
+def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio):
     workdir = tempfile.mkdtemp(prefix="dl-worker-")
     try:
         # TikTok → DC-safe direct path; other platforms → yt-dlp impersonation.
         video_path, title, author = download_video(source_url, workdir, platform, BLOB_TOKEN)
+        video_url = blob_put(f"downloads/{dl_id}.mp4", open(video_path, "rb").read(), "video/mp4")
         audio_url = None
         if want_audio:
             mp3_path = extract_mp3(video_path, workdir)
             audio_url = blob_put(f"downloads/{dl_id}.mp3", open(mp3_path, "rb").read(), "audio/mpeg")
-        if mute_video:
-            # Strip audio from the stored mp4 (MP3 above keeps the sound).
-            video_path = strip_audio(video_path, workdir)
-        video_url = blob_put(f"downloads/{dl_id}.mp4", open(video_path, "rb").read(), "video/mp4")
         cur.execute(
             """
             UPDATE media_downloads
@@ -588,28 +519,6 @@ def process_download(conn, cur, dl_id, _ws, source_url, platform, want_audio, mu
             WHERE id = %s
             """,
             (title, author, video_url, audio_url, dl_id),
-        )
-        # Also surface it in the Media Library (media_assets) so downloaded
-        # videos are reusable (e.g. as a Video Clone source) without re-upload.
-        width, height, dur = probe_video(video_path)
-        cur.execute(
-            """
-            INSERT INTO media_assets
-              (workspace_id, uploaded_by_id, file_name, file_size, mime_type,
-               media_type, url, width, height, duration, alt)
-            VALUES (%s, %s, %s, %s, 'video/mp4', 'video', %s, %s, %s, %s, %s)
-            """,
-            (
-                _ws,
-                created_by,
-                safe_filename(title or f"download-{dl_id}", "mp4"),
-                os.path.getsize(video_path),
-                video_url,
-                width,
-                height,
-                dur,
-                title or source_url,
-            ),
         )
         conn.commit()
         print(f"[ads-worker] download {dl_id} done → {video_url}" + (" + mp3" if audio_url else ""))
@@ -645,10 +554,9 @@ def tick():
             conn.commit()
         dl_rows = claim_downloads(cur, CONCURRENCY)
         conn.commit()
-        for dl_id, ws, url, platform, want_audio, mute_video, created_by in dl_rows:
-            process_download(conn, cur, dl_id, ws, url, platform, want_audio, mute_video, created_by)
-        if not rows and not dl_rows:
-            gate_clear("ads")
+        for dl_id, ws, url, platform, want_audio in dl_rows:
+            process_download(conn, cur, dl_id, ws, url, platform, want_audio)
+        return bool(rows or dl_rows)
     finally:
         conn.close()
 
@@ -672,10 +580,12 @@ if __name__ == "__main__":
         daemon=True,
     ).start()
     print(f"[ads-worker] starting: poll={POLL_MS}ms concurrency={CONCURRENCY} healthz=:{HEALTH_PORT}")
+    idle_ms = POLL_MS
     while True:
         try:
-            if gate_open("ads"):
-                tick()
+            had_work = tick()
+            idle_ms = POLL_MS if had_work else min(idle_ms * 2, MAX_IDLE_MS)
         except Exception as e:  # noqa: BLE001 — keep the loop alive
             print(f"[ads-worker] tick error: {e}", file=sys.stderr)
-        time.sleep(POLL_MS / 1000.0)
+            idle_ms = POLL_MS
+        time.sleep(idle_ms / 1000.0)
