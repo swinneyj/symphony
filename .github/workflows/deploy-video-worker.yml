@@ -58,7 +58,12 @@ jobs:
             -p 8081:8080 \
             symphony-video-worker:latest \
             sh -c 'bws run --project-id 74f0a638-b3d9-4878-989d-b491001819bb -- node dist/index.js'
-          sleep 3
-          curl --fail --silent http://127.0.0.1:8081/ >/dev/null
+          sleep 8
+          if ! curl --fail --silent http://127.0.0.1:8081/ >/dev/null; then
+            echo 'Worker health check failed; diagnostics:'
+            docker ps -a --filter name=symphony-video-worker
+            docker logs --tail 120 symphony-video-worker || true
+            exit 1
+          fi
           docker ps --filter name=symphony-video-worker --format 'worker={{.Status}}'
           REMOTE
