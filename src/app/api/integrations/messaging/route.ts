@@ -32,7 +32,11 @@ export async function POST(request: Request) {
     const members = await db.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId)).limit(20);
     const userId = members.some((member) => member.userId === configuredUserId) ? configuredUserId : members[0]?.userId;
     if (!userId) throw new Error("No members were found in MESSAGING_WORKSPACE_ID");
-    const importResponse = await fetch(new URL("/api/products/import", request.url), {
+    // Call the importer on this immutable deployment, not the public alias.
+    // Otherwise a freshly promoted webhook can briefly self-fetch an older
+    // cached deployment from the custom domain.
+    const deploymentOrigin = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : request.url;
+    const importResponse = await fetch(new URL("/api/products/import", deploymentOrigin), {
       method: "POST",
       headers: { "content-type": "application/json", "x-symphony-integration-secret": process.env.MESSAGING_WEBHOOK_SECRET ?? "" },
       body: JSON.stringify({ workspaceId, userId, url: productLink }),
