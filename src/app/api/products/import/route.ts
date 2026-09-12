@@ -18,13 +18,13 @@ import { hasWorkspaceAccess } from "@/lib/workspace-access";
  */
 export async function POST(request: Request) {
   try {
+    const body = await request.json();
     const internal = request.headers.get("x-symphony-integration-secret") === process.env.MESSAGING_WEBHOOK_SECRET;
-    const session = internal ? { user: { id: process.env.MESSAGING_USER_ID ?? "" } } : await auth();
+    const session = internal ? { user: { id: typeof body.userId === "string" ? body.userId : process.env.MESSAGING_USER_ID ?? "" } } : await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
     const { workspaceId, url, urls } = body;
 
     if (!workspaceId || typeof workspaceId !== "string") {

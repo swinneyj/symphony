@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { products, videoBatchJobs } from "@/db/schema";
+import { products, videoBatchJobs, workspaceMembers } from "@/db/schema";
 import { flagJobs } from "@/lib/market/cache";
 
 export const runtime = "nodejs";
@@ -23,16 +23,19 @@ export async function POST(request: Request) {
   if (!productLink) return await reply(source, payload, "Send a TikTok Shop product link to start the Image Studio flow.");
 
   const workspaceId = process.env.MESSAGING_WORKSPACE_ID;
-  const userId = process.env.MESSAGING_USER_ID;
-  if (!workspaceId || !userId) {
-    return await reply(source, payload, "Messaging is not configured yet: set MESSAGING_WORKSPACE_ID and MESSAGING_USER_ID.", 503);
+  const configuredUserId = process.env.MESSAGING_USER_ID;
+  if (!workspaceId) {
+    return await reply(source, payload, "Messaging is not configured yet: set MESSAGING_WORKSPACE_ID.", 503);
   }
 
   try {
+    const members = await db.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId)).limit(20);
+    const userId = members.some((member) => member.userId === configuredUserId) ? configuredUserId : members[0]?.userId;
+    if (!userId) throw new Error("No members were found in MESSAGING_WORKSPACE_ID");
     const importResponse = await fetch(new URL("/api/products/import", request.url), {
       method: "POST",
       headers: { "content-type": "application/json", "x-symphony-integration-secret": process.env.MESSAGING_WEBHOOK_SECRET ?? "" },
-      body: JSON.stringify({ workspaceId, url: productLink }),
+      body: JSON.stringify({ workspaceId, userId, url: productLink }),
     });
     const importPayload = (await importResponse.json()) as { imported?: Array<typeof products.$inferSelect>; error?: string; failed?: Array<{ error?: string }> };
     const product = importPayload.imported?.[0];
