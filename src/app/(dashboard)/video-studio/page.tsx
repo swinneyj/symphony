@@ -68,10 +68,18 @@ interface Product {
   processedImageUrl: string | null;
   sceneImageUrl?: string | null;
   sourceType: "manual" | "link" | "tiktok_showcase";
+  sourceUrl?: string | null;
   tiktokProductId?: string | null;
   status: "raw" | "processing" | "ready" | "failed";
   latestJobStatus?: "queued" | "running" | "done" | "failed" | "cancelled" | null;
   metadata?: { galleryImageUrls?: string[] } | null;
+}
+
+function getEchoTikProductId(product: Product) {
+  if (product.tiktokProductId) return product.tiktokProductId;
+  if (!product.sourceUrl || product.sourceType === "manual") return null;
+  const match = product.sourceUrl.match(/(?:\/pdp\/|product\/|item\/)(?:[^/?#]+\/)?(\d{10,})/i);
+  return match?.[1] ?? null;
 }
 
 interface Formula {
@@ -758,7 +766,9 @@ function ProductsTab({
               </div>
             )}
           </div>
-          {products.map((product) => (
+          {products.map((product) => {
+            const echoTikId = getEchoTikProductId(product);
+            return (
             <div
               key={product.id}
               className={cn(
@@ -852,21 +862,12 @@ function ProductsTab({
                   <Wand2 className="h-3.5 w-3.5" />
                   Scene
                 </Button>
-                {product.tiktokProductId && (
+                {echoTikId && (
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setEchoTikProduct({
-                      source: "echotik",
-                      sourceProductId: product.tiktokProductId!,
-                      name: product.name,
-                      imageUrl: product.originalImageUrl,
-                      priceMin: product.price ? Number(product.price) : null,
-                      priceMax: product.price ? Number(product.price) : null,
-                      currency: "USD",
-                      categoryL1: null,
-                    })}
-                    title="Open EchoTik sales, GMV, creator, and video insights"
+                    onClick={() => window.open(`https://echotik.live/products/${echoTikId}`, "_blank", "noopener,noreferrer")}
+                    title="Open this product in EchoTik"
                   >
                     <TrendingUp className="h-3.5 w-3.5" />
                     EchoTik
@@ -877,7 +878,8 @@ function ProductsTab({
                 </Button>
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
       <Dialog open={Boolean(imagePreview)} onOpenChange={(open) => !open && setImagePreview(null)}>
