@@ -150,6 +150,24 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
     og.title ||
     parsed.hostname.replace(/^www\./, "") ||
     "Imported product";
+  const normalizedName = name.trim().slice(0, 255);
+
+  // TikTok sometimes withholds the product ID from server-side redirects even
+  // though it returns the same canonical product title. Use that stable title
+  // as a workspace-scoped fallback fingerprint for TikTok share links.
+  if (/(^|\.)tiktok\.com$/i.test(parsed.hostname)) {
+    const [existingTikTokTitle] = await db
+      .select()
+      .from(products)
+      .where(and(
+        eq(products.workspaceId, workspaceId),
+        eq(products.sourceType, "link"),
+        eq(products.name, normalizedName),
+      ))
+      .orderBy(desc(products.createdAt))
+      .limit(1);
+    if (existingTikTokTitle) return existingTikTokTitle;
+  }
   const description = og.description || null;
   let originalImageUrl = ogInfo?.image
     ? absolutize(ogInfo.image, parsed)
@@ -204,7 +222,7 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
     .values({
       workspaceId,
       createdById: userId,
-      name: name.trim().slice(0, 255),
+      name: normalizedName,
       description: description?.slice(0, 2000) || null,
       price,
       currency: og.priceCurrency || "USD",
