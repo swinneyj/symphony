@@ -20,12 +20,12 @@ export async function POST(request: Request) {
   const text = extractText(source, payload);
   const links = [...new Set(text.match(/https?:\/\/[^\s<>]+/gi) ?? [])].map((link) => link.replace(/[),.]+$/, ""));
   const productLink = links.find((link) => /tiktok\.com/i.test(link));
-  if (!productLink) return reply(source, payload, "Send a TikTok Shop product link to start the Image Studio flow.");
+  if (!productLink) return await reply(source, payload, "Send a TikTok Shop product link to start the Image Studio flow.");
 
   const workspaceId = process.env.MESSAGING_WORKSPACE_ID;
   const userId = process.env.MESSAGING_USER_ID;
   if (!workspaceId || !userId) {
-    return reply(source, payload, "Messaging is not configured yet: set MESSAGING_WORKSPACE_ID and MESSAGING_USER_ID.", 503);
+    return await reply(source, payload, "Messaging is not configured yet: set MESSAGING_WORKSPACE_ID and MESSAGING_USER_ID.", 503);
   }
 
   try {
@@ -58,9 +58,9 @@ export async function POST(request: Request) {
     }).returning({ id: videoBatchJobs.id });
     await db.update(products).set({ status: "processing", updatedAt: new Date() }).where(eq(products.id, product.id));
     await flagJobs("video");
-    return reply(source, payload, `Imported ${product.name}. Nano Banana Pro is preparing the clean reference now. Product ID: ${product.id}. Job ID: ${job.id}`);
+    return await reply(source, payload, `Imported ${product.name}. Nano Banana Pro is preparing the clean reference now. Product ID: ${product.id}. Job ID: ${job.id}`);
   } catch (error) {
-    return reply(source, payload, `Could not start the product flow: ${error instanceof Error ? error.message : "unknown error"}`, 422);
+    return await reply(source, payload, `Could not start the product flow: ${error instanceof Error ? error.message : "unknown error"}`, 422);
   }
 }
 
@@ -88,13 +88,16 @@ function extractText(source: string, payload: Record<string, unknown>) {
   return String(payload.text ?? payload.message ?? payload.body ?? "");
 }
 
-function reply(source: string, payload: Record<string, unknown>, text: string, status = 200) {
+async function reply(source: string, payload: Record<string, unknown>, text: string, status = 200) {
   if (source === "telegram" && process.env.TELEGRAM_BOT_TOKEN) {
     const chatId = (payload.message as { chat?: { id?: number | string } } | undefined)?.chat?.id;
-    if (chatId) void fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text }) });
+    if (chatId) {
+      const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text }) });
+      if (!response.ok) console.error("[messaging] Telegram sendMessage failed", response.status, (await response.text()).slice(0, 300));
+    }
   }
   if (source === "slack" && payload.response_url) {
-    void fetch(String(payload.response_url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_type: "in_channel", text }) });
+    await fetch(String(payload.response_url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_type: "in_channel", text }) });
   }
   return source === "slack" ? new NextResponse(JSON.stringify({ response_type: "in_channel", text }), { status, headers: { "content-type": "application/json" } }) : NextResponse.json({ ok: status < 400, text }, { status });
 }
