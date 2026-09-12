@@ -169,11 +169,12 @@ async function importOne(rawUrl: string, workspaceId: string, userId: string) {
     if (existingTikTokTitle) return existingTikTokTitle;
   }
   const description = og.description || null;
-  let originalImageUrl = ogInfo?.image
+  const structuredProductImage = extractTikTokVariantImage(html);
+  let originalImageUrl = structuredProductImage || (ogInfo?.image
     ? absolutize(ogInfo.image, parsed)
     : og.image
       ? absolutize(og.image, parsed)
-      : null;
+      : null);
   // Only trust TikTok's product-scoped social image here. Scanning every CDN
   // URL in the page can pick recommendation/ad imagery from another product.
   const galleryImageUrls = originalImageUrl ? [originalImageUrl] : [];
@@ -277,6 +278,58 @@ function extractJsonLdPrice(html: string): string | null {
   const re = /"offers"\s*:\s*{[^}]*?"price"\s*:\s*"?([\d.,]+)"?/i;
   const m = html.match(re);
   return m ? m[1] : null;
+}
+
+/**
+ * TikTok Shop PDPs expose the actual variant/catalog image in the structured
+ * product model. Prefer that image over og:image, which is often a lifestyle
+ * promotional graphic. This stays scoped to sale-property images so we never
+ * scan arbitrary CDN URLs from recommendations or reviews.
+ */
+function extractTikTokVariantImage(html: string): string | null {
+  if (!/<(?:link|meta)[^>]+(?:shop\.tiktok\.com|tiktok)/i.test(html)) return null;
+  const script = html.match(
+    /<script[^>]+id=["']__MODERN_ROUTER_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+  )?.[1];
+  if (!script) return null;
+  try {
+    const root = JSON.parse(script) as unknown;
+    let productModel: Record<string, unknown> | null = null;
+    const visit = (value: unknown) => {
+      if (productModel || value == null) return;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+        return;
+      }
+      if (typeof value !== "object") return;
+      const record = value as Record<string, unknown>;
+      if (record.product_model && typeof record.product_model === "object") {
+        productModel = record.product_model as Record<string, unknown>;
+        return;
+      }
+      for (const item of Object.values(record)) visit(item);
+    };
+    visit(root);
+    const saleProperties = productModel?.sale_properties;
+    if (!Array.isArray(saleProperties)) return null;
+    for (const property of saleProperties) {
+      const values = (property as Record<string, unknown>)?.property_values;
+      if (!Array.isArray(values)) continue;
+      for (const value of values) {
+        const image = (value as Record<string, unknown>)?.image;
+        const urls = image && typeof image === "object"
+          ? (image as Record<string, unknown>).url_list
+          : null;
+        if (Array.isArray(urls)) {
+          const first = urls.find((url): url is string => typeof url === "string");
+          if (first) return first;
+        }
+      }
+    }
+  } catch {
+    // Fall back to og:image when TikTok changes its SSR shape.
+  }
+  return null;
 }
 
 function absolutize(url: string, base: URL): string {
