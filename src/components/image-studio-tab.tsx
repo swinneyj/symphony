@@ -736,14 +736,19 @@ export function ImageStudioTab({
     <div className="space-y-6">
       {/* Stage 1: Image generation */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-blue-600" /> 1 · Image — Nano Banana Pro
-          </CardTitle>
-          <CardDescription>
-            Re-render the product into a custom scene. The product image is used only as a scale/dimension
-            reference — the output is an original commercial scene.
-          </CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-blue-600" /> 1 · Image — Nano Banana Pro
+            </CardTitle>
+            <CardDescription>
+              Re-render the product into a custom scene. The product image is used only as a scale/dimension
+              reference — the output is an original commercial scene.
+            </CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={resetAll}>
+            <X className="h-4 w-4" /> Start over
+          </Button>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="rounded-lg border bg-muted/20 p-4">
