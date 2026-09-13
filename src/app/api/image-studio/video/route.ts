@@ -41,6 +41,9 @@ export async function POST(request: Request) {
     const outputCount = Math.min(Math.max(Number(body.outputCount) || 1, 1), 4);
     const durationSec = Math.min(Math.max(Number(body.durationSec) || 5, 3), 10);
     const prompt = (body.prompt as string) ?? "";
+    const prompts = Array.isArray(body.prompts)
+      ? (body.prompts as unknown[]).map((value) => typeof value === "string" ? value.trim() : "").slice(0, 2)
+      : [];
 
     if (!workspaceId || imageUrls.length === 0) {
       return NextResponse.json({ error: "workspaceId and imageUrl are required" }, { status: 400 });
@@ -91,7 +94,7 @@ export async function POST(request: Request) {
           sceneCount: imageUrls.length,
           noChain: true,
           imageStudio: true,
-          ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+          ...(prompts[sceneIndex] || prompt.trim() ? { prompt: prompts[sceneIndex] || prompt.trim() } : {}),
         },
         });
       }

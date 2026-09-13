@@ -171,6 +171,21 @@ function sceneSuggestionsForProduct(product: StudioProduct | undefined, category
   ];
 }
 
+function motionSuggestionsForProduct(product: StudioProduct | undefined, category: string) {
+  const name = product?.name ?? "product";
+  if (name.toLowerCase().includes("stroller") || name.toLowerCase().includes("car seat")) {
+    return [
+      `Track backward smoothly at stroller height as the exact ${name} rolls forward along the park walkway. Show only realistic adult hands and forearms gently pushing the handle; no face or body. Keep the stroller centered and fully visible, with natural wheel rotation, stable canopy and seat, consistent sunlight and shadows, and no baby, foreground children, text, or graphics. End on a stable composition suitable for a seamless loop.`,
+      `Follow the exact ${name} moving slowly along a paved path beside a vibrant children's playground. Use a gentle side-to-front camera arc while keeping the stroller centered and fully visible. Children may play softly out of focus in the distant background, with no identifiable faces and no interaction with the stroller. Preserve realistic wheel motion, materials, proportions, lighting, and shadows; no text or graphics.`,
+    ];
+  }
+  const setting = category === "beauty" ? "a bright vanity" : category === "food-beverage" || category === "supplements" ? "a clean kitchen counter" : "a context-appropriate lifestyle setting";
+  return [
+    `Use subtle, physically realistic motion around the exact ${name} in ${setting}. Keep the product stable, centered, correctly proportioned, and fully visible while the camera makes a gentle push-in with consistent lighting, contact shadows, and reflections. No invented packaging, text, or extra products.`,
+    `Create a complementary second angle of the exact ${name} in ${setting}. Use a slow, smooth lateral camera move with believable product contact and stable branding, preserving the original materials, proportions, lighting, and readable details. No extra products, hands, or graphics.`,
+  ];
+}
+
 function galleryReferences(product: StudioProduct): StudioReference[] {
   const hero = product.originalImageUrl;
   return (product.metadata?.galleryImageUrls ?? [])
@@ -275,6 +290,7 @@ export function ImageStudioTab({
   const [analyzingCreator, setAnalyzingCreator] = useState(false);
   const [creatorAnalysis, setCreatorAnalysis] = useState("");
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
+  const [alternateImagePrompt, setAlternateImagePrompt] = useState(DEFAULT_PROMPT);
   const [buildingPrompt, setBuildingPrompt] = useState(false);
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
@@ -295,6 +311,7 @@ export function ImageStudioTab({
   const [motionPrompt, setMotionPrompt] = useState(
     "Subtle natural product motion with physically realistic contact, stable packaging, and a gentle handheld camera push-in."
   );
+  const [alternateMotionPrompt, setAlternateMotionPrompt] = useState("Use a complementary second camera angle with physically realistic product motion, stable framing, and consistent lighting.");
   const [vidBatchId, setVidBatchId] = useState<string | null>(null);
   const [vidResults, setVidResults] = useState<BatchJob[]>([]);
   const [vidBusy, setVidBusy] = useState(false);
@@ -326,6 +343,7 @@ export function ImageStudioTab({
         if (typeof draft.productUrl === "string") setProductUrl(draft.productUrl);
         if (typeof draft.productCategory === "string") setProductCategory(draft.productCategory);
         if (typeof draft.prompt === "string") setPrompt(draft.prompt);
+        if (typeof draft.alternateImagePrompt === "string") setAlternateImagePrompt(draft.alternateImagePrompt);
         if (Array.isArray(draft.references)) setReferences(draft.references as StudioReference[]);
         if (typeof draft.creatorVideoUrl === "string") setCreatorVideoUrl(draft.creatorVideoUrl);
         if (typeof draft.creatorAnalysis === "string") setCreatorAnalysis(draft.creatorAnalysis);
@@ -343,6 +361,7 @@ export function ImageStudioTab({
         if (typeof draft.outputCount === "number") setOutputCount(draft.outputCount);
         if (typeof draft.durationSec === "number") setDurationSec(draft.durationSec);
         if (typeof draft.motionPrompt === "string") setMotionPrompt(draft.motionPrompt);
+        if (typeof draft.alternateMotionPrompt === "string") setAlternateMotionPrompt(draft.alternateMotionPrompt);
         if (typeof draft.vidBatchId === "string") { setVidBatchId(draft.vidBatchId); setVidBusy(true); }
         if (Array.isArray(draft.vidResults)) setVidResults(draft.vidResults as BatchJob[]);
         if (Array.isArray(draft.approvedVideos)) setApprovedVideos(draft.approvedVideos as string[]);
@@ -364,15 +383,15 @@ export function ImageStudioTab({
   useEffect(() => {
     if (!workspaceId || !draftHydrated.current || typeof window === "undefined") return;
     window.localStorage.setItem(`symphony:image-studio:${workspaceId}`, JSON.stringify({
-      productId, productUrl, productCategory, prompt, references, creatorVideoUrl, creatorAnalysis,
+      productId, productUrl, productCategory, prompt, alternateImagePrompt, references, creatorVideoUrl, creatorAnalysis,
       aspectRatio, imageSize, batchSize, sceneMode, approvedImages, genBatchId, genImages, approvedImage,
-      videoType, videoQuality, videoRatio, outputCount, durationSec, motionPrompt, vidBatchId,
+      videoType, videoQuality, videoRatio, outputCount, durationSec, motionPrompt, alternateMotionPrompt, vidBatchId,
       vidResults, approvedVideos, approvedVideo, reverse, overlayLines, overlayBoxes, selectedOverlay,
       overlayFontSize, asmBatchId, asmResult,
     }));
-  }, [workspaceId, productId, productUrl, productCategory, prompt, references, creatorVideoUrl, creatorAnalysis,
+  }, [workspaceId, productId, productUrl, productCategory, prompt, alternateImagePrompt, references, creatorVideoUrl, creatorAnalysis,
     aspectRatio, imageSize, batchSize, sceneMode, approvedImages, genBatchId, genImages, approvedImage, videoType, videoQuality,
-    videoRatio, outputCount, durationSec, motionPrompt, vidBatchId, vidResults, approvedVideos, approvedVideo, reverse,
+    videoRatio, outputCount, durationSec, motionPrompt, alternateMotionPrompt, vidBatchId, vidResults, approvedVideos, approvedVideo, reverse,
     overlayLines, overlayBoxes, selectedOverlay, overlayFontSize, asmBatchId, asmResult]);
 
   const product = products.find((p) => p.id === productId);
@@ -515,20 +534,22 @@ export function ImageStudioTab({
   };
 
   /** GPT Library: expand the short idea into a production Nano Banana prompt. */
-  const buildPromptWithGpt = useCallback(async () => {
+  const buildPromptWithGpt = useCallback(async (target: "primary" | "secondary" = "primary") => {
     setBuildingPrompt(true);
     try {
+      const inputPrompt = target === "secondary" ? alternateImagePrompt : prompt;
       const context = product
         ? `Product: ${product.name}\nProduct description: ${product.description ?? "Not provided"}\nCategory: ${productCategory}\nReferences: ${references.length > 0 ? `Image 1 is the clean primary product reference; Images 2-${references.length + 1} are supporting product/detail references.` : "Use the product image as the primary reference."}\nAspect ratio: ${aspectRatio}, image size: ${imageSize}. This still becomes the first frame of a TikTok Shop video. Preserve exact packaging, label, logo, colors, readable text, proportions, and product count. Use physically believable surface contact, perspective, shadows, and reflections. Leave negative space for captions.`
         : `Aspect ratio: ${aspectRatio}, image size: ${imageSize}. Scene render for a TikTok Shop product video — leave clean negative space for captions.`;
       const res = await fetch("/api/gpt/prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preset: "nano_banana", input: prompt, context }),
+        body: JSON.stringify({ preset: "nano_banana", input: inputPrompt, context }),
       });
       const data = await res.json();
       if (res.ok && data.text) {
-        setPrompt(data.text);
+        if (target === "secondary") setAlternateImagePrompt(data.text);
+        else setPrompt(data.text);
       } else {
         alert(data.error ?? "Prompt build failed");
       }
@@ -537,7 +558,7 @@ export function ImageStudioTab({
     } finally {
       setBuildingPrompt(false);
     }
-  }, [product, productCategory, references.length, prompt, aspectRatio, imageSize]);
+  }, [product, productCategory, references.length, prompt, alternateImagePrompt, aspectRatio, imageSize]);
 
   // Poll stage 1 (images done when every job has a sceneImageUrl or failed)
   useBatchPoll(
@@ -592,6 +613,7 @@ export function ImageStudioTab({
           sourceImageUrl: sourceImage,
           referenceImageUrls: references.map((reference) => reference.url),
           prompt: prompt.trim(),
+          prompts: sceneMode === "two" ? [prompt.trim(), alternateImagePrompt.trim()] : [prompt.trim()],
           aspectRatio,
           imageSize,
           batchSize,
@@ -649,6 +671,7 @@ export function ImageStudioTab({
           outputCount,
           durationSec,
           prompt: motionPrompt.trim(),
+          prompts: sceneMode === "two" ? [motionPrompt.trim(), alternateMotionPrompt.trim()] : [motionPrompt.trim()],
         }),
       });
       const data = await res.json();
@@ -757,6 +780,10 @@ export function ImageStudioTab({
                   setProductId(event.target.value);
                   setReferences(nextProduct ? galleryReferences(nextProduct) : []);
                   setPrompt(defaultPromptForProduct(nextProduct, productCategory));
+                  setAlternateImagePrompt(sceneSuggestionsForProduct(nextProduct, productCategory)[1]?.prompt ?? defaultPromptForProduct(nextProduct, productCategory));
+                  const motionSuggestions = motionSuggestionsForProduct(nextProduct, productCategory);
+                  setMotionPrompt(motionSuggestions[0]);
+                  setAlternateMotionPrompt(motionSuggestions[1]);
                 }}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
@@ -795,7 +822,7 @@ export function ImageStudioTab({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
             <div className="space-y-2">
               <Label>Native Pro resolution</Label>
               <select
@@ -820,6 +847,30 @@ export function ImageStudioTab({
                     {n} image{n > 1 ? "s" : ""}
                   </option>
                 ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Scene layout</Label>
+              <select
+                value={sceneMode}
+                onChange={(e) => {
+                  const next = e.target.value as "single" | "two";
+                  setSceneMode(next);
+                  if (next === "two" && alternateImagePrompt === DEFAULT_PROMPT) {
+                    setAlternateImagePrompt(sceneSuggestionsForProduct(product, productCategory)[1]?.prompt ?? DEFAULT_PROMPT);
+                  }
+                  if (next === "two" && alternateMotionPrompt.startsWith("Use a complementary second camera angle")) {
+                    setAlternateMotionPrompt(motionSuggestionsForProduct(product, productCategory)[1]);
+                  }
+                  if (next === "single") {
+                    setApprovedImages((current) => current.slice(0, 1));
+                    setApprovedVideos((current) => current.slice(0, 1));
+                  }
+                }}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="single">Single scene</option>
+                <option value="two">Two-scene cut (2 scenes)</option>
               </select>
             </div>
             <div className="flex items-end">
@@ -944,7 +995,7 @@ export function ImageStudioTab({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={buildPromptWithGpt}
+                onClick={() => buildPromptWithGpt()}
                 disabled={buildingPrompt || !prompt.trim()}
               >
                 {buildingPrompt ? (
@@ -961,6 +1012,23 @@ export function ImageStudioTab({
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe the scene…"
             />
+              {sceneMode === "two" && (
+                <div className="space-y-2 rounded-md border border-dashed p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Scene 2 image prompt</Label>
+                  <Button type="button" variant="outline" size="sm" onClick={() => buildPromptWithGpt("secondary")} disabled={buildingPrompt || !alternateImagePrompt.trim()}>
+                    {buildingPrompt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />} Build prompt
+                  </Button>
+                </div>
+                <Textarea
+                  rows={4}
+                  value={alternateImagePrompt}
+                  onChange={(e) => setAlternateImagePrompt(e.target.value)}
+                  placeholder="Describe the second scene…"
+                />
+                <p className="text-xs text-muted-foreground">This prompt is used only for the second generated scene. Edit it to create a meaningfully different composition.</p>
+              </div>
+            )}
           </div>
 
           {sourceImage && product && (
@@ -1074,6 +1142,12 @@ export function ImageStudioTab({
                     onChange={(e) => {
                       const next = e.target.value as "single" | "two";
                       setSceneMode(next);
+                      if (next === "two" && alternateImagePrompt === DEFAULT_PROMPT) {
+                        setAlternateImagePrompt(sceneSuggestionsForProduct(product, productCategory)[1]?.prompt ?? DEFAULT_PROMPT);
+                      }
+                      if (next === "two" && alternateMotionPrompt.startsWith("Use a complementary second camera angle")) {
+                        setAlternateMotionPrompt(motionSuggestionsForProduct(product, productCategory)[1]);
+                      }
                       if (next === "single") {
                         setApprovedImages((current) => current.slice(0, 1));
                         setApprovedVideos((current) => current.slice(0, 1));
@@ -1168,6 +1242,18 @@ export function ImageStudioTab({
                   onChange={(event) => setMotionPrompt(event.target.value)}
                   placeholder="Describe only the movement, camera action, timing, and hand/product interaction…"
                 />
+                {sceneMode === "two" && (
+                  <div className="space-y-2 rounded-md border border-dashed p-3">
+                    <Label>Scene 2 motion prompt</Label>
+                    <Textarea
+                      rows={4}
+                      value={alternateMotionPrompt}
+                      onChange={(event) => setAlternateMotionPrompt(event.target.value)}
+                      placeholder="Describe the movement and camera action for scene 2…"
+                    />
+                    <p className="text-xs text-muted-foreground">This prompt is sent only with the second scene image.</p>
+                  </div>
+                )}
               </div>
 
               {vidResults.length > 0 && (

@@ -36,11 +36,14 @@ export async function POST(request: Request) {
       ? [...new Set(body.referenceImageUrls.filter((url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url)))].slice(0, 5)
       : [];
     const prompt = (body.prompt as string) ?? "";
+    const prompts = Array.isArray(body.prompts)
+      ? (body.prompts as unknown[]).filter((value): value is string => typeof value === "string" && Boolean(value.trim())).slice(0, 2)
+      : prompt.trim() ? [prompt] : [];
     const aspectRatio = (body.aspectRatio as string) ?? "9:16";
     const imageSize = (body.imageSize as string) ?? "2K";
     const batchSize = Math.min(Math.max(Number(body.batchSize) || 1, 1), 4);
 
-    if (!workspaceId || !sourceImageUrl || !prompt.trim()) {
+    if (!workspaceId || !sourceImageUrl || prompts.length === 0) {
       return NextResponse.json(
         { error: "workspaceId, sourceImageUrl and prompt are required" },
         { status: 400 }
@@ -61,16 +64,17 @@ export async function POST(request: Request) {
       .values({
         workspaceId,
         createdById: session.user.id,
-        name: `Image Studio: ${prompt.slice(0, 40)}`,
+        name: `Image Studio: ${prompts[0].slice(0, 40)}`,
         quality: "standard",
         provider: "kling",
         status: "queued",
-        totalCount: batchSize,
+        totalCount: batchSize * prompts.length,
       })
       .returning();
 
-    for (let i = 0; i < batchSize; i++) {
-      await db.insert(videoBatchJobs).values({
+    for (let sceneIndex = 0; sceneIndex < prompts.length; sceneIndex++) {
+      for (let i = 0; i < batchSize; i++) {
+        await db.insert(videoBatchJobs).values({
         batchId: batch.id,
         workspaceId,
         productId: null,
@@ -80,7 +84,9 @@ export async function POST(request: Request) {
         metadata: {
           sourceImageUrl,
           referenceImageUrls,
-          scenePromptTemplate: prompt.trim(),
+          scenePromptTemplate: prompts[sceneIndex].trim(),
+          sceneIndex,
+          sceneCount: prompts.length,
           quality: "pro",
           strictProvider: true,
           requestedImageModel: "gemini-3-pro-image",
@@ -89,7 +95,8 @@ export async function POST(request: Request) {
           noChain: true,
           imageStudio: true,
         },
-      });
+        });
+      }
     }
     await Promise.all([flagJobs("video"), flagJobs("img")]);
 
