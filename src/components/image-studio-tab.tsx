@@ -153,6 +153,24 @@ function defaultPromptForProduct(product: StudioProduct | undefined, category: s
   return DEFAULT_PROMPT;
 }
 
+function sceneSuggestionsForProduct(product: StudioProduct | undefined, category: string) {
+  const name = product?.name ?? "product";
+  if (name.toLowerCase().includes("stroller") || name.toLowerCase().includes("car seat")) {
+    const base = `Create a photorealistic lifestyle image of the exact ${name} from the reference, fully assembled and correctly proportioned. Preserve the exact materials, shape, wheels, seat, harness, canopy, accessories, colors, proportions, and branding shown in the reference. No baby, no children, no hands, no extra product, no invented accessories, no text or graphics. Keep the product fully visible and leave clean negative space for captions.`;
+    return [
+      { label: "Vibrant park walkway", prompt: `${base} Center it on a clean paved walkway in a beautiful vibrant park with warm natural daylight, lush green trees, colorful flowers, realistic soft shadows, and a softly blurred background.` },
+      { label: "Airport terminal", prompt: `${base} Place it in a bright modern airport terminal beside carry-on luggage, with realistic overhead lighting, polished floor reflections, and a softly blurred travel background.` },
+      { label: "Neighborhood sidewalk", prompt: `${base} Place it on a clean neighborhood sidewalk lined with trees and modern homes during golden-hour daylight, with believable perspective and contact shadows.` },
+      { label: "Car-trunk convenience", prompt: `${base} Show it standing beside an open compact SUV trunk in a clean outdoor parking area, demonstrating its travel-ready size with natural daylight and realistic shadows.` },
+    ];
+  }
+  const surface = category === "beauty" ? "a bright minimal vanity" : category === "food-beverage" || category === "supplements" ? "a clean kitchen counter" : "a clean, context-appropriate lifestyle setting";
+  return [
+    { label: "Hero product shot", prompt: `${defaultPromptForProduct(product, category)}` },
+    { label: "Lifestyle setting", prompt: `Create a photorealistic lifestyle image of the exact ${name} from the reference in ${surface}, with natural lighting and realistic contact shadows. Preserve exact packaging, branding, colors, proportions, and readable text. No extra products, people, or invented accessories. Leave clean negative space for captions.` },
+  ];
+}
+
 function galleryReferences(product: StudioProduct): StudioReference[] {
   const hero = product.originalImageUrl;
   return (product.metadata?.galleryImageUrls ?? [])
@@ -291,6 +309,65 @@ export function ImageStudioTab({
   const [asmBusy, setAsmBusy] = useState(false);
   /** Expandable playback: {url, title} of the video being watched full-size. */
   const [playingVideo, setPlayingVideo] = useState<{ url: string; title: string } | null>(null);
+  const draftHydrated = useRef(false);
+
+  // Image Studio is mounted/unmounted as the parent tab changes. Keep the
+  // working draft local to this workspace so a tab switch never discards it.
+  useEffect(() => {
+    if (!workspaceId || typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(`symphony:image-studio:${workspaceId}`);
+    if (raw) {
+      try {
+        const draft = JSON.parse(raw) as Record<string, unknown>;
+        if (typeof draft.productId === "string") setProductId(draft.productId);
+        if (typeof draft.productUrl === "string") setProductUrl(draft.productUrl);
+        if (typeof draft.productCategory === "string") setProductCategory(draft.productCategory);
+        if (typeof draft.prompt === "string") setPrompt(draft.prompt);
+        if (Array.isArray(draft.references)) setReferences(draft.references as StudioReference[]);
+        if (typeof draft.creatorVideoUrl === "string") setCreatorVideoUrl(draft.creatorVideoUrl);
+        if (typeof draft.creatorAnalysis === "string") setCreatorAnalysis(draft.creatorAnalysis);
+        if (typeof draft.aspectRatio === "string") setAspectRatio(draft.aspectRatio);
+        if (draft.imageSize === "1K" || draft.imageSize === "2K" || draft.imageSize === "4K") setImageSize(draft.imageSize);
+        if (typeof draft.batchSize === "number") setBatchSize(draft.batchSize);
+        if (typeof draft.genBatchId === "string") { setGenBatchId(draft.genBatchId); setGenBusy(true); }
+        if (Array.isArray(draft.genImages)) setGenImages(draft.genImages as BatchJob[]);
+        if (typeof draft.approvedImage === "string") setApprovedImage(draft.approvedImage);
+        if (typeof draft.videoType === "string") setVideoType(draft.videoType);
+        if (typeof draft.videoQuality === "string") setVideoQuality(draft.videoQuality);
+        if (typeof draft.videoRatio === "string") setVideoRatio(draft.videoRatio);
+        if (typeof draft.outputCount === "number") setOutputCount(draft.outputCount);
+        if (typeof draft.durationSec === "number") setDurationSec(draft.durationSec);
+        if (typeof draft.motionPrompt === "string") setMotionPrompt(draft.motionPrompt);
+        if (typeof draft.vidBatchId === "string") { setVidBatchId(draft.vidBatchId); setVidBusy(true); }
+        if (Array.isArray(draft.vidResults)) setVidResults(draft.vidResults as BatchJob[]);
+        if (typeof draft.approvedVideo === "string") setApprovedVideo(draft.approvedVideo);
+        if (typeof draft.reverse === "boolean") setReverse(draft.reverse);
+        if (Array.isArray(draft.overlayLines)) setOverlayLines(draft.overlayLines as string[]);
+        if (Array.isArray(draft.overlayBoxes)) setOverlayBoxes(draft.overlayBoxes as OverlayBox[]);
+        if (typeof draft.selectedOverlay === "number") setSelectedOverlay(draft.selectedOverlay);
+        if (typeof draft.overlayFontSize === "number") setOverlayFontSize(draft.overlayFontSize);
+        if (typeof draft.asmBatchId === "string") { setAsmBatchId(draft.asmBatchId); setAsmBusy(true); }
+        if (draft.asmResult && typeof draft.asmResult === "object") setAsmResult(draft.asmResult as BatchJob);
+      } catch {
+        window.localStorage.removeItem(`symphony:image-studio:${workspaceId}`);
+      }
+    }
+    draftHydrated.current = true;
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || !draftHydrated.current || typeof window === "undefined") return;
+    window.localStorage.setItem(`symphony:image-studio:${workspaceId}`, JSON.stringify({
+      productId, productUrl, productCategory, prompt, references, creatorVideoUrl, creatorAnalysis,
+      aspectRatio, imageSize, batchSize, genBatchId, genImages, approvedImage,
+      videoType, videoQuality, videoRatio, outputCount, durationSec, motionPrompt, vidBatchId,
+      vidResults, approvedVideo, reverse, overlayLines, overlayBoxes, selectedOverlay,
+      overlayFontSize, asmBatchId, asmResult,
+    }));
+  }, [workspaceId, productId, productUrl, productCategory, prompt, references, creatorVideoUrl, creatorAnalysis,
+    aspectRatio, imageSize, batchSize, genBatchId, genImages, approvedImage, videoType, videoQuality,
+    videoRatio, outputCount, durationSec, motionPrompt, vidBatchId, vidResults, approvedVideo, reverse,
+    overlayLines, overlayBoxes, selectedOverlay, overlayFontSize, asmBatchId, asmResult]);
 
   const product = products.find((p) => p.id === productId);
   // A previous lifestyle render must never become the product-truth source.
@@ -811,6 +888,24 @@ export function ImageStudioTab({
           </div>
 
           <div className="space-y-2">
+            {product && (
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <Label>Suggested scenes</Label>
+                    <p className="text-xs text-muted-foreground">Choose a product-appropriate starting point, then edit the prompt below.</p>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">No generation yet</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {sceneSuggestionsForProduct(product, productCategory).map((suggestion) => (
+                    <Button key={suggestion.label} type="button" size="sm" variant="outline" onClick={() => setPrompt(suggestion.prompt)}>
+                      {suggestion.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <Label>Prompt</Label>
               <Button

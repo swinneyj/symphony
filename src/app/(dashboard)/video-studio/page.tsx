@@ -271,7 +271,7 @@ export default function VideoStudioPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="products" className="mt-4">
+        <TabsContent forceMount value="products" className="mt-4">
           <ProductsTab
             workspaceId={workspaceId!}
             products={products}
@@ -280,14 +280,14 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
-        <TabsContent value="discover" className="mt-4">
+        <TabsContent forceMount value="discover" className="mt-4">
           <DiscoverTab
             workspaceId={workspaceId!}
             onAdded={() => loadProducts(workspaceId!)}
           />
         </TabsContent>
 
-        <TabsContent value="formulas" className="mt-4">
+        <TabsContent forceMount value="formulas" className="mt-4">
           <FormulasTab
             workspaceId={workspaceId!}
             formulas={formulas}
@@ -296,7 +296,7 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
-        <TabsContent value="voices" className="mt-4">
+        <TabsContent forceMount value="voices" className="mt-4">
           <VoicesTab
             workspaceId={workspaceId!}
             voices={voices}
@@ -304,7 +304,7 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
-        <TabsContent value="personas" className="mt-4">
+        <TabsContent forceMount value="personas" className="mt-4">
           <PersonasTab
             workspaceId={workspaceId!}
             personas={personas}
@@ -313,7 +313,7 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
-        <TabsContent value="batches" className="mt-4">
+        <TabsContent forceMount value="batches" className="mt-4">
           <BatchStudioTab
             workspaceId={workspaceId!}
             products={products}
@@ -328,7 +328,7 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
-        <TabsContent value="market" className="mt-4">
+        <TabsContent forceMount value="market" className="mt-4">
           <MarketTab
             workspaceId={workspaceId!}
             formulas={formulas}
@@ -340,11 +340,11 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
-        <TabsContent value="clone" className="mt-4">
+        <TabsContent forceMount value="clone" className="mt-4">
           <CloneTab workspaceId={workspaceId!} />
         </TabsContent>
 
-        <TabsContent value="image-studio" className="mt-4">
+        <TabsContent forceMount value="image-studio" className="mt-4">
           <ImageStudioTab
             workspaceId={workspaceId!}
             products={products}
@@ -352,11 +352,11 @@ export default function VideoStudioPage() {
           />
         </TabsContent>
 
-        <TabsContent value="downloader" className="mt-4">
+        <TabsContent forceMount value="downloader" className="mt-4">
           <DownloaderTab workspaceId={workspaceId!} />
         </TabsContent>
 
-        <TabsContent value="queue" className="mt-4">
+        <TabsContent forceMount value="queue" className="mt-4">
           <PostQueueTab workspaceId={workspaceId!} />
         </TabsContent>
       </Tabs>

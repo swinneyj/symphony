@@ -1,5 +1,6 @@
 import { sql, markDone, failWithRetry, updateBatchProgress, type JobRow } from "../db.js";
 import { generateSceneImage } from "../providers.js";
+import { notifyTelegramImage, notifyTelegramMessage } from "../telegram.js";
 
 /**
  * scene_render job: AI re-render of the product into an ORIGINAL scene (spec §10).
@@ -53,6 +54,9 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
        productCleanup?: boolean;
        /** Preserve the source packaging verbatim for clean references. */
        fidelityLock?: boolean;
+       telegramChatId?: string;
+       telegramStage?: "clean_reference" | "lifestyle";
+       telegramPrompt?: string;
        };
 
      let product: ProductRow | null = null;
@@ -159,6 +163,17 @@ export async function handleSceneRender(job: JobRow, maxRetries: number): Promis
          imageModel,
        },
      });
+     if (jobMeta.telegramChatId && sceneUrl && !sceneUrl.startsWith("dryrun:")) {
+       try {
+         if (jobMeta.telegramStage === "clean_reference") {
+           await notifyTelegramImage(jobMeta.telegramChatId, sceneUrl, `Clean product reference ready for ${product?.name ?? "your product"}. Approve to generate the lifestyle image.`, `img_approve:${job.id}`);
+         } else if (jobMeta.telegramStage === "lifestyle") {
+           await notifyTelegramImage(jobMeta.telegramChatId, sceneUrl, `Lifestyle image ready.\n\nPrompt:\n${jobMeta.telegramPrompt ?? jobMeta.scenePromptTemplate ?? "Product-specific lifestyle scene"}\n\nApprove to generate the video.`, `video_approve:${job.id}`);
+         }
+       } catch (telegramError) {
+         console.warn(`[video-worker] Telegram image notification failed for job=${job.id}:`, telegramError);
+       }
+     }
      if (job.batch_id) await updateBatchProgress(job.batch_id);
 
      // Chain: scene_render done → enqueue footage from the rendered frame.

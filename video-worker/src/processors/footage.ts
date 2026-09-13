@@ -2,6 +2,7 @@ import { blobToken } from "../env.js";
 import { sql, markDone, failWithRetry, updateBatchProgress, type JobRow } from "../db.js";
 import { generateFootage, type Engine, MissingKeyError } from "../providers.js";
 import { buildScenePrompt } from "../prompt.js";
+import { notifyTelegramOptions, notifyTelegramVideo } from "../telegram.js";
 
 /**
  * Footage job: generates the video clip for one product.
@@ -34,6 +35,8 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
       seed?: number;
       noChain?: boolean;
       prompt?: string;
+      telegramChatId?: string;
+      telegramProductName?: string;
     };
 
     let product: ProductRow | null = null;
@@ -120,6 +123,17 @@ export async function handleFootage(job: JobRow, maxRetries: number): Promise<vo
     });
 
     await markDone(job.id, { footage_url: result.url });
+    if (meta.telegramChatId && result.url && !result.url.startsWith("dryrun:")) {
+      try {
+        await notifyTelegramVideo(meta.telegramChatId, result.url, `${meta.telegramProductName ?? "Product"} video is ready to review and download.`);
+        await notifyTelegramOptions(meta.telegramChatId, "Choose a finishing style in Symphony:", [
+          { text: "Clean export", callbackData: `finish:clean:${job.id}` },
+          { text: "Reverse loop", callbackData: `finish:reverse:${job.id}` },
+        ]);
+      } catch (telegramError) {
+        console.warn(`[video-worker] Telegram video notification failed for job=${job.id}:`, telegramError);
+      }
+    }
     if (job.batch_id) await updateBatchProgress(job.batch_id);
     // Chain: footage done → enqueue final assembly (voiceover + concat).
     // Image Studio sets noChain=true; it chains its own assembly explicitly.

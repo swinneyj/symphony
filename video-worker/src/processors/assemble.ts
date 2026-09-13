@@ -5,6 +5,7 @@ import { sql, markDone, failWithRetry, type JobRow } from "../db.js";
 import { generateVoiceover } from "../tts.js";
 import { renderPlaceholder } from "../providers.js";
 import { runQc } from "../qc.js";
+import { notifyTelegramVideo } from "../telegram.js";
 
 /** Run-view overlay box: position fractions (canvas center anchor) plus the
  *  style burned into the final video — hex font color, hex box color, and a
@@ -301,6 +302,13 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
         ...(qc ? { qc: { flag: qc.flag, score: Math.round(qc.score * 10) / 10, motion: Math.round(qc.motion * 10) / 10, letterbox: qc.letterbox, reasons: qc.reasons } } : {}),
       },
     });
+    if (typeof meta.telegramChatId === "string" && url && !url.startsWith("dryrun:")) {
+      try {
+        await notifyTelegramVideo(meta.telegramChatId, url, `${String(meta.telegramProductName ?? "Product")} final video is ready to post.`);
+      } catch (telegramError) {
+        console.warn(`[video-worker] Telegram final-video notification failed for job=${job.id}:`, telegramError);
+      }
+    }
     console.log(`[video-worker] assemble done job=${job.id} vo=${haveVoiceover}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
