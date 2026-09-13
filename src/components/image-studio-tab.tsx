@@ -176,7 +176,7 @@ function motionSuggestionsForProduct(product: StudioProduct | undefined, categor
   if (name.toLowerCase().includes("stroller") || name.toLowerCase().includes("car seat")) {
     return [
       `Track backward smoothly at stroller height as the exact ${name} rolls forward along the park walkway. Show only realistic adult hands and forearms gently pushing the handle; no face or body. Keep the stroller centered and fully visible, with natural wheel rotation, stable canopy and seat, consistent sunlight and shadows, and no baby, foreground children, text, or graphics. End on a stable composition suitable for a seamless loop.`,
-      `Follow the exact ${name} moving slowly along a paved path beside a vibrant children's playground. Use a gentle side-to-front camera arc while keeping the stroller centered and fully visible. Children may play softly out of focus in the distant background, with no identifiable faces and no interaction with the stroller. Preserve realistic wheel motion, materials, proportions, lighting, and shadows; no text or graphics.`,
+      `Follow the exact ${name} through a complementary, product-appropriate secondary setting. Use a gentle side-to-front camera arc while keeping the stroller centered and fully visible. Preserve realistic wheel motion, materials, proportions, lighting, and shadows; no text or graphics.`,
     ];
   }
   const setting = category === "beauty" ? "a bright vanity" : category === "food-beverage" || category === "supplements" ? "a clean kitchen counter" : "a context-appropriate lifestyle setting";
@@ -291,6 +291,7 @@ export function ImageStudioTab({
   const [creatorAnalysis, setCreatorAnalysis] = useState("");
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [alternateImagePrompt, setAlternateImagePrompt] = useState(DEFAULT_PROMPT);
+  const [sceneDirections, setSceneDirections] = useState<[string, string]>(["", ""]);
   const [buildingPrompt, setBuildingPrompt] = useState(false);
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
@@ -299,6 +300,7 @@ export function ImageStudioTab({
   const [genImages, setGenImages] = useState<BatchJob[]>([]);
   const [genBusy, setGenBusy] = useState(false);
   const [sceneMode, setSceneMode] = useState<"single" | "two">("single");
+  const [scenePromptTarget, setScenePromptTarget] = useState<"primary" | "secondary">("primary");
   const [approvedImages, setApprovedImages] = useState<string[]>([]);
 
   // Stage 2 state
@@ -344,6 +346,7 @@ export function ImageStudioTab({
         if (typeof draft.productCategory === "string") setProductCategory(draft.productCategory);
         if (typeof draft.prompt === "string") setPrompt(draft.prompt);
         if (typeof draft.alternateImagePrompt === "string") setAlternateImagePrompt(draft.alternateImagePrompt);
+        if (Array.isArray(draft.sceneDirections)) setSceneDirections([String(draft.sceneDirections[0] ?? ""), String(draft.sceneDirections[1] ?? "")]);
         if (Array.isArray(draft.references)) setReferences(draft.references as StudioReference[]);
         if (typeof draft.creatorVideoUrl === "string") setCreatorVideoUrl(draft.creatorVideoUrl);
         if (typeof draft.creatorAnalysis === "string") setCreatorAnalysis(draft.creatorAnalysis);
@@ -351,6 +354,7 @@ export function ImageStudioTab({
         if (draft.imageSize === "1K" || draft.imageSize === "2K" || draft.imageSize === "4K") setImageSize(draft.imageSize);
         if (typeof draft.batchSize === "number") setBatchSize(draft.batchSize);
         if (draft.sceneMode === "single" || draft.sceneMode === "two") setSceneMode(draft.sceneMode);
+        if (draft.scenePromptTarget === "primary" || draft.scenePromptTarget === "secondary") setScenePromptTarget(draft.scenePromptTarget);
         if (Array.isArray(draft.approvedImages)) setApprovedImages(draft.approvedImages as string[]);
         if (typeof draft.genBatchId === "string") { setGenBatchId(draft.genBatchId); setGenBusy(true); }
         if (Array.isArray(draft.genImages)) setGenImages(draft.genImages as BatchJob[]);
@@ -383,20 +387,25 @@ export function ImageStudioTab({
   useEffect(() => {
     if (!workspaceId || !draftHydrated.current || typeof window === "undefined") return;
     window.localStorage.setItem(`symphony:image-studio:${workspaceId}`, JSON.stringify({
-      productId, productUrl, productCategory, prompt, alternateImagePrompt, references, creatorVideoUrl, creatorAnalysis,
-      aspectRatio, imageSize, batchSize, sceneMode, approvedImages, genBatchId, genImages, approvedImage,
+      productId, productUrl, productCategory, prompt, alternateImagePrompt, sceneDirections, references, creatorVideoUrl, creatorAnalysis,
+      aspectRatio, imageSize, batchSize, sceneMode, scenePromptTarget, approvedImages, genBatchId, genImages, approvedImage,
       videoType, videoQuality, videoRatio, outputCount, durationSec, motionPrompt, alternateMotionPrompt, vidBatchId,
       vidResults, approvedVideos, approvedVideo, reverse, overlayLines, overlayBoxes, selectedOverlay,
       overlayFontSize, asmBatchId, asmResult,
     }));
-  }, [workspaceId, productId, productUrl, productCategory, prompt, alternateImagePrompt, references, creatorVideoUrl, creatorAnalysis,
-    aspectRatio, imageSize, batchSize, sceneMode, approvedImages, genBatchId, genImages, approvedImage, videoType, videoQuality,
+  }, [workspaceId, productId, productUrl, productCategory, prompt, alternateImagePrompt, sceneDirections, references, creatorVideoUrl, creatorAnalysis,
+    aspectRatio, imageSize, batchSize, sceneMode, scenePromptTarget, approvedImages, genBatchId, genImages, approvedImage, videoType, videoQuality,
     videoRatio, outputCount, durationSec, motionPrompt, alternateMotionPrompt, vidBatchId, vidResults, approvedVideos, approvedVideo, reverse,
     overlayLines, overlayBoxes, selectedOverlay, overlayFontSize, asmBatchId, asmResult]);
 
   const product = products.find((p) => p.id === productId);
   // A previous lifestyle render must never become the product-truth source.
   const sourceImage = product?.processedImageUrl ?? product?.originalImageUrl ?? null;
+  const imagePromptForScene = (index: number) => {
+    const base = index === 0 ? prompt : alternateImagePrompt;
+    const direction = sceneDirections[index];
+    return direction.trim() ? `${base.trim()}\n\nScene-specific direction: ${direction.trim()}` : base.trim();
+  };
 
   useEffect(() => {
     if (!preparingProductId) return;
@@ -612,8 +621,8 @@ export function ImageStudioTab({
           workspaceId,
           sourceImageUrl: sourceImage,
           referenceImageUrls: references.map((reference) => reference.url),
-          prompt: prompt.trim(),
-          prompts: sceneMode === "two" ? [prompt.trim(), alternateImagePrompt.trim()] : [prompt.trim()],
+          prompt: imagePromptForScene(0),
+          prompts: sceneMode === "two" ? [imagePromptForScene(0), imagePromptForScene(1)] : [imagePromptForScene(0)],
           aspectRatio,
           imageSize,
           batchSize,
@@ -981,13 +990,20 @@ export function ImageStudioTab({
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
                     <Label>Suggested scenes</Label>
-                    <p className="text-xs text-muted-foreground">Choose a product-appropriate starting point, then edit the prompt below.</p>
+                    <p className="text-xs text-muted-foreground">Choose which scene to edit, then apply a product-appropriate starting point.</p>
                   </div>
                   <span className="text-[10px] text-muted-foreground">No generation yet</span>
                 </div>
+                {sceneMode === "two" && (
+                  <div className="mb-2 flex items-center gap-2 text-xs">
+                    <span className="text-muted-foreground">Apply suggestion to:</span>
+                    <Button type="button" size="sm" variant={scenePromptTarget === "primary" ? "default" : "outline"} onClick={() => setScenePromptTarget("primary")}>Scene 1</Button>
+                    <Button type="button" size="sm" variant={scenePromptTarget === "secondary" ? "default" : "outline"} onClick={() => setScenePromptTarget("secondary")}>Scene 2</Button>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {sceneSuggestionsForProduct(product, productCategory).map((suggestion) => (
-                    <Button key={suggestion.label} type="button" size="sm" variant="outline" onClick={() => setPrompt(suggestion.prompt)}>
+                    <Button key={suggestion.label} type="button" size="sm" variant="outline" onClick={() => scenePromptTarget === "secondary" ? setAlternateImagePrompt(suggestion.prompt) : setPrompt(suggestion.prompt)}>
                       {suggestion.label}
                     </Button>
                   ))}
@@ -1017,7 +1033,12 @@ export function ImageStudioTab({
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe the scene…"
             />
-              {sceneMode === "two" && (
+            <Input
+              value={sceneDirections[0]}
+              onChange={(e) => setSceneDirections((current) => [e.target.value, current[1]])}
+              placeholder="Optional Scene 1 direction (appended without changing the base prompt)"
+            />
+            {sceneMode === "two" && (
                 <div className="space-y-2 rounded-md border border-dashed p-3">
                 <div className="flex items-center justify-between gap-2">
                   <Label>Scene 2 image prompt</Label>
@@ -1030,6 +1051,11 @@ export function ImageStudioTab({
                   value={alternateImagePrompt}
                   onChange={(e) => setAlternateImagePrompt(e.target.value)}
                   placeholder="Describe the second scene…"
+                />
+                <Input
+                  value={sceneDirections[1]}
+                  onChange={(e) => setSceneDirections((current) => [current[0], e.target.value])}
+                  placeholder="Optional Scene 2 direction (appended without changing the base prompt)"
                 />
                 <p className="text-xs text-muted-foreground">This prompt is used only for the second generated scene. Edit it to create a meaningfully different composition.</p>
               </div>
