@@ -32,6 +32,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const workspaceId = (body.workspaceId as string) ?? "";
     const imageUrl = (body.imageUrl as string) ?? "";
+    const imageUrls: string[] = Array.isArray(body.imageUrls)
+      ? ([...new Set((body.imageUrls as unknown[]).filter((url): url is string => typeof url === "string" && /^https?:\/\//.test(url)))].slice(0, 2) as string[])
+      : imageUrl ? [imageUrl] : [];
     const videoType = (body.videoType as string) ?? "03";
     const quality = (body.quality as string) ?? "720p";
     const aspectRatio = (body.aspectRatio as string) ?? "9:16";
@@ -39,7 +42,7 @@ export async function POST(request: Request) {
     const durationSec = Math.min(Math.max(Number(body.durationSec) || 5, 3), 10);
     const prompt = (body.prompt as string) ?? "";
 
-    if (!workspaceId || !imageUrl) {
+    if (!workspaceId || imageUrls.length === 0) {
       return NextResponse.json({ error: "workspaceId and imageUrl are required" }, { status: 400 });
     }
     if (!["01", "03"].includes(videoType)) {
@@ -60,16 +63,17 @@ export async function POST(request: Request) {
       .values({
         workspaceId,
         createdById: session.user.id,
-        name: `Kling Video: ${imageUrl.slice(0, 40)}`,
+        name: `Kling Video: ${imageUrls.length > 1 ? "two-scene cut" : imageUrls[0].slice(0, 40)}`,
         quality: quality === "1080p" ? "pro" : "standard",
         provider: "kling",
         status: "queued",
-        totalCount: outputCount,
+        totalCount: outputCount * imageUrls.length,
       })
       .returning();
 
-    for (let i = 0; i < outputCount; i++) {
-      await db.insert(videoBatchJobs).values({
+    for (let sceneIndex = 0; sceneIndex < imageUrls.length; sceneIndex++) {
+      for (let i = 0; i < outputCount; i++) {
+        await db.insert(videoBatchJobs).values({
         batchId: batch.id,
         workspaceId,
         productId: null,
@@ -77,17 +81,20 @@ export async function POST(request: Request) {
         jobType: "footage",
         status: "queued",
         metadata: {
-          sceneImageUrl: imageUrl,
+          sceneImageUrl: imageUrls[sceneIndex],
           videoEngine: videoType === "01" ? "kling_v1" : "kling_v3",
           resolution: quality,
           aspectRatio,
           durationSec,
           seed: Date.now() % 1_000_000 + i, // variation across outputs
+          sceneIndex,
+          sceneCount: imageUrls.length,
           noChain: true,
           imageStudio: true,
           ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
         },
-      });
+        });
+      }
     }
     await Promise.all([flagJobs("video"), flagJobs("img")]);
 

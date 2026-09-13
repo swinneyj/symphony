@@ -72,8 +72,12 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     const { execSync } = await import("node:child_process");
     execSync(`mkdir -p ${workdir}`, { stdio: "ignore" });
 
-    const footageUrl = (job.metadata?.footageUrl as string | undefined) ?? job.footage_url;
-    if (!footageUrl) {
+    const footageUrls = Array.isArray(job.metadata?.footageUrls)
+      ? (job.metadata?.footageUrls as unknown[]).filter((url): url is string => typeof url === "string").slice(0, 2)
+      : ((job.metadata?.footageUrl as string | undefined) ?? job.footage_url)
+        ? [((job.metadata?.footageUrl as string | undefined) ?? job.footage_url)!]
+        : [];
+    if (footageUrls.length === 0) {
       await failWithRetry(job, "no footage available for this product (footage job did not complete)", maxRetries);
       return;
     }
@@ -103,15 +107,30 @@ export async function handleAssemble(job: JobRow, maxRetries: number): Promise<v
     // 2. Footage (download, or re-render placeholder for dry-run markers)
     let footagePath = `${workdir}/footage.mp4`;
     const extendMode = (job.metadata?.extendMode as string | undefined) ?? null;
-    if (footageUrl.startsWith("dryrun:")) {
-      await renderPlaceholder(6, "720p", footagePath);
+    const { writeFile } = await import("node:fs/promises");
+    const footagePaths: string[] = [];
+    for (let index = 0; index < footageUrls.length; index++) {
+      const url = footageUrls[index];
+      const path = `${workdir}/footage-${index}.mp4`;
+      if (url.startsWith("dryrun:")) {
+        await renderPlaceholder(6, "720p", path);
+      } else {
+        const res = await fetch(url, {
+          headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
+        });
+        if (!res.ok) throw new Error(`failed to download footage: ${res.status}`);
+        await writeFile(path, Buffer.from(await res.arrayBuffer()));
+      }
+      footagePaths.push(path);
+    }
+    if (footagePaths.length === 1) {
+      footagePath = footagePaths[0];
     } else {
-      const res = await fetch(footageUrl, {
-        headers: blobToken() ? { Authorization: `Bearer ${blobToken()}` } : undefined,
-      });
-      if (!res.ok) throw new Error(`failed to download footage: ${res.status}`);
-      const { writeFile } = await import("node:fs/promises");
-      await writeFile(footagePath, Buffer.from(await res.arrayBuffer()));
+      const inputs = footagePaths.flatMap((path) => ["-i", path]);
+      const concatInputs = footagePaths.map((_, index) => `[${index}:v:0]`).join("");
+      const concatPath = `${workdir}/footage-concat.mp4`;
+      execFileSync("ffmpeg", ["-y", ...inputs, "-filter_complex", `${concatInputs}concat=n=${footagePaths.length}:v=1:a=0[v]`, "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", concatPath], { stdio: "ignore", timeout: 180_000 });
+      footagePath = concatPath;
     }
 
     // 2b. Reverse-extend (spec §10.7): play clip forward then backward — 10s

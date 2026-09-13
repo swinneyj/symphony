@@ -282,6 +282,8 @@ export function ImageStudioTab({
   const [genBatchId, setGenBatchId] = useState<string | null>(null);
   const [genImages, setGenImages] = useState<BatchJob[]>([]);
   const [genBusy, setGenBusy] = useState(false);
+  const [sceneMode, setSceneMode] = useState<"single" | "two">("single");
+  const [approvedImages, setApprovedImages] = useState<string[]>([]);
 
   // Stage 2 state
   const [approvedImage, setApprovedImage] = useState<string | null>(null);
@@ -296,6 +298,7 @@ export function ImageStudioTab({
   const [vidBatchId, setVidBatchId] = useState<string | null>(null);
   const [vidResults, setVidResults] = useState<BatchJob[]>([]);
   const [vidBusy, setVidBusy] = useState(false);
+  const [approvedVideos, setApprovedVideos] = useState<string[]>([]);
 
   // Stage 3 state
   const [approvedVideo, setApprovedVideo] = useState<string | null>(null);
@@ -329,9 +332,11 @@ export function ImageStudioTab({
         if (typeof draft.aspectRatio === "string") setAspectRatio(draft.aspectRatio);
         if (draft.imageSize === "1K" || draft.imageSize === "2K" || draft.imageSize === "4K") setImageSize(draft.imageSize);
         if (typeof draft.batchSize === "number") setBatchSize(draft.batchSize);
+        if (draft.sceneMode === "single" || draft.sceneMode === "two") setSceneMode(draft.sceneMode);
+        if (Array.isArray(draft.approvedImages)) setApprovedImages(draft.approvedImages as string[]);
         if (typeof draft.genBatchId === "string") { setGenBatchId(draft.genBatchId); setGenBusy(true); }
         if (Array.isArray(draft.genImages)) setGenImages(draft.genImages as BatchJob[]);
-        if (typeof draft.approvedImage === "string") setApprovedImage(draft.approvedImage);
+        if (typeof draft.approvedImage === "string") { setApprovedImage(draft.approvedImage); if (!Array.isArray(draft.approvedImages)) setApprovedImages([draft.approvedImage]); }
         if (typeof draft.videoType === "string") setVideoType(draft.videoType);
         if (typeof draft.videoQuality === "string") setVideoQuality(draft.videoQuality);
         if (typeof draft.videoRatio === "string") setVideoRatio(draft.videoRatio);
@@ -340,7 +345,8 @@ export function ImageStudioTab({
         if (typeof draft.motionPrompt === "string") setMotionPrompt(draft.motionPrompt);
         if (typeof draft.vidBatchId === "string") { setVidBatchId(draft.vidBatchId); setVidBusy(true); }
         if (Array.isArray(draft.vidResults)) setVidResults(draft.vidResults as BatchJob[]);
-        if (typeof draft.approvedVideo === "string") setApprovedVideo(draft.approvedVideo);
+        if (Array.isArray(draft.approvedVideos)) setApprovedVideos(draft.approvedVideos as string[]);
+        if (typeof draft.approvedVideo === "string") { setApprovedVideo(draft.approvedVideo); if (!Array.isArray(draft.approvedVideos)) setApprovedVideos([draft.approvedVideo]); }
         if (typeof draft.reverse === "boolean") setReverse(draft.reverse);
         if (Array.isArray(draft.overlayLines)) setOverlayLines(draft.overlayLines as string[]);
         if (Array.isArray(draft.overlayBoxes)) setOverlayBoxes(draft.overlayBoxes as OverlayBox[]);
@@ -359,14 +365,14 @@ export function ImageStudioTab({
     if (!workspaceId || !draftHydrated.current || typeof window === "undefined") return;
     window.localStorage.setItem(`symphony:image-studio:${workspaceId}`, JSON.stringify({
       productId, productUrl, productCategory, prompt, references, creatorVideoUrl, creatorAnalysis,
-      aspectRatio, imageSize, batchSize, genBatchId, genImages, approvedImage,
+      aspectRatio, imageSize, batchSize, sceneMode, approvedImages, genBatchId, genImages, approvedImage,
       videoType, videoQuality, videoRatio, outputCount, durationSec, motionPrompt, vidBatchId,
-      vidResults, approvedVideo, reverse, overlayLines, overlayBoxes, selectedOverlay,
+      vidResults, approvedVideos, approvedVideo, reverse, overlayLines, overlayBoxes, selectedOverlay,
       overlayFontSize, asmBatchId, asmResult,
     }));
   }, [workspaceId, productId, productUrl, productCategory, prompt, references, creatorVideoUrl, creatorAnalysis,
-    aspectRatio, imageSize, batchSize, genBatchId, genImages, approvedImage, videoType, videoQuality,
-    videoRatio, outputCount, durationSec, motionPrompt, vidBatchId, vidResults, approvedVideo, reverse,
+    aspectRatio, imageSize, batchSize, sceneMode, approvedImages, genBatchId, genImages, approvedImage, videoType, videoQuality,
+    videoRatio, outputCount, durationSec, motionPrompt, vidBatchId, vidResults, approvedVideos, approvedVideo, reverse,
     overlayLines, overlayBoxes, selectedOverlay, overlayFontSize, asmBatchId, asmResult]);
 
   const product = products.find((p) => p.id === productId);
@@ -601,8 +607,29 @@ export function ImageStudioTab({
     }
   };
 
+  const toggleApprovedImage = (url: string) => {
+    if (sceneMode === "single") {
+      setApprovedImages((current) => current[0] === url ? [] : [url]);
+      setApprovedImage((current) => current === url ? null : url);
+      return;
+    }
+    setApprovedImages((current) => current.includes(url) ? current.filter((entry) => entry !== url) : current.length < 2 ? [...current, url] : current);
+    setApprovedImage((current) => current === url ? (approvedImages.find((entry) => entry !== url) ?? null) : current ?? url);
+  };
+
+  const toggleApprovedVideo = (url: string) => {
+    if (sceneMode === "single") {
+      setApprovedVideos((current) => current[0] === url ? [] : [url]);
+      setApprovedVideo((current) => current === url ? null : url);
+      return;
+    }
+    setApprovedVideos((current) => current.includes(url) ? current.filter((entry) => entry !== url) : current.length < 2 ? [...current, url] : current);
+    setApprovedVideo((current) => current === url ? (approvedVideos.find((entry) => entry !== url) ?? null) : current ?? url);
+  };
+
   const runVideoGen = async () => {
-    if (!approvedImage) {
+    const imageUrls = sceneMode === "two" ? approvedImages : approvedImage ? [approvedImage] : [];
+    if (imageUrls.length !== (sceneMode === "two" ? 2 : 1)) {
       toast.error("Approve an image first");
       return;
     }
@@ -614,7 +641,8 @@ export function ImageStudioTab({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           workspaceId,
-          imageUrl: approvedImage,
+          imageUrl: imageUrls[0],
+          imageUrls,
           videoType,
           quality: videoQuality,
           aspectRatio: videoRatio,
@@ -634,7 +662,8 @@ export function ImageStudioTab({
   };
 
   const runAssemble = async () => {
-    if (!approvedVideo) {
+    const footageUrls = sceneMode === "two" ? approvedVideos : approvedVideo ? [approvedVideo] : [];
+    if (footageUrls.length !== (sceneMode === "two" ? 2 : 1)) {
       toast.error("Approve a video first");
       return;
     }
@@ -646,7 +675,8 @@ export function ImageStudioTab({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           workspaceId,
-          footageUrl: approvedVideo,
+          footageUrl: footageUrls[0],
+          footageUrls,
           reverse,
           overlayBlocks: overlayLines.map((l) => l.trim()).filter(Boolean),
           overlayLayout: overlayLines
@@ -670,9 +700,11 @@ export function ImageStudioTab({
     setGenBatchId(null);
     setGenImages([]);
     setApprovedImage(null);
+    setApprovedImages([]);
     setVidBatchId(null);
     setVidResults([]);
     setApprovedVideo(null);
+    setApprovedVideos([]);
     setAsmBatchId(null);
     setAsmResult(null);
   };
@@ -963,20 +995,20 @@ export function ImageStudioTab({
                           alt={`render ${i + 1}`}
                           className={cn(
                             "aspect-[9/16] w-full cursor-pointer rounded-md border-2 object-cover transition",
-                            approvedImage === j.sceneImageUrl
+                                  approvedImages.includes(j.sceneImageUrl)
                               ? "border-blue-600 ring-2 ring-blue-600/30"
                               : "border-border hover:border-blue-400"
                           )}
-                          onClick={() => setApprovedImage((current) => current === j.sceneImageUrl ? null : j.sceneImageUrl)}
+                          onClick={() => toggleApprovedImage(j.sceneImageUrl!)}
                         />
                         <Button
                           size="sm"
-                          variant={approvedImage === j.sceneImageUrl ? "default" : "outline"}
+                          variant={approvedImages.includes(j.sceneImageUrl) ? "default" : "outline"}
                           className="w-full"
-                          onClick={() => setApprovedImage((current) => current === j.sceneImageUrl ? null : j.sceneImageUrl)}
+                          onClick={() => toggleApprovedImage(j.sceneImageUrl!)}
                         >
-                          {approvedImage === j.sceneImageUrl && <CheckCircle2 className="h-3.5 w-3.5" />}
-                          {approvedImage === j.sceneImageUrl ? "Approved" : "Use this"}
+                          {approvedImages.includes(j.sceneImageUrl) && <CheckCircle2 className="h-3.5 w-3.5" />}
+                          {approvedImages.includes(j.sceneImageUrl) ? (sceneMode === "two" ? `Scene ${approvedImages.indexOf(j.sceneImageUrl) + 1}` : "Approved") : "Use this"}
                         </Button>
                         <Button size="sm" variant="ghost" className="w-full" asChild>
                           <a href={`/api/image-studio/jobs/${j.id}/asset?kind=scene&download=1`}>
@@ -1036,6 +1068,24 @@ export function ImageStudioTab({
             <>
               <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                 <div className="space-y-2">
+                  <Label>Scene layout</Label>
+                  <select
+                    value={sceneMode}
+                    onChange={(e) => {
+                      const next = e.target.value as "single" | "two";
+                      setSceneMode(next);
+                      if (next === "single") {
+                        setApprovedImages((current) => current.slice(0, 1));
+                        setApprovedVideos((current) => current.slice(0, 1));
+                      }
+                    }}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="single">Single scene</option>
+                    <option value="two">Two-scene cut (2 clips)</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
                   <Label>Video type</Label>
                   <select
                     value={videoType}
@@ -1077,7 +1127,7 @@ export function ImageStudioTab({
                     onChange={(e) => setOutputCount(Number(e.target.value))}
                     className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
-                    {[1, 2, 3, 4].map((n) => (
+                    {[1, 2, 3, 4].filter((n) => sceneMode === "single" || n === 1).map((n) => (
                       <option key={n} value={n}>
                         {n} video{n > 1 ? "s" : ""}
                       </option>
@@ -1122,7 +1172,7 @@ export function ImageStudioTab({
 
               {vidResults.length > 0 && (
                 <div className="space-y-2">
-                  <Label>Generated videos — pick one for final assembly</Label>
+                  <Label>{sceneMode === "two" ? "Generated videos — select both scenes" : "Generated videos — pick one for final assembly"}</Label>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     {vidResults.map((j, i) => (
                       <div key={j.id} className="space-y-1.5">
@@ -1133,7 +1183,7 @@ export function ImageStudioTab({
                                 src={`/api/image-studio/jobs/${j.id}/asset?kind=footage`}
                                 className={cn(
                                   "aspect-[9/16] w-full cursor-pointer rounded-md border-2 bg-black object-contain transition",
-                                  approvedVideo === j.footageUrl
+                                  approvedVideos.includes(j.footageUrl)
                                     ? "border-blue-600 ring-2 ring-blue-600/30"
                                     : "border-border hover:border-blue-400"
                                 )}
@@ -1141,7 +1191,7 @@ export function ImageStudioTab({
                                 loop
                                 playsInline
                                 preload="metadata"
-                                onClick={() => setApprovedVideo(j.footageUrl)}
+                                onClick={() => toggleApprovedVideo(j.footageUrl!)}
                               />
                               <button
                                 type="button"
@@ -1161,12 +1211,12 @@ export function ImageStudioTab({
                             </div>
                             <Button
                               size="sm"
-                              variant={approvedVideo === j.footageUrl ? "default" : "outline"}
+                              variant={approvedVideos.includes(j.footageUrl) ? "default" : "outline"}
                               className="w-full"
-                              onClick={() => setApprovedVideo(j.footageUrl)}
+                              onClick={() => toggleApprovedVideo(j.footageUrl!)}
                             >
-                              {approvedVideo === j.footageUrl && <CheckCircle2 className="h-3.5 w-3.5" />}
-                              {approvedVideo === j.footageUrl ? "Approved" : "Use this"}
+                              {approvedVideos.includes(j.footageUrl) && <CheckCircle2 className="h-3.5 w-3.5" />}
+                              {approvedVideos.includes(j.footageUrl) ? (sceneMode === "two" ? `Scene ${approvedVideos.indexOf(j.footageUrl) + 1}` : "Approved") : "Use this"}
                             </Button>
                             <Button size="sm" variant="ghost" className="w-full" asChild>
                               <a href={`/api/image-studio/jobs/${j.id}/asset?kind=footage&download=1`}>

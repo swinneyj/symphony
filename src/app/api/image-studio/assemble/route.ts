@@ -30,6 +30,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const workspaceId = (body.workspaceId as string) ?? "";
     const footageUrl = (body.footageUrl as string) ?? "";
+    const footageUrls = Array.isArray(body.footageUrls)
+      ? [...new Set(body.footageUrls.filter((url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url)))].slice(0, 2)
+      : footageUrl ? [footageUrl] : [];
     const reverse = Boolean(body.reverse);
     const overlayBlocks = Array.isArray(body.overlayBlocks)
       ? (body.overlayBlocks as string[]).map(String).filter((l) => l.trim().length > 0)
@@ -37,7 +40,7 @@ export async function POST(request: Request) {
     const overlayLayout = Array.isArray(body.overlayLayout) ? body.overlayLayout : null;
     const overlayFontSize = Number(body.overlayFontSize) || 72;
 
-    if (!workspaceId || !footageUrl) {
+    if (!workspaceId || footageUrls.length === 0) {
       return NextResponse.json({ error: "workspaceId and footageUrl are required" }, { status: 400 });
     }
     if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
@@ -49,7 +52,7 @@ export async function POST(request: Request) {
       .values({
         workspaceId,
         createdById: session.user.id,
-        name: `Image Studio Final${reverse ? " (reverse)" : ""}${overlayBlocks.length > 0 ? " + text" : ""}`,
+        name: `Image Studio Final${footageUrls.length > 1 ? " (two-scene)" : ""}${reverse ? " (reverse)" : ""}${overlayBlocks.length > 0 ? " + text" : ""}`,
         quality: "standard",
         provider: "kling",
         status: "queued",
@@ -65,7 +68,8 @@ export async function POST(request: Request) {
       jobType: "batch_video",
       status: "queued",
       metadata: {
-        footageUrl,
+        footageUrl: footageUrls[0],
+        footageUrls,
         extendMode: reverse ? "reverse" : "none",
         overlayBlocks,
         overlayLayout,
