@@ -1,5 +1,5 @@
 import { fetchWinningProducts } from "./fastmoss";
-import { fetchProductOverview, fetchProductDetail } from "./fastmoss";
+import { fetchProductOverview, fetchProductDetail, fetchCreatorProducts } from "./fastmoss";
 /* FastMoss returns dynamically-shaped JSON payloads. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -8,16 +8,21 @@ const money = (n: number | null | undefined) => n == null ? "—" : `$${Math.rou
 /** Build a compact, credit-conscious weekly product-research digest. */
 export async function buildFastMossWeeklyDigest() {
   const ranked = await fetchWinningProducts({ period: "week", region: "US", limit: 50, sortField: "gmv", sortType: "desc" });
+  const seedCreatorUid = "7032058347824563246";
+  const sellerProducts = await fetchCreatorProducts(seedCreatorUid, 28, 10);
+  const excluded = /trading card|collectible|mystery|virtual|digital|graphic print sports tee/i;
+  const sellerPool = sellerProducts.filter((p) => (p.priceMin ?? 0) >= 15 && (p.priceMax ?? 999) <= 150 && !excluded.test(p.name)).slice(0, 3);
   const candidates = ranked
     .filter((p) => (p.priceMin ?? 0) >= 60 && (p.growthRate ?? 0) > 50)
     .slice(0, 5);
-  const candidateIds = new Set(candidates.map((p) => p.sourceProductId));
+  const candidateIds = new Set([...candidates, ...sellerPool].map((p) => p.sourceProductId));
   // Always fill a useful shortlist. Strict matches come first, followed by
   // the next highest-GMV products, without spending calls on the whole board.
   const pool = [
-    ...candidates,
-    ...ranked.filter((p) => !candidateIds.has(p.sourceProductId)).slice(0, Math.max(0, 5 - candidates.length)),
-  ];
+    ...sellerPool,
+    ...candidates.filter((p) => !sellerPool.some((s) => s.sourceProductId === p.sourceProductId)),
+    ...ranked.filter((p) => !candidateIds.has(p.sourceProductId)).slice(0, Math.max(0, 5 - sellerPool.length - candidates.length)),
+  ].slice(0, 5);
   const details = [] as Array<{ product: typeof ranked[number]; overview: any; detail: any }>;
   for (const product of pool) {
     const enriched = await fetchProductOverview(product.sourceProductId, 7);
@@ -27,7 +32,7 @@ export async function buildFastMossWeeklyDigest() {
   const lines = ["FastMoss weekly TikTok Shop digest", "Last completed week • US", ""];
   const products: Array<{ id: string; name: string }> = [];
   if (!candidates.length) lines.push("No products met both $60+ price and >50% growth in the top 50. Showing closest high-demand opportunities:", "");
-  else if (candidates.length < 5) lines.push(`${candidates.length} product${candidates.length === 1 ? "" : "s"} met the strict filter. Showing additional high-demand opportunities below:`, "");
+  else if (candidates.length < 5) lines.push(`${candidates.length} product${candidates.length === 1 ? "" : "s"} met the strict filter. Showing additional seller-led and high-demand opportunities below:`, "");
   for (const [index, item] of details.entries()) {
     const summary = item.overview?.period_summary ?? {};
     const productDetail = item.detail?.product ?? {};

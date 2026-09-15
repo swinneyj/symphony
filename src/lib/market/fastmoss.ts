@@ -114,3 +114,28 @@ export async function fetchProductDetail(sourceProductId: string) {
   const result = await callTool("product_detail_info", { filter: { product_id: sourceProductId } });
   return { data: result.data, charge: result.meta.charge ?? null };
 }
+
+/** Products promoted by a proven creator, sorted by recent GMV (1 credit). */
+export async function fetchCreatorProducts(uid: string, days = 28, limit = 10): Promise<MarketProduct[]> {
+  const { data, meta } = await callTool("creator_product_list", {
+    filter: { uid, time_range_days: String(days) },
+    orderby: [{ field: "gmv", order: "desc" }],
+    page: 1,
+    pagesize: Math.min(limit, 10),
+  });
+  const rows = Array.isArray(data?.list) ? data.list : [];
+  return rows.map((row: JsonRecord, i: number) => ({
+    source: "fastmoss" as MarketSource,
+    sourceProductId: String(row.product_id ?? row.id ?? i + 1),
+    name: String(row.title ?? row.product_title ?? "Unknown product"),
+    imageUrl: row.cover ?? row.cover_url ?? null,
+    priceMin: num(row.floor_price), priceMax: num(row.ceiling_price),
+    currency: String(row.currency_code ?? "USD"),
+    categoryL1: row.category_name_l1 ?? null, categoryL2: row.category_name_l2 ?? null, categoryL3: row.category_name_l3 ?? null,
+    region: String(row.region ?? "US"), rank: i + 1, rankPeriod: "month",
+    sales7d: null, sales30d: integer(row.units_sold), gmv30d: num(row.gmv),
+    growthRate: null, commissionRate: num(row.commission_rate_percent) == null ? null : (num(row.commission_rate_percent) as number) / 100,
+    videoCount: null, creatorCount: null, isHot: false, momentumScore: null,
+    metadata: { fastmoss: row, mcp: meta, seedCreatorUid: uid },
+  }));
+}
