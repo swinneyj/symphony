@@ -249,7 +249,7 @@ export default function VideoStudioPage() {
             <Clapperboard className="h-4 w-4" /> Voices
           </TabsTrigger>
           <TabsTrigger value="personas" className="gap-1.5 shrink-0">
-            <UserRound className="h-4 w-4" /> Personas
+            <UserRound className="h-4 w-4" /> Creators
           </TabsTrigger>
           <TabsTrigger value="batches" className="gap-1.5 shrink-0">
             <Play className="h-4 w-4" /> Batch Studio

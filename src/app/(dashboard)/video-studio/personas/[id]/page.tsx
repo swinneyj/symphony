@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, Film, Image as ImageIcon, Volume2, BarChart3, BadgeCheck, Sparkles, Play } from "lucide-react";
+import { ArrowLeft, Loader2, Film, Image as ImageIcon, Volume2, BarChart3, BadgeCheck, Sparkles, Play, Database } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,9 +40,31 @@ type VideoRow = {
 
 type HubPayload = {
   photos: Photo[];
+  trainingMedia: Photo[];
   videos: VideoRow[];
   voice: { id: string; name: string; provider: string } | null;
   usage: { formulas: { id: string; name: string }[]; batches: number; posts: number };
+};
+
+type CreatorDetail = {
+  id: string;
+  workspaceId: string | null;
+  name: string;
+  description: string | null;
+  faceImageUrl: string | null;
+  voiceId: string | null;
+  voiceProvider: string | null;
+  voiceModelId: string | null;
+  avatarProvider: string | null;
+  avatarModelId: string | null;
+  styleConfig: {
+    speakingStyle?: string;
+    personalityTraits?: string[];
+    customInstructions?: string;
+  } | null;
+  personaPrompt: string | null;
+  consentStatus: "pending" | "authorized" | "revoked" | "expired";
+  isSystem: boolean | null;
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -54,7 +76,7 @@ const STATUS_BADGE: Record<string, string> = {
 
 export default function PersonaDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [persona, setPersona] = useState<any>(null);
+  const [persona, setPersona] = useState<CreatorDetail | null>(null);
   const [hub, setHub] = useState<HubPayload | null>(null);
   const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -86,14 +108,14 @@ export default function PersonaDetailPage() {
     try {
       setError(null);
       const wsQuery = workspaceId ? `?workspaceId=${workspaceId}` : "";
-      const pRes = await fetch(`/api/personas/${id}${wsQuery}`);
+      const pRes = await fetch(`/api/creators/${id}${wsQuery}`);
       if (!pRes.ok) {
         const d = await pRes.json().catch(() => ({}));
         throw new Error(d.error ?? `Failed to load persona (${pRes.status})`);
       }
       const p = await pRes.json();
       setPersona(p);
-      const hRes = await fetch(`/api/personas/${id}/media${wsQuery}`);
+      const hRes = await fetch(`/api/creators/${id}/media${wsQuery}`);
       if (!hRes.ok) {
         const d = await hRes.json().catch(() => ({}));
         throw new Error(d.error ?? `Failed to load asset hub (${hRes.status})`);
@@ -109,14 +131,16 @@ export default function PersonaDetailPage() {
   }, [id, workspaceId]);
 
   useEffect(() => {
-    if (wsResolved) load();
+    if (!wsResolved) return;
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load, wsResolved]);
 
   const swapVoice = async (voiceId: string) => {
-    await fetch(`/api/personas/${id}`, {
+    await fetch(`/api/creators/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ voiceId: voiceId || null }),
+      body: JSON.stringify({ workspaceId: persona.workspaceId ?? workspaceId, voiceId: voiceId || null }),
     });
     load();
   };
@@ -131,8 +155,8 @@ export default function PersonaDetailPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <Link href="/video-studio?tab=personas" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> Personas
+      <Link href="/creators" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> Creators
       </Link>
 
       <div className="flex items-start gap-5">
@@ -158,6 +182,9 @@ export default function PersonaDetailPage() {
               <BadgeCheck className="h-3 w-3 mr-1" />
               {hub.voice ? `${hub.voice.name} (${hub.voice.provider})` : "No voice"}
             </Badge>
+            <Badge variant={persona.consentStatus === "authorized" ? "default" : "secondary"}>
+              {persona.consentStatus}
+            </Badge>
           </div>
           {persona.description && <p className="mt-1 text-sm text-muted-foreground">{persona.description}</p>}
           {persona.personaPrompt && (
@@ -165,6 +192,23 @@ export default function PersonaDetailPage() {
               <Sparkles className="h-3 w-3 inline mr-1" />
               {persona.personaPrompt}
             </p>
+          )}
+          {(persona.voiceProvider || persona.avatarProvider || persona.styleConfig?.speakingStyle) && (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              {persona.voiceProvider && (
+                <Badge variant="outline">
+                  Voice: {persona.voiceProvider}{persona.voiceModelId ? ` · ${persona.voiceModelId}` : ""}
+                </Badge>
+              )}
+              {persona.avatarProvider && (
+                <Badge variant="outline">
+                  Avatar: {persona.avatarProvider}{persona.avatarModelId ? ` · ${persona.avatarModelId}` : ""}
+                </Badge>
+              )}
+              {persona.styleConfig?.speakingStyle && (
+                <Badge variant="secondary">Style: {persona.styleConfig.speakingStyle}</Badge>
+              )}
+            </div>
           )}
           <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
@@ -190,6 +234,9 @@ export default function PersonaDetailPage() {
           </TabsTrigger>
           <TabsTrigger value="voice" className="gap-1.5">
             <Volume2 className="h-4 w-4" /> Voice
+          </TabsTrigger>
+          <TabsTrigger value="training" className="gap-1.5">
+            <Database className="h-4 w-4" /> Training media
           </TabsTrigger>
           <TabsTrigger value="usage" className="gap-1.5">
             <BarChart3 className="h-4 w-4" /> Usage
@@ -281,6 +328,30 @@ export default function PersonaDetailPage() {
               ))}
             </select>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="training" className="mt-4">
+          {hub.trainingMedia.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              No training videos or voice samples have been attached.
+            </Card>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {hub.trainingMedia.map((asset) => (
+                <Card key={asset.id} className="space-y-2 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-medium">{asset.fileName ?? "Training asset"}</p>
+                    <Badge variant="secondary">{asset.role.replace("_", " ")}</Badge>
+                  </div>
+                  {asset.role === "training_video" ? (
+                    <video controls preload="metadata" className="aspect-video w-full rounded-md bg-black" src={`/api/media/${asset.mediaAssetId}/public`} />
+                  ) : (
+                    <audio controls className="w-full" src={`/api/media/${asset.mediaAssetId}/public`} />
+                  )}
+                </Card>
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="usage" className="mt-4">

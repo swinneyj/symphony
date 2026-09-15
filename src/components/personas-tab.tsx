@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Sparkles, Pencil, Trash2, Plus, Upload } from "lucide-react";
+import { CREATOR_PROVIDER_CATALOG } from "@/lib/creator-clone/providers";
+import { upload } from "@vercel/blob/client";
 export interface Persona {
   id: string;
   workspaceId: string | null;
@@ -19,11 +21,26 @@ export interface Persona {
   faceRefUrls: string[] | null;
   voiceId: string | null;
   voiceName: string | null;
+  linkedVoiceProvider: string | null;
   voiceProvider: string | null;
+  voiceModelId: string | null;
+  avatarProvider: string | null;
+  avatarModelId: string | null;
+  styleConfig: {
+    speakingStyle?: string;
+    personalityTraits?: string[];
+    customInstructions?: string;
+  } | null;
+  consentStatus: "pending" | "authorized" | "revoked" | "expired";
+  consentConfirmedAt: string | null;
+  consentNotes: string | null;
   personaPrompt: string | null;
   isSystem: boolean | null;
   createdAt: string;
+  updatedAt?: string;
 }
+
+export type CreatorProfile = Persona;
 
 interface Voice {
   id: string;
@@ -85,6 +102,19 @@ export function PersonasTab({
   const [description, setDescription] = useState("");
   const [personaPrompt, setPersonaPrompt] = useState("");
   const [voiceId, setVoiceId] = useState<string>("");
+  const [voiceProvider, setVoiceProvider] = useState("");
+  const [voiceModelId, setVoiceModelId] = useState("");
+  const [avatarProvider, setAvatarProvider] = useState("");
+  const [avatarModelId, setAvatarModelId] = useState("");
+  const [speakingStyle, setSpeakingStyle] = useState("");
+  const [personalityTraits, setPersonalityTraits] = useState("");
+  const [customInstructions, setCustomInstructions] = useState("");
+  const [consentStatus, setConsentStatus] = useState<Persona["consentStatus"]>("pending");
+  const [consentNotes, setConsentNotes] = useState("");
+  const [pendingMedia, setPendingMedia] = useState<
+    Array<{ id: string; name: string; role: "training_video" | "voice_sample" }>
+  >([]);
+  const [mediaUploading, setMediaUploading] = useState(false);
   // AI face generation state
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
@@ -115,16 +145,22 @@ export function PersonasTab({
     setDescription("");
     setPersonaPrompt("");
     setVoiceId("");
+    setVoiceProvider("");
+    setVoiceModelId("");
+    setAvatarProvider("");
+    setAvatarModelId("");
+    setSpeakingStyle("");
+    setPersonalityTraits("");
+    setCustomInstructions("");
+    setConsentStatus("pending");
+    setConsentNotes("");
+    setPendingMedia([]);
     setGenUrls([]);
     setGenPreviewUrls([]);
     setGenError(null);
     setGenModel("auto");
     setEditing(null);
   }, []);
-
-  useEffect(() => {
-    if (!open) reset();
-  }, [open, reset]);
 
   const generateDescription = async () => {
     if (!name.trim()) {
@@ -240,6 +276,54 @@ export function PersonasTab({
     setGenPreviewUrls((prev) => prev.filter((_, idx) => idx !== i));
   };
 
+  const uploadCreatorMedia = async (
+    files: FileList | null,
+    role: "training_video" | "voice_sample"
+  ) => {
+    if (!files?.length) return;
+    setMediaUploading(true);
+    setGenError(null);
+    try {
+      for (const file of Array.from(files)) {
+        const expectedPrefix = role === "training_video" ? "video/" : "audio/";
+        if (!file.type.startsWith(expectedPrefix)) {
+          throw new Error(`${file.name} must be a ${role === "training_video" ? "video" : "voice audio"} file`);
+        }
+        const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+        const blob = await upload(
+          `creator-training/${workspaceId}/${crypto.randomUUID()}-${safeName}`,
+          file,
+          {
+            access: "private",
+            handleUploadUrl: "/api/media/client-upload",
+            clientPayload: JSON.stringify({ workspaceId }),
+            contentType: file.type,
+            multipart: true,
+          }
+        );
+        const response = await fetch("/api/media", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            fileName: file.name,
+            fileSize: file.size,
+            mimeType: file.type,
+            mediaType: role === "training_video" ? "video" : "audio",
+            url: blob.url,
+          }),
+        });
+        const asset = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(asset.error ?? `Could not upload ${file.name}`);
+        setPendingMedia((current) => [...current, { id: asset.id, name: file.name, role }]);
+      }
+    } catch (error) {
+      setGenError((error as Error).message);
+    } finally {
+      setMediaUploading(false);
+    }
+  };
+
   const save = async () => {
     if (!name.trim() || saving) return;
     setSaving(true);
@@ -250,15 +334,26 @@ export function PersonasTab({
         description: description.trim() || undefined,
         personaPrompt: personaPrompt.trim() || undefined,
         voiceId: voiceId || undefined,
+        voiceProvider: voiceProvider || null,
+        voiceModelId: voiceModelId.trim() || null,
+        avatarProvider: avatarProvider || null,
+        avatarModelId: avatarModelId.trim() || null,
+        styleConfig: {
+          speakingStyle,
+          personalityTraits: personalityTraits.split(","),
+          customInstructions,
+        },
+        consentStatus,
+        consentNotes: consentNotes.trim() || null,
         ...(genUrls.length > 0 ? { faceImageUrl: genUrls[0], faceRefUrls: genUrls } : {}),
       };
       const res = editing
-        ? await fetch(`/api/personas/${editing.id}`, {
+        ? await fetch(`/api/creators/${editing.id}`, {
             method: "PATCH",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(body),
           })
-        : await fetch("/api/personas", {
+        : await fetch("/api/creators", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(body),
@@ -266,6 +361,18 @@ export function PersonasTab({
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? "Save failed");
+      }
+      const saved = await res.json();
+      for (const asset of pendingMedia) {
+        const attach = await fetch(`/api/creators/${saved.id}/media`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mediaAssetId: asset.id, role: asset.role }),
+        });
+        if (!attach.ok) {
+          const data = await attach.json().catch(() => ({}));
+          throw new Error(data.error ?? `Saved profile but could not attach ${asset.name}`);
+        }
       }
       setOpen(false);
       onChanged();
@@ -277,9 +384,9 @@ export function PersonasTab({
   };
 
   const remove = async (p: Persona) => {
-    if (!confirm(`Delete persona "${p.name}"?`)) return;
+    if (!confirm(`Delete creator profile "${p.name}"?`)) return;
     try {
-      const res = await fetch(`/api/personas/${p.id}`, {
+      const res = await fetch(`/api/creators/${p.id}`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ workspaceId }),
@@ -298,17 +405,23 @@ export function PersonasTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          AI influencer personas — faces used in scene renders for consistent identity.
+          Authorized creator identities, training media, cloned voice, and avatar provider bindings.
         </p>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(nextOpen) => {
+            setOpen(nextOpen);
+            if (!nextOpen) reset();
+          }}
+        >
           <DialogTrigger asChild>
             <Button size="sm">
-              <Plus className="h-4 w-4 mr-1.5" /> New persona
+              <Plus className="h-4 w-4 mr-1.5" /> Add creator
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-xl">
+          <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editing ? `Edit ${editing.name}` : "New persona"}</DialogTitle>
+              <DialogTitle>{editing ? `Edit ${editing.name}` : "Add creator"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               <div>
@@ -413,7 +526,7 @@ export function PersonasTab({
                 </div>
               )}
               <div>
-                <label className="text-xs font-medium">Voice</label>
+                <label className="text-xs font-medium">Existing Symphony voice</label>
                 <select
                   value={voiceId}
                   onChange={(e) => setVoiceId(e.target.value)}
@@ -426,6 +539,148 @@ export function PersonasTab({
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs font-medium">Cloned voice provider</label>
+                  <select
+                    value={voiceProvider}
+                    onChange={(e) => setVoiceProvider(e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Not configured</option>
+                    {CREATOR_PROVIDER_CATALOG.filter((provider) =>
+                      provider.capabilities.some((capability) => capability.kind === "voice")
+                    ).map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name} ({provider.capabilities.find((capability) => capability.kind === "voice")?.maturity})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Voice/model ID</label>
+                  <Input
+                    value={voiceModelId}
+                    onChange={(e) => setVoiceModelId(e.target.value)}
+                    placeholder="Provider voice or model ID"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Avatar/video provider</label>
+                  <select
+                    value={avatarProvider}
+                    onChange={(e) => setAvatarProvider(e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Not configured</option>
+                    {CREATOR_PROVIDER_CATALOG.filter((provider) =>
+                      provider.capabilities.some((capability) => capability.kind === "avatar")
+                    ).map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name} ({provider.capabilities.find((capability) => capability.kind === "avatar")?.maturity})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Avatar/model ID</label>
+                  <Input
+                    value={avatarModelId}
+                    onChange={(e) => setAvatarModelId(e.target.value)}
+                    placeholder="Provider avatar or model ID"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs font-medium">Speaking style</label>
+                  <Input
+                    value={speakingStyle}
+                    onChange={(e) => setSpeakingStyle(e.target.value)}
+                    placeholder="Warm, quick, conversational"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Personality traits</label>
+                  <Input
+                    value={personalityTraits}
+                    onChange={(e) => setPersonalityTraits(e.target.value)}
+                    placeholder="funny, direct, family-focused"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium">Custom delivery instructions</label>
+                <Textarea
+                  value={customInstructions}
+                  onChange={(e) => setCustomInstructions(e.target.value)}
+                  placeholder="Phrases to use or avoid, pacing notes, pronunciation guidance…"
+                  rows={2}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs font-medium">Authorization status</label>
+                  <select
+                    value={consentStatus}
+                    onChange={(e) => setConsentStatus(e.target.value as Persona["consentStatus"])}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="authorized">Authorized</option>
+                    <option value="revoked">Revoked</option>
+                    <option value="expired">Expired</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Consent notes</label>
+                  <Input
+                    value={consentNotes}
+                    onChange={(e) => setConsentNotes(e.target.value)}
+                    placeholder="Agreement or authorization reference"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2 rounded-lg border p-3">
+                <p className="text-xs font-medium">Training media</p>
+                <div className="flex flex-wrap gap-2">
+                  <label className="inline-flex cursor-pointer items-center rounded-md border px-3 py-1.5 text-xs hover:bg-accent">
+                    <Upload className="mr-1.5 h-3.5 w-3.5" /> Training videos
+                    <input
+                      type="file"
+                      accept="video/*"
+                      multiple
+                      className="hidden"
+                      disabled={mediaUploading}
+                      onChange={(e) => uploadCreatorMedia(e.target.files, "training_video")}
+                    />
+                  </label>
+                  <label className="inline-flex cursor-pointer items-center rounded-md border px-3 py-1.5 text-xs hover:bg-accent">
+                    <Upload className="mr-1.5 h-3.5 w-3.5" /> Voice samples
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      multiple
+                      className="hidden"
+                      disabled={mediaUploading}
+                      onChange={(e) => uploadCreatorMedia(e.target.files, "voice_sample")}
+                    />
+                  </label>
+                  {mediaUploading && <span className="text-xs text-muted-foreground">Uploading…</span>}
+                </div>
+                {pendingMedia.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {pendingMedia.map((asset) => (
+                      <Badge key={`${asset.role}-${asset.id}`} variant="secondary">
+                        {asset.role === "training_video" ? "Video" : "Voice"}: {asset.name}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  Files use Symphony&apos;s existing private media storage and are attached when the profile is saved.
+                </p>
               </div>
               <div>
                 <label className="text-xs font-medium">Style prompt</label>
@@ -441,7 +696,7 @@ export function PersonasTab({
                   Cancel
                 </Button>
                 <Button size="sm" onClick={save} disabled={saving || !name.trim()}>
-                  {saving ? "Saving…" : editing ? "Save changes" : "Create persona"}
+                  {saving ? "Saving…" : editing ? "Save changes" : "Create profile"}
                 </Button>
               </div>
             </div>
@@ -451,7 +706,7 @@ export function PersonasTab({
 
       {personas.length === 0 ? (
         <Card className="p-10 text-center text-sm text-muted-foreground">
-          No personas yet. Create your first AI influencer to use in video formulas.
+          No creator profiles yet. Add an authorized creator to use in video formulas.
         </Card>
       ) : (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
@@ -462,7 +717,7 @@ export function PersonasTab({
             const canManage = !p.isSystem || p.createdById === currentUserId;
             return (
               <Card key={p.id} className="group relative overflow-hidden">
-                <Link href={`/video-studio/personas/${p.id}`} className="block">
+                <Link href={`/creators/${p.id}`} className="block">
                   <div
                     className={`relative bg-muted ${
                       p.faceImageUrl ? "aspect-[3/4]" : "aspect-[4/3]"
@@ -488,9 +743,14 @@ export function PersonasTab({
                     )}
                   </div>
                   <div className="p-3">
-                    <p className="truncate font-medium">{p.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate font-medium">{p.name}</p>
+                      <Badge variant={p.consentStatus === "authorized" ? "default" : "secondary"} className="text-[10px]">
+                        {p.consentStatus}
+                      </Badge>
+                    </div>
                     <p className="truncate text-xs text-muted-foreground">
-                      {p.voiceName ?? "No voice"} · {p.faceRefUrls?.length ?? 0} face refs
+                      {p.voiceProvider ?? p.voiceName ?? "No voice"} · {p.avatarProvider ?? "No avatar"} · {p.faceRefUrls?.length ?? 0} refs
                     </p>
                   </div>
                 </Link>
@@ -507,6 +767,15 @@ export function PersonasTab({
                         setDescription(p.description ?? "");
                         setPersonaPrompt(p.personaPrompt ?? "");
                         setVoiceId(p.voiceId ?? "");
+                        setVoiceProvider(p.voiceProvider ?? "");
+                        setVoiceModelId(p.voiceModelId ?? "");
+                        setAvatarProvider(p.avatarProvider ?? "");
+                        setAvatarModelId(p.avatarModelId ?? "");
+                        setSpeakingStyle(p.styleConfig?.speakingStyle ?? "");
+                        setPersonalityTraits(p.styleConfig?.personalityTraits?.join(", ") ?? "");
+                        setCustomInstructions(p.styleConfig?.customInstructions ?? "");
+                        setConsentStatus(p.consentStatus ?? "pending");
+                        setConsentNotes(p.consentNotes ?? "");
                         // Seed the photo set from stored refs so re-saving or
                         // adding more photos PRESERVES them (raw urls kept in
                         // state; previews served via the persona image proxy
