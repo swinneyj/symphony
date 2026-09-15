@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { products, videoBatches, videoBatchJobs, workspaceMembers } from "@/db/schema";
 import { flagJobs } from "@/lib/market/cache";
 import { buildFastMossWeeklyDigest } from "@/lib/market/digest";
+import { fetchProductDetail } from "@/lib/market/fastmoss";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -24,7 +25,8 @@ export async function POST(request: Request) {
   const text = extractText(source, payload);
   if (source === "telegram" && /^\s*(\/digest|digest)\s*$/i.test(text)) {
     try {
-      return await reply(source, payload, await buildFastMossWeeklyDigest());
+      const digest = await buildFastMossWeeklyDigest();
+      return await reply(source, payload, digest.text, 200, digest.products);
     } catch (error) {
       return await reply(source, payload, `Could not build the FastMoss digest: ${error instanceof Error ? error.message : "unknown error"}`, 502);
     }
@@ -107,6 +109,28 @@ async function handleTelegramCallback(payload: Record<string, unknown>) {
   const callback = payload.callback_query as { id?: string; data?: string; message?: { chat?: { id?: number | string } } };
   const data = callback.data ?? "";
   const chatId = callback.message?.chat?.id ? String(callback.message.chat.id) : "";
+  if (data.startsWith("market_adopt:") && chatId) {
+    const sourceProductId = data.slice("market_adopt:".length);
+    try {
+      const detail = await fetchProductDetail(sourceProductId);
+      const productUrl = detail.data?.product?.detail_url;
+      if (!productUrl) throw new Error("FastMoss did not return a TikTok Shop URL");
+      const origin = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://www.symphonyapp.company";
+      await fetch(new URL("/api/integrations/messaging", origin), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "authorization": `Bearer ${process.env.MESSAGING_WEBHOOK_SECRET ?? ""}`,
+          "x-messaging-source": "telegram",
+        },
+        body: JSON.stringify({ message: { chat: { id: chatId }, text: productUrl } }),
+      });
+      await telegramCallback(callback.id, "Approved. Importing the product and starting image preparation.");
+    } catch (error) {
+      await telegramCallback(callback.id, `Could not import product: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    return NextResponse.json({ ok: true });
+  }
   const workspaceId = process.env.MESSAGING_WORKSPACE_ID;
   if (!workspaceId || !chatId) return NextResponse.json({ ok: true });
   try {
@@ -205,11 +229,14 @@ function extractText(source: string, payload: Record<string, unknown>) {
   return String(payload.text ?? payload.message ?? payload.body ?? "");
 }
 
-async function reply(source: string, payload: Record<string, unknown>, text: string, status = 200) {
+async function reply(source: string, payload: Record<string, unknown>, text: string, status = 200, marketProducts: Array<{ id: string; name: string }> = []) {
   if (source === "telegram" && process.env.TELEGRAM_BOT_TOKEN) {
     const chatId = (payload.message as { chat?: { id?: number | string } } | undefined)?.chat?.id;
     if (chatId) {
-      const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text }) });
+      const reply_markup = marketProducts.length ? {
+        inline_keyboard: marketProducts.map((product) => [{ text: `Approve ${product.name.slice(0, 28)}`, callback_data: `market_adopt:${product.id}` }]),
+      } : undefined;
+      const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text, ...(reply_markup ? { reply_markup } : {}) }) });
       if (!response.ok) console.error("[messaging] Telegram sendMessage failed", response.status, (await response.text()).slice(0, 300));
     }
   }

@@ -19,6 +19,7 @@ export async function buildFastMossWeeklyDigest() {
     details.push({ product, overview: enriched.data, detail: detail.data });
   }
   const lines = ["FastMoss weekly TikTok Shop digest", "Last completed week • US", ""];
+  const products: Array<{ id: string; name: string }> = [];
   if (!candidates.length) lines.push("No products met both $60+ price and >50% growth in the top 50. Showing closest high-demand opportunities:", "");
   for (const [index, item] of details.entries()) {
     const summary = item.overview?.period_summary ?? {};
@@ -36,6 +37,7 @@ export async function buildFastMossWeeklyDigest() {
       (affiliate?.gmv_share_percent ?? 0) >= 20 &&
       (video?.gmv_share_percent ?? 0) >= 20;
     lines.push(`${index + 1}. ${strict ? "✅ " : "• "}${item.product.name}`);
+    products.push({ id: item.product.sourceProductId, name: item.product.name });
     lines.push(`   ${money(summary.period_total_gmv ?? item.product.gmv30d)} GMV • ${(item.product.growthRate ?? 0).toFixed(1)}% growth • ${item.product.priceMin ?? "—"}-${item.product.priceMax ?? "—"} price`);
     lines.push(`   ${creators ?? "—"} creators • ${summary.period_total_units_sold ?? "—"} units • affiliate ${affiliate?.gmv_share_percent ?? 0}% • video ${video?.gmv_share_percent ?? 0}% • ads ${ads?.gmv_share_percent ?? 0}%`);
     lines.push(`   Product ID: ${item.product.sourceProductId}`);
@@ -43,5 +45,5 @@ export async function buildFastMossWeeklyDigest() {
     lines.push(`   FastMoss: https://www.fastmoss.com/e-commerce/detail/${item.product.sourceProductId}`, "");
   }
   lines.push("Strategy: shortlist first, then validate commission, listing quality, shipping, and creative angles before posting.");
-  return lines.join("\n");
+  return { text: lines.join("\n"), products };
 }
