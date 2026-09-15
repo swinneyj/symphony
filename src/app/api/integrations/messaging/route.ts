@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { products, videoBatches, videoBatchJobs, workspaceMembers } from "@/db/schema";
 import { flagJobs } from "@/lib/market/cache";
+import { buildFastMossWeeklyDigest } from "@/lib/market/digest";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,6 +22,13 @@ export async function POST(request: Request) {
     return await handleTelegramCallback(payload);
   }
   const text = extractText(source, payload);
+  if (source === "telegram" && /^\s*(\/digest|digest)\s*$/i.test(text)) {
+    try {
+      return await reply(source, payload, await buildFastMossWeeklyDigest());
+    } catch (error) {
+      return await reply(source, payload, `Could not build the FastMoss digest: ${error instanceof Error ? error.message : "unknown error"}`, 502);
+    }
+  }
   const links = [...new Set(text.match(/https?:\/\/[^\s<>]+/gi) ?? [])].map((link) => link.replace(/[),.]+$/, ""));
   const productLink = links.find((link) => /tiktok\.com/i.test(link));
   if (!productLink) return await reply(source, payload, "Send a TikTok Shop product link to start the Image Studio flow.");

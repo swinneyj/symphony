@@ -1,84 +1,110 @@
-/**
- * FastMoss OpenAPI adapter — secondary winning-product source.
- * Console: https://developers.fastmoss.com (client_id + client_secret → token).
- * Data: product sales trends, hot rankings, category analysis; creators,
- * shops, videos, live. Endpoint paths locked at first live test (TODO_VERIFY).
- */
+/** FastMoss MCP adapter. */
+/* The MCP SDK exposes tool payloads as dynamically-shaped JSON. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { MarketProduct, MarketQuery, MarketSource } from "./types";
 import { MissingSourceCredentialsError } from "./types";
 
-const BASE = "https://api.fastmoss.com";
+const MCP_URL = "https://mcp.fastmoss.com/mcp";
+type JsonRecord = Record<string, any>;
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+function apiKey(): string {
+  if (!process.env.FASTMOSS_API_KEY) throw new MissingSourceCredentialsError("fastmoss", ["FASTMOSS_API_KEY"]);
+  return process.env.FASTMOSS_API_KEY;
+}
 
-async function getAccessToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.token;
-  const id = process.env.FASTMOSS_CLIENT_ID;
-  const secret = process.env.FASTMOSS_CLIENT_SECRET;
-  if (!id || !secret) {
-    throw new MissingSourceCredentialsError("fastmoss", ["FASTMOSS_CLIENT_ID", "FASTMOSS_CLIENT_SECRET"]);
+async function callTool(name: string, args: JsonRecord): Promise<{ data: any; meta: JsonRecord }> {
+  const client = new Client({ name: "symphony-market-research", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
+    requestInit: { headers: { Authorization: `Bearer ${apiKey()}` } },
+  });
+  try {
+    await client.connect(transport);
+    const result: any = await client.callTool({ name, arguments: args });
+    if (result.isError) throw new Error(`[fastmoss] ${name} failed`);
+    const text = result.content?.find((item: any) => item.type === "text") as { text?: string } | undefined;
+    if (!text?.text) throw new Error(`[fastmoss] ${name} returned no data`);
+    return { data: JSON.parse(text.text), meta: (result as any)._meta ?? {} };
+  } finally {
+    await client.close().catch(() => undefined);
   }
-  // TODO_VERIFY: exact auth endpoint + grant shape.
-  const res = await fetch(`${BASE}/auth/token`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ client_id: id, client_secret: secret, grant_type: "client_credentials" }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`[fastmoss] token ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const json = await res.json();
-  cachedToken = {
-    token: json.access_token ?? json.token ?? json.data?.access_token,
-    expiresAt: Date.now() + ((json.expires_in ?? 3600) as number) * 1000,
-  };
-  if (!cachedToken.token) throw new Error("[fastmoss] no access_token in token response");
-  return cachedToken.token;
 }
 
-/** Hot product ranking. TODO_VERIFY: exact endpoint + params. */
-export async function fetchWinningProducts(query: MarketQuery): Promise<MarketProduct[]> {
-  const token = await getAccessToken();
-  const res = await fetch(`${BASE}/v1/product/ranking`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`[fastmoss] ranking ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const json = await res.json();
-  const rows: any[] = json?.data?.list ?? json?.data ?? json?.list ?? [];
-  return rows.map((r, i) => ({
-    source: "fastmoss" as MarketSource,
-    sourceProductId: String(r.product_id ?? r.id ?? i + 1),
-    name: String(r.product_title ?? r.product_name ?? r.title ?? "Unknown product"),
-    imageUrl: r.product_image ?? r.image ?? r.main_image ?? null,
-    priceMin: numOrNull(r.min_price ?? r.price ?? r.lowest_price),
-    priceMax: numOrNull(r.max_price ?? r.highest_price ?? r.price),
-    currency: r.currency ?? "USD",
-    categoryL1: r.category_name ?? r.category ?? null,
-    categoryL2: null,
-    categoryL3: null,
-    region: query.region ?? "US",
-    rank: r.rank ?? i + 1,
-    rankPeriod: query.period,
-    sales7d: intOrNull(r.sales_7d ?? r.sales_increment ?? r.sales),
-    sales30d: intOrNull(r.sales_30d ?? r.total_sales),
-    gmv30d: numOrNull(r.gmv ?? r.total_gmv ?? r.gmv_30d),
-    growthRate: numOrNull(r.growth_rate ?? r.sales_growth),
-    commissionRate: numOrNull(r.commission_rate ?? r.commission),
-    videoCount: intOrNull(r.video_count ?? r.related_video_count),
-    creatorCount: intOrNull(r.creator_count ?? r.affiliate_count),
-    isHot: Boolean(r.is_hot ?? r.hot_flag),
-    momentumScore: null,
-    metadata: { raw: r },
-  }));
+function completedWeek(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 7);
+  const thursday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  thursday.setUTCDate(thursday.getUTCDate() + 4 - (thursday.getUTCDay() || 7));
+  const start = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((thursday.getTime() - start.getTime()) / 86400000) + 1) / 7);
+  return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
-function intOrNull(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : null;
-}
-function numOrNull(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
+function num(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+function integer(v: unknown): number | null { const n = num(v); return n == null ? null : Math.round(n); }
+
+function normalize(row: JsonRecord, rank: number, query: MarketQuery, meta: JsonRecord): MarketProduct {
+  const category = row.category ?? {};
+  const periodSales = row.period_units_sold ?? row.units_sold ?? row.sales;
+  const periodGmv = row.period_gmv ?? row.gmv;
+  const commissionPercent = num(row.commission_rate_percent ?? row.commission_rate);
+  return {
+    source: "fastmoss" as MarketSource,
+    sourceProductId: String(row.product_id ?? row.id ?? rank),
+    name: String(row.title ?? row.product_title ?? row.name ?? "Unknown product"),
+    imageUrl: row.cover_url ?? row.product_image ?? row.image ?? null,
+    priceMin: num(row.floor_price ?? row.min_price ?? row.price),
+    priceMax: num(row.ceiling_price ?? row.max_price ?? row.price),
+    currency: String(row.currency_code ?? row.currency ?? "USD"),
+    categoryL1: category.l1?.name ?? row.category_name ?? null,
+    categoryL2: category.l2?.name ?? null,
+    categoryL3: category.l3?.name ?? null,
+    region: String(row.region ?? query.region ?? "US"),
+    rank: integer(row.rank ?? rank), rankPeriod: query.period,
+    sales7d: query.period === "week" ? integer(periodSales) : integer(row.sales_7d ?? periodSales),
+    sales30d: integer(row.total_units_sold ?? row.sales_30d),
+    gmv30d: num(row.total_gmv ?? row.gmv_30d ?? periodGmv),
+    growthRate: num(row.units_sold_growth_rate_percent ?? row.growth_rate),
+    commissionRate: commissionPercent == null ? null : commissionPercent / 100,
+    videoCount: integer(row.video_count ?? row.related_video_count),
+    creatorCount: integer(row.creator_count ?? row.affiliate_count),
+    isHot: Boolean(row.is_hot ?? false), momentumScore: null,
+    metadata: { fastmoss: row, mcp: meta },
+  };
+}
+
+/** One credit: top-selling leaderboard for a completed period. */
+export async function fetchWinningProducts(query: MarketQuery): Promise<MarketProduct[]> {
+  const { data, meta } = await callTool("product_rank_top_selling", {
+    filter: {
+      region: query.region ?? "US", date_type: query.period,
+      date_value: query.period === "week" ? completedWeek() : new Date().toISOString().slice(0, 10),
+      ...(query.category ? { category_id: query.category } : {}),
+    },
+    orderby: [{ field: query.sortField === "sales" ? "period_units_sold" : "period_gmv", order: query.sortType ?? "desc" }],
+    page: 1, pagesize: Math.min(query.limit ?? 50, 100),
+  });
+  const rows = Array.isArray(data?.list) ? data.list : Array.isArray(data) ? data : [];
+  return rows.map((row: JsonRecord, i: number) => normalize(row, i + 1, query, meta));
+}
+
+/** Explicit drill-down; call only for shortlisted products (3 tool calls). */
+export async function fetchProductResearch(sourceProductId: string, days = 7) {
+  const [overview, creators, videos] = await Promise.all([
+    callTool("product_overview", { filter: { product_id: sourceProductId, time_range_days: days } }),
+    callTool("product_creator_analysis", { filter: { product_id: sourceProductId }, page: 1, pagesize: 100 }),
+    callTool("product_video_list", { filter: { product_id: sourceProductId, time_range_days: days, is_ad: true }, orderby: [{ field: "gmv", order: "desc" }], page: 1, pagesize: 100 }),
+  ]);
+  return { overview: overview.data, creators: creators.data, videos: videos.data, credits: [overview, creators, videos].map((r) => r.meta.charge ?? null) };
+}
+
+/** Lower-cost overview-only enrichment (3 credits). */
+export async function fetchProductOverview(sourceProductId: string, days = 7) {
+  const result = await callTool("product_overview", { filter: { product_id: sourceProductId, time_range_days: days } });
+  return { data: result.data, charge: result.meta.charge ?? null };
 }

@@ -29,9 +29,20 @@ export async function GET(request: Request) {
   for (const workspace of targets) {
     const workspaceResults: Record<string, unknown> = {};
     for (const source of ["echotik", "fastmoss"] as const) {
+      // FastMoss credits are per tool call. A weekly completed-period ranking
+      // is enough for the digest and costs ~4 calls/month/workspace instead of
+      // ~30. Set FASTMOSS_DAILY_REFRESH=1 when daily snapshots are desired.
+      if (
+        source === "fastmoss" &&
+        process.env.FASTMOSS_DAILY_REFRESH !== "1" &&
+        new Date().getUTCDay() !== 1
+      ) {
+        workspaceResults[source] = { skipped: "weekly mode — runs Mondays (set FASTMOSS_DAILY_REFRESH=1 for daily)" };
+        continue;
+      }
       try {
         const { rows, dryRun } = await fetchWinningProducts(source, {
-          period: "day",
+          period: source === "fastmoss" ? "week" : "day",
           region: "US",
           limit: 50,
         });
