@@ -31,6 +31,42 @@ STALE_MINUTES = int(os.environ.get("WORKER_STALE_MINUTES", "15"))
 HEALTH_PORT = int(os.environ.get("PORT", "8081"))
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
+# ── Neon compute gate ────────────────────────────────────────────────────────
+# API enqueue routes set a KV flag. We only wake Neon when that flag is set,
+# with a periodic safety poll for missed enqueue-hook edge cases.
+GATE_URL = os.environ.get("WORKER_GATE_URL", "https://www.symphonyapp.company/api/cron/worker-gate")
+GATE_SECRET = os.environ.get("CRON_SECRET", "")
+GATE_MAX_SKIP_MS = 4 * 60 * 60 * 1000
+last_db_poll_ms = 0
+
+
+def gate_open(worker):
+    global last_db_poll_ms
+    now_ms = time.time() * 1000
+    if now_ms - last_db_poll_ms >= GATE_MAX_SKIP_MS:
+        return True
+    try:
+        req = urllib.request.Request(
+            f"{GATE_URL}?w={worker}",
+            headers={"Authorization": f"Bearer {GATE_SECRET}"} if GATE_SECRET else {},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            return bool(json.loads(response.read().decode()).get("due", False))
+    except Exception:
+        return True
+
+
+def gate_clear(worker):
+    try:
+        req = urllib.request.Request(
+            f"{GATE_URL}?w={worker}",
+            method="DELETE",
+            headers={"Authorization": f"Bearer {GATE_SECRET}"} if GATE_SECRET else {},
+        )
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
+
 if not DATABASE_URL:
     print("FATAL: DATABASE_URL is required", file=sys.stderr)
     sys.exit(1)
@@ -194,7 +230,11 @@ def tick(conn):
         jobs = claim(cur, CONCURRENCY)
         if not jobs:
             conn.commit()
+            gate_clear("img")
             return False
+        # Do not hold an open transaction while downloading images and running
+        # rembg. The claim is durable before CPU/network work begins.
+        conn.commit()
         for job_id, workspace_id, product_id in jobs:
             process_job(cur, job_id, workspace_id, product_id)
         conn.commit()
@@ -222,6 +262,10 @@ def main():
     idle_ms = POLL_MS
     while True:
         try:
+            if not gate_open("img"):
+                time.sleep(min(POLL_MS, 30_000) / 1000.0)
+                continue
+            last_db_poll_ms = time.time() * 1000
             had_work = tick(conn)
             idle_ms = POLL_MS if had_work else min(idle_ms * 2, MAX_IDLE_MS)
         except Exception as e:

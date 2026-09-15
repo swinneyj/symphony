@@ -11,10 +11,10 @@ import { handleV2VEdit } from "./processors/v2v-edit.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const BLOB_TOKEN = blobToken();
-// Keep the queue responsive for interactive Image Studio jobs while backing
-// off when idle. Operators can override these via environment variables.
-const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 5_000);
-const MAX_IDLE_INTERVAL_MS = Number(process.env.MAX_IDLE_INTERVAL_MS ?? 30_000);
+// Keep the queue responsive when work is pending while avoiding Neon wakes
+// when the queue is empty. Operators can override these via environment vars.
+const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 60_000);
+const MAX_IDLE_INTERVAL_MS = Number(process.env.MAX_IDLE_INTERVAL_MS ?? 300_000);
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 3);
 const MAX_RETRIES = Number(process.env.WORKER_MAX_RETRIES ?? 3);
 const STALE_MINUTES = Number(process.env.WORKER_STALE_MINUTES ?? 15);
@@ -70,17 +70,59 @@ async function processJob(job: JobRow) {
   }
 }
 
+// ─── Neon compute gate ──────────────────────────────────────────────────────
+// Skip the DB poll unless an API enqueue hook has set the KV job flag. The
+// periodic safety poll covers missed enqueue hooks without returning to
+// continuous Neon polling. Chained jobs keep the flag open until an empty
+// queue is observed.
+const GATE_URL = process.env.WORKER_GATE_URL ?? "https://www.symphonyapp.company/api/cron/worker-gate";
+const GATE_SECRET = process.env.CRON_SECRET;
+const GATE_MAX_SKIP_MS = 4 * 60 * 60 * 1000;
+let lastDbPollAt = 0;
+
+async function gateDue(worker: string): Promise<boolean> {
+  if (Date.now() - lastDbPollAt >= GATE_MAX_SKIP_MS) return true;
+  try {
+    const res = await fetch(`${GATE_URL}?w=${worker}`, {
+      headers: GATE_SECRET ? { Authorization: `Bearer ${GATE_SECRET}` } : {},
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return true;
+    return (await res.json()).due !== false;
+  } catch {
+    return true;
+  }
+}
+
+async function gateClear(worker: string): Promise<void> {
+  try {
+    await fetch(`${GATE_URL}?w=${worker}`, {
+      method: "DELETE",
+      headers: GATE_SECRET ? { Authorization: `Bearer ${GATE_SECRET}` } : {},
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch {
+    /* non-fatal */
+  }
+}
+
 // ─── Main loop ───────────────────────────────────────────────────────────────
 
 async function tick() {
   try {
+    if (!(await gateDue("video"))) return false;
+    lastDbPollAt = Date.now();
+
     const reclaimed = await requeueStaleRunning(STALE_MINUTES);
     if (reclaimed > 0) {
       console.log(`[video-worker] requeued ${reclaimed} stale running job(s)`);
     }
 
     const jobs = await claimJobs(CONCURRENCY, ["scene_render", "footage", "batch_video", "overlay", "slideshow", "v2v_edit"]);
-    if (jobs.length === 0) return false;
+    if (jobs.length === 0) {
+      await gateClear("video");
+      return false;
+    }
 
     console.log(`[video-worker] claiming ${jobs.length} job(s)`);
     await Promise.allSettled(jobs.map(processJob));
