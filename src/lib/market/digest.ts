@@ -1,12 +1,27 @@
 import { fetchWinningProducts } from "./fastmoss";
 import { fetchProductOverview, fetchProductDetail, fetchCreatorProducts } from "./fastmoss";
+import { cacheGet, cacheSet, cacheKey } from "./cache";
 /* FastMoss returns dynamically-shaped JSON payloads. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const money = (n: number | null | undefined) => n == null ? "—" : `$${Math.round(n).toLocaleString()}`;
+const DIGEST_STRATEGY_VERSION = "seller-led-v2";
+
+function digestWeekKey() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 7);
+  const thursday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  thursday.setUTCDate(thursday.getUTCDate() + 4 - (thursday.getUTCDay() || 7));
+  const start = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((thursday.getTime() - start.getTime()) / 86400000) + 1) / 7);
+  return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
 
 /** Build a compact, credit-conscious weekly product-research digest. */
 export async function buildFastMossWeeklyDigest() {
+  const key = cacheKey("fastmoss-digest", `${DIGEST_STRATEGY_VERSION}:US:${digestWeekKey()}`);
+  const cached = await cacheGet<{ text: string; products: Array<{ id: string; name: string }> }>(key);
+  if (cached) return cached;
   const ranked = await fetchWinningProducts({ period: "week", region: "US", limit: 50, sortField: "gmv", sortType: "desc" });
   const seedCreatorUid = "7032058347824563246";
   const sellerProducts = await fetchCreatorProducts(seedCreatorUid, 28, 10);
@@ -57,5 +72,9 @@ export async function buildFastMossWeeklyDigest() {
     lines.push(`   FastMoss: https://www.fastmoss.com/e-commerce/detail/${item.product.sourceProductId}`, "");
   }
   lines.push("Strategy: shortlist first, then validate commission, listing quality, shipping, and creative angles before posting.");
-  return { text: lines.join("\n"), products };
+  const result = { text: lines.join("\n"), products };
+  // Eight days spans the full weekly period and protects against duplicate
+  // Telegram commands while allowing the next completed week to refresh.
+  await cacheSet(key, result, 8 * 24 * 3600);
+  return result;
 }
