@@ -137,6 +137,7 @@ export default function PersonaDetailPage() {
   }, [load, wsResolved]);
 
   const swapVoice = async (voiceId: string) => {
+    if (!persona) return;
     await fetch(`/api/creators/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
