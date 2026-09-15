@@ -28,7 +28,10 @@ export async function POST(request: Request) {
       const digest = await buildFastMossWeeklyDigest();
       return await reply(source, payload, digest.text, 200, digest.products);
     } catch (error) {
-      return await reply(source, payload, `Could not build the FastMoss digest: ${error instanceof Error ? error.message : "unknown error"}`, 502);
+      // Telegram retries webhook updates when the endpoint returns a non-2xx
+      // response. A missing/invalid data-source credential is a user-facing
+      // configuration error, not a delivery failure, so acknowledge it once.
+      return await reply(source, payload, `Could not build the FastMoss digest: ${error instanceof Error ? error.message : "unknown error"}`, 200);
     }
   }
   const links = [...new Set(text.match(/https?:\/\/[^\s<>]+/gi) ?? [])].map((link) => link.replace(/[),.]+$/, ""));
