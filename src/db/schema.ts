@@ -30,6 +30,12 @@ export const videoJobTypeEnum = pgEnum("video_job_type", ["product_process", "fo
 export const videoJobStatusEnum = pgEnum("video_job_status", ["queued", "running", "done", "failed", "cancelled"]);
 export const videoBatchStatusEnum = pgEnum("video_batch_status", ["queued", "running", "done", "partial", "failed"]);
 
+export type CreatorStyleConfig = {
+  speakingStyle?: string;
+  personalityTraits?: string[];
+  customInstructions?: string;
+};
+
 // ─── USERS & AUTH ────────────────────────────────────────────────────────────
 
 export const users = pgTable("users", {
@@ -385,6 +391,17 @@ export const personas = pgTable("personas", {
   voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
   /** Appearance/style — injected into scene prompts. */
   personaPrompt: text("persona_prompt"),
+  /** Provider bindings are strings so new adapters do not require enum migrations. */
+  voiceProvider: text("voice_provider"),
+  voiceModelId: text("voice_model_id"),
+  avatarProvider: text("avatar_provider"),
+  avatarModelId: text("avatar_model_id"),
+  /** Structured delivery/personality configuration used by script and voice layers. */
+  styleConfig: jsonb("style_config").$type<CreatorStyleConfig>().default({}),
+  /** pending | authorized | revoked | expired. Generation must require authorized. */
+  consentStatus: text("consent_status").notNull().default("pending"),
+  consentConfirmedAt: timestamp("consent_confirmed_at", { mode: "date" }),
+  consentNotes: text("consent_notes"),
   isSystem: boolean("is_system").default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
