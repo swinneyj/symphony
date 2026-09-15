@@ -66,22 +66,9 @@ jobs:
           cp ./video-worker/.build-assets/bws ./img-worker/.build-assets/bws
           cp ./video-worker/.build-assets/bws ./ads-worker/.build-assets/bws
 
-          # Retire only known worker containers that may still own the old
-          # published ports. Refuse to touch an unexpected service.
-          for port in 8082 8083; do
-            old_names="$(docker ps --filter "publish=$port" --format '{{.Names}}')"
-            while IFS= read -r old_name; do
-              [ -z "$old_name" ] && continue
-              case "$old_name" in
-                img-worker|symphony-img-worker|ads-worker|symphony-ads-worker)
-                  docker rm -f "$old_name" ;;
-                *)
-                  echo "Unexpected container '$old_name' owns port $port; refusing to remove it"
-                  exit 1 ;;
-              esac
-            done <<< "$old_names"
-          done
-          docker rm -f symphony-img-worker symphony-ads-worker 2>/dev/null || true
+          # The workers only make outbound requests, so they do not need host
+          # port bindings. Retire only their exact known legacy names.
+          docker rm -f img-worker ads-worker symphony-img-worker symphony-ads-worker 2>/dev/null || true
 
           docker build -t symphony-img-worker:latest ./img-worker
           docker run -d \
