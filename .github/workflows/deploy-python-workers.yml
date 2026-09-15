@@ -55,6 +55,17 @@ jobs:
           git checkout main
           git pull --ff-only origin main
 
+          # The Python Dockerfiles intentionally use the same bws binary as
+          # the video worker, but Docker build contexts are per-directory.
+          # Reuse the already provisioned binary without committing a copy.
+          test -x ./video-worker/.build-assets/bws || {
+            echo 'Missing video-worker/.build-assets/bws on VPS'
+            exit 1
+          }
+          mkdir -p ./img-worker/.build-assets ./ads-worker/.build-assets
+          cp ./video-worker/.build-assets/bws ./img-worker/.build-assets/bws
+          cp ./video-worker/.build-assets/bws ./ads-worker/.build-assets/bws
+
           docker build -t symphony-img-worker:latest ./img-worker
           docker rm -f symphony-img-worker 2>/dev/null || true
           docker run -d \
