@@ -4,6 +4,11 @@ import { db } from "@/db";
 import { personas, voices, users } from "@/db/schema";
 import { eq, desc, or, and, isNull } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
+import {
+  isCreatorConsentStatus,
+  normalizeCreatorStyle,
+  validateCreatorProvider,
+} from "@/lib/creator-clone/profile";
 
 /**
  * GET /api/personas?workspaceId=<id>
@@ -38,8 +43,16 @@ export async function GET(request: Request) {
         faceRefUrls: personas.faceRefUrls,
         voiceId: personas.voiceId,
         voiceName: voices.name,
-        voiceProvider: voices.provider,
+        linkedVoiceProvider: voices.provider,
         personaPrompt: personas.personaPrompt,
+        voiceProvider: personas.voiceProvider,
+        voiceModelId: personas.voiceModelId,
+        avatarProvider: personas.avatarProvider,
+        avatarModelId: personas.avatarModelId,
+        styleConfig: personas.styleConfig,
+        consentStatus: personas.consentStatus,
+        consentConfirmedAt: personas.consentConfirmedAt,
+        consentNotes: personas.consentNotes,
         isSystem: personas.isSystem,
         createdAt: personas.createdAt,
         updatedAt: personas.updatedAt,
@@ -75,7 +88,22 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { workspaceId, name, description, personaPrompt, voiceId, faceImageUrl, faceRefUrls } = body;
+    const {
+      workspaceId,
+      name,
+      description,
+      personaPrompt,
+      voiceId,
+      faceImageUrl,
+      faceRefUrls,
+      voiceProvider,
+      voiceModelId,
+      avatarProvider,
+      avatarModelId,
+      styleConfig,
+      consentStatus,
+      consentNotes,
+    } = body;
 
     if (!workspaceId || typeof workspaceId !== "string") {
       return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
@@ -85,6 +113,15 @@ export async function POST(request: Request) {
     }
     if (!(await hasWorkspaceAccess(workspaceId, session.user.id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const voiceProviderError = validateCreatorProvider(voiceProvider, "voice");
+    const avatarProviderError = validateCreatorProvider(avatarProvider, "avatar");
+    if (voiceProviderError || avatarProviderError) {
+      return NextResponse.json({ error: voiceProviderError ?? avatarProviderError }, { status: 400 });
+    }
+    const safeConsentStatus = consentStatus ?? "pending";
+    if (!isCreatorConsentStatus(safeConsentStatus)) {
+      return NextResponse.json({ error: "Invalid consent status" }, { status: 400 });
     }
 
     const refs = Array.isArray(faceRefUrls)
@@ -102,6 +139,14 @@ export async function POST(request: Request) {
         voiceId: voiceId || null,
         faceImageUrl: faceImageUrl || null,
         faceRefUrls: refs,
+        voiceProvider: voiceProvider || null,
+        voiceModelId: voiceModelId?.trim() || null,
+        avatarProvider: avatarProvider || null,
+        avatarModelId: avatarModelId?.trim() || null,
+        styleConfig: normalizeCreatorStyle(styleConfig),
+        consentStatus: safeConsentStatus,
+        consentConfirmedAt: safeConsentStatus === "authorized" ? new Date() : null,
+        consentNotes: consentNotes?.trim() || null,
       })
       .returning();
 

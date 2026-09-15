@@ -89,7 +89,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       .where(and(eq(videoBatchJobs.posted, true), sql`${videoBatchJobs.metadata}->>'personaId' = ${id}`));
 
     return NextResponse.json({
-      photos,
+      photos: photos.filter((asset) => asset.role === "face_ref" || asset.role === "generated_photo" || asset.role === "thumbnail"),
+      trainingMedia: photos.filter((asset) => asset.role === "training_video" || asset.role === "voice_sample"),
       videos,
       voice: voice ? { ...voice, samples: voiceSamples } : null,
       usage: {
@@ -119,7 +120,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!mediaAssetId || typeof mediaAssetId !== "string") {
       return NextResponse.json({ error: "mediaAssetId is required" }, { status: 400 });
     }
-    const allowedRoles = ["face_ref", "generated_photo", "voice_sample", "thumbnail"];
+    const allowedRoles = ["face_ref", "generated_photo", "training_video", "voice_sample", "thumbnail"];
     const safeRole = allowedRoles.includes(role ?? "") ? role : "generated_photo";
 
     const [persona] = await db.select().from(personas).where(eq(personas.id, id)).limit(1);

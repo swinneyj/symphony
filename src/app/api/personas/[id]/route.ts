@@ -4,6 +4,11 @@ import { db } from "@/db";
 import { personas } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
+import {
+  isCreatorConsentStatus,
+  normalizeCreatorStyle,
+  validateCreatorProvider,
+} from "@/lib/creator-clone/profile";
 
 // Persona detail: GET (read) + PATCH (update) + DELETE. System personas
 // (workspaceId null) are read-only — only workspace-owned personas can be
@@ -65,6 +70,29 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (Array.isArray(body.faceRefUrls)) {
       patch.faceRefUrls = body.faceRefUrls.filter((u: unknown) => typeof u === "string" && u.length > 0);
     }
+    if (body.voiceProvider !== undefined) {
+      const error = validateCreatorProvider(body.voiceProvider, "voice");
+      if (error) return NextResponse.json({ error }, { status: 400 });
+      patch.voiceProvider = body.voiceProvider || null;
+    }
+    if (body.voiceModelId !== undefined) patch.voiceModelId = body.voiceModelId?.trim() || null;
+    if (body.avatarProvider !== undefined) {
+      const error = validateCreatorProvider(body.avatarProvider, "avatar");
+      if (error) return NextResponse.json({ error }, { status: 400 });
+      patch.avatarProvider = body.avatarProvider || null;
+    }
+    if (body.avatarModelId !== undefined) patch.avatarModelId = body.avatarModelId?.trim() || null;
+    if (body.styleConfig !== undefined) patch.styleConfig = normalizeCreatorStyle(body.styleConfig);
+    if (body.consentStatus !== undefined) {
+      if (!isCreatorConsentStatus(body.consentStatus)) {
+        return NextResponse.json({ error: "Invalid consent status" }, { status: 400 });
+      }
+      patch.consentStatus = body.consentStatus;
+      if (body.consentStatus === "authorized" && !existing.consentConfirmedAt) {
+        patch.consentConfirmedAt = new Date();
+      }
+    }
+    if (body.consentNotes !== undefined) patch.consentNotes = body.consentNotes?.trim() || null;
 
     const [updated] = await db.update(personas).set(patch).where(eq(personas.id, id)).returning();
     return NextResponse.json(updated);

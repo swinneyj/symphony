@@ -154,6 +154,7 @@ export function assertProviderAvailable(providerId: string, kind: ProviderKind):
 class UnavailableVoiceAdapter implements VoiceProvider {
   constructor(readonly descriptor: ProviderDescriptor) {}
   async generateSpeech(_request: GenerationRequest): Promise<GenerationResult> {
+    void _request;
     return assertProviderAvailable(this.descriptor.id, "voice");
   }
 }
@@ -163,6 +164,7 @@ class UnavailableAvatarAdapter implements AvatarProvider {
   async generateAvatarVideo(
     _request: GenerationRequest & { audioUrl: string }
   ): Promise<GenerationResult> {
+    void _request;
     return assertProviderAvailable(this.descriptor.id, "avatar");
   }
 }
@@ -172,6 +174,7 @@ class UnavailableVideoAdapter implements VideoProvider {
   async generateVideo(
     _request: GenerationRequest & { sourceUrls?: string[] }
   ): Promise<GenerationResult> {
+    void _request;
     return assertProviderAvailable(this.descriptor.id, "video");
   }
 }

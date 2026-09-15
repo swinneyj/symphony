@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:creator-providers": "tsx --test src/lib/creator-clone/providers.test.ts"
+    "test:creator-providers": "tsx --test src/lib/creator-clone/*.test.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",
