@@ -108,3 +108,9 @@ export async function fetchProductOverview(sourceProductId: string, days = 7) {
   const result = await callTool("product_overview", { filter: { product_id: sourceProductId, time_range_days: days } });
   return { data: result.data, charge: result.meta.charge ?? null };
 }
+
+/** Product basics and canonical TikTok Shop detail URL (1 credit). */
+export async function fetchProductDetail(sourceProductId: string) {
+  const result = await callTool("product_detail_info", { filter: { product_id: sourceProductId } });
+  return { data: result.data, charge: result.meta.charge ?? null };
+}
