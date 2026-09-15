@@ -25,7 +25,14 @@ export async function buildFastMossWeeklyDigest() {
     const video = item.overview?.content_distribution?.breakdown?.find((x: any) => x.content_type === "video");
     const ads = item.overview?.ads_distribution?.breakdown?.find((x: any) => x.traffic_source === "ad_traffic");
     const creators = summary.linked_creator_count;
-    const strict = (item.product.priceMin ?? 0) >= 60 && (item.product.growthRate ?? 0) > 50 && (creators ?? Infinity) < 50;
+    // Practical launch filter: under 600 creators still leaves room to
+    // compete, while avoiding the unrealistic under-50 ceiling for proven
+    // winners. Require meaningful affiliate + video contribution too.
+    const strict = (item.product.priceMin ?? 0) >= 60 &&
+      (item.product.growthRate ?? 0) > 50 &&
+      (creators ?? Infinity) < 600 &&
+      (affiliate?.gmv_share_percent ?? 0) >= 20 &&
+      (video?.gmv_share_percent ?? 0) >= 20;
     lines.push(`${index + 1}. ${strict ? "✅ " : "• "}${item.product.name}`);
     lines.push(`   ${money(summary.period_total_gmv ?? item.product.gmv30d)} GMV • ${(item.product.growthRate ?? 0).toFixed(1)}% growth • ${item.product.priceMin ?? "—"}-${item.product.priceMax ?? "—"} price`);
     lines.push(`   ${creators ?? "—"} creators • ${summary.period_total_units_sold ?? "—"} units • affiliate ${affiliate?.gmv_share_percent ?? 0}% • video ${video?.gmv_share_percent ?? 0}% • ads ${ads?.gmv_share_percent ?? 0}%`);
