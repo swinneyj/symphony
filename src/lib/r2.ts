@@ -1,4 +1,4 @@
-import { ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 
 export function r2Config() {
   const accountId = process.env.R2_ACCOUNT_ID;
@@ -20,4 +20,10 @@ export async function listR2Objects() {
     continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
   } while (continuationToken);
   return { bucket: config.bucket, prefix: config.prefix, objects };
+}
+
+export async function getR2Object(key: string) {
+  const config = r2Config();
+  if (!config || !key.startsWith(config.prefix)) return null;
+  return { config, response: await config.client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key })) };
 }
