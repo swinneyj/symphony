@@ -1,4 +1,4 @@
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 
 export function r2Config() {
   const accountId = process.env.R2_ACCOUNT_ID;
@@ -26,4 +26,11 @@ export async function getR2Object(key: string) {
   const config = r2Config();
   if (!config || !key.startsWith(config.prefix)) return null;
   return { config, response: await config.client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key })) };
+}
+
+export async function deleteR2Object(key: string) {
+  const config = r2Config();
+  if (!config || !key.startsWith(config.prefix)) return null;
+  await config.client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+  return true;
 }
