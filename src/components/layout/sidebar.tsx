@@ -30,6 +30,7 @@ import {
   Clapperboard,
   UserRound,
   Ghost,
+  HardDrive,
   X,
 } from "lucide-react";
 
@@ -41,6 +42,7 @@ const navigation = [
   { name: "Inbox", href: "/inbox", icon: MessageSquare },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Media Library", href: "/media", icon: Image },
+  { name: "Storage", href: "/storage", icon: HardDrive },
   { name: "AI Studio", href: "/ai-studio", icon: Sparkles },
   { name: "Video Studio", href: "/video-studio", icon: Clapperboard },
   { name: "Creators", href: "/creators", icon: UserRound },
