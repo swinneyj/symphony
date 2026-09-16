@@ -4,7 +4,8 @@ import { db } from "@/db";
 import { cloneBenchmarks, cloneBenchmarkRuns, cloneBenchmarkRatings, personas } from "@/db/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 import { hasWorkspaceAccess } from "@/lib/workspace-access";
-import { CREATOR_PROVIDER_CATALOG, createCreatorProviderRegistry, getProviderCapability } from "@/lib/creator-clone/providers";
+import { CREATOR_PROVIDER_CATALOG, getProviderCapability } from "@/lib/creator-clone/providers";
+import { createServerCreatorProviderRegistry } from "@/lib/creator-clone/server-registry";
 
 const defaultVoiceProviders = CREATOR_PROVIDER_CATALOG
   .filter((provider) => provider.capabilities.some((capability) => capability.kind === "voice"))
@@ -76,14 +77,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Creator consent must be authorized before benchmarking" }, { status: 400 });
     }
 
-    const voiceProviders = Array.isArray(body.voiceProviders) && body.voiceProviders.length
+    const voiceProviders = Array.isArray(body.voiceProviders)
       ? body.voiceProviders.filter((id: unknown): id is string => typeof id === "string")
       : defaultVoiceProviders;
-    const avatarProviders = Array.isArray(body.avatarProviders) && body.avatarProviders.length
+    const avatarProviders = Array.isArray(body.avatarProviders)
       ? body.avatarProviders.filter((id: unknown): id is string => typeof id === "string")
       : defaultAvatarProviders;
-    if (!voiceProviders.length || !avatarProviders.length) {
-      return NextResponse.json({ error: "Select at least one voice and avatar provider" }, { status: 400 });
+    if (!voiceProviders.length) {
+      return NextResponse.json({ error: "Select at least one voice provider" }, { status: 400 });
     }
     for (const provider of voiceProviders) {
       if (!getProviderCapability(provider, "voice")) return NextResponse.json({ error: `Unknown voice provider: ${provider}` }, { status: 400 });
@@ -103,22 +104,29 @@ export async function POST(request: Request) {
       status: "running",
     }).returning();
 
-    const registry = createCreatorProviderRegistry();
+    const registry = createServerCreatorProviderRegistry();
     const createdRuns = [];
     for (const voiceProvider of voiceProviders) {
-      for (const avatarProvider of avatarProviders) {
+      // No avatar providers means an intentional voice-only benchmark.
+      for (const avatarProvider of avatarProviders.length ? avatarProviders : [null]) {
         const startedAt = Date.now();
         let status: "done" | "failed" = "failed";
         let error: string | null = null;
         let outputUrl: string | null = null;
         try {
           const voice = registry.voices.get(voiceProvider);
-          const avatar = registry.avatars.get(avatarProvider);
-          if (!voice || !avatar) throw new Error("Provider adapter is not registered");
+          if (!voice) throw new Error("Voice provider adapter is not registered");
           const audio = await voice.generateSpeech({ creatorId, script, modelId: creator.voiceModelId ?? undefined });
-          const video = await avatar.generateAvatarVideo({ creatorId, script, modelId: creator.avatarModelId ?? undefined, audioUrl: audio.outputUrl ?? "" });
-          status = video.status === "complete" ? "done" : "failed";
-          outputUrl = video.outputUrl ?? null;
+          if (avatarProvider) {
+            const avatar = registry.avatars.get(avatarProvider);
+            if (!avatar) throw new Error("Avatar provider adapter is not registered");
+            const video = await avatar.generateAvatarVideo({ creatorId, script, modelId: creator.avatarModelId ?? undefined, audioUrl: audio.outputUrl ?? "" });
+            status = video.status === "complete" ? "done" : "failed";
+            outputUrl = video.outputUrl ?? null;
+          } else {
+            status = audio.status === "complete" ? "done" : "failed";
+            outputUrl = audio.outputUrl ?? null;
+          }
         } catch (cause) {
           error = cause instanceof Error ? cause.message : "Provider run failed";
         }
@@ -132,7 +140,7 @@ export async function POST(request: Request) {
           outputUrl,
           error,
           generationTimeMs: Date.now() - startedAt,
-          resolution: "9:16",
+          resolution: avatarProvider ? "9:16" : null,
         }).returning();
         createdRuns.push(run);
       }

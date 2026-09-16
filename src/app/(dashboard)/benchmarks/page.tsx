@@ -29,7 +29,7 @@ export default function BenchmarksPage() {
   const [script, setScript] = useState("");
   const [qualityMode, setQualityMode] = useState("standard");
   const [selectedVoices, setSelectedVoices] = useState<string[]>(["fish_audio"]);
-  const [selectedAvatars, setSelectedAvatars] = useState<string[]>(["heygen", "argil", "creatify"]);
+  const [selectedAvatars, setSelectedAvatars] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -102,9 +102,9 @@ export default function BenchmarksPage() {
         <Textarea value={script} onChange={(event) => setScript(event.target.value)} placeholder="Paste the test script every provider should receive…" rows={4} />
         <div className="grid gap-4 md:grid-cols-2">
           <div><p className="mb-2 text-xs font-medium">Voice providers</p><div className="flex flex-wrap gap-2">{voiceProviders.map((provider) => <label key={provider.id} className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={selectedVoices.includes(provider.id)} onChange={() => toggle(setSelectedVoices, provider.id)} />{provider.name}</label>)}</div></div>
-          <div><p className="mb-2 text-xs font-medium">Avatar providers</p><div className="flex flex-wrap gap-2">{avatarProviders.map((provider) => <label key={provider.id} className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={selectedAvatars.includes(provider.id)} onChange={() => toggle(setSelectedAvatars, provider.id)} />{provider.name}</label>)}</div></div>
+          <div><p className="mb-2 text-xs font-medium">Avatar providers (optional)</p><div className="flex flex-wrap gap-2">{avatarProviders.map((provider) => <label key={provider.id} className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={selectedAvatars.includes(provider.id)} onChange={() => toggle(setSelectedAvatars, provider.id)} />{provider.name}</label>)}</div><p className="mt-2 text-[11px] text-muted-foreground">Leave all unchecked for a Fish Audio-only voice benchmark.</p></div>
         </div>
-        <Button onClick={runBenchmark} disabled={running || script.trim().length < 10 || !creatorId || !selectedVoices.length || !selectedAvatars.length}><Play className="mr-2 h-4 w-4" />{running ? "Running…" : "Run benchmark"}</Button>
+        <Button onClick={runBenchmark} disabled={running || script.trim().length < 10 || !creatorId || !selectedVoices.length}><Play className="mr-2 h-4 w-4" />{running ? "Running…" : selectedAvatars.length ? "Run benchmark" : "Run Fish Audio"}</Button>
         {message && <p className="text-sm text-muted-foreground">{message}</p>}
       </Card>
       <div className="space-y-4">{benchmarks.map((benchmark) => <Card key={benchmark.id} className="space-y-4 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-medium">{benchmark.creatorName} · {benchmark.qualityMode}</h2><p className="text-xs text-muted-foreground">{new Date(benchmark.createdAt).toLocaleString()} · {benchmark.runs.length} runs</p></div><Badge>{benchmark.status}</Badge></div><p className="rounded-md bg-muted p-3 text-sm">{benchmark.script}</p><div className="grid gap-3 md:grid-cols-2">{benchmark.runs.map((run) => <RunCard key={run.id} run={run} />)}</div></Card>)}</div>
