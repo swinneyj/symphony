@@ -46,6 +46,25 @@ type HubPayload = {
   usage: { formulas: { id: string; name: string }[]; batches: number; posts: number };
 };
 
+function audioBufferToWav(buffer: AudioBuffer): Blob {
+  const channels = Math.min(2, buffer.numberOfChannels);
+  const frames = buffer.length;
+  const dataSize = frames * channels * 2;
+  const output = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(output);
+  const write = (offset: number, value: string) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+  write(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); write(8, "WAVE"); write(12, "fmt ");
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, channels, true);
+  view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * channels * 2, true);
+  view.setUint16(32, channels * 2, true); view.setUint16(34, 16, true); write(36, "data"); view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (let i = 0; i < frames; i++) for (let channel = 0; channel < channels; channel++) {
+    const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true); offset += 2;
+  }
+  return new Blob([output], { type: "audio/wav" });
+}
+
 type CreatorDetail = {
   id: string;
   workspaceId: string | null;
@@ -81,6 +100,9 @@ export default function PersonaDetailPage() {
   const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedTraining, setSelectedTraining] = useState<Set<string>>(new Set());
+  const [training, setTraining] = useState(false);
+  const [trainingMessage, setTrainingMessage] = useState<string | null>(null);
 
   // System personas (workspaceId null) need ?workspaceId= on read APIs —
   // resolve the user's workspace like the formula run page does. Wait for
@@ -144,6 +166,32 @@ export default function PersonaDetailPage() {
       body: JSON.stringify({ workspaceId: persona.workspaceId ?? workspaceId, voiceId: voiceId || null }),
     });
     load();
+  };
+
+  const trainFishVoice = async () => {
+    if (!persona || !hub || selectedTraining.size === 0 || training) return;
+    if (persona.consentStatus !== "authorized") { setTrainingMessage("Authorize this creator before training a voice model."); return; }
+    setTraining(true); setTrainingMessage(null);
+    try {
+      const audioContext = new AudioContext();
+      const form = new FormData();
+      form.append("title", `${persona.name} voice`);
+      for (const asset of hub.trainingMedia.filter((item) => selectedTraining.has(item.id))) {
+        const response = await fetch(`/api/media/${asset.mediaAssetId}/public`);
+        if (!response.ok) throw new Error(`Could not read ${asset.fileName ?? "training media"}`);
+        const source = await response.arrayBuffer();
+        const audio = asset.role === "training_video" ? audioBufferToWav(await audioContext.decodeAudioData(source.slice(0))) : new Blob([source], { type: asset.mimeType ?? "audio/mpeg" });
+        form.append("voices", audio, `${(asset.fileName ?? "voice-sample").replace(/\.[^.]+$/, "")}.wav`);
+      }
+      await audioContext.close();
+      const result = await fetch(`/api/creators/${id}/fish-train`, { method: "POST", body: form });
+      const payload = await result.json().catch(() => ({}));
+      if (!result.ok) throw new Error(payload.error ?? "Fish Audio training failed");
+      setTrainingMessage(`Voice model created: ${payload.modelId}. It is now saved on ${persona.name}.`);
+      setPersona((current) => current ? { ...current, voiceProvider: "fish_audio", voiceModelId: payload.modelId } : current);
+      setSelectedTraining(new Set());
+    } catch (e) { setTrainingMessage((e as Error).message); }
+    finally { setTraining(false); }
   };
 
   if (error) return <div className="p-6 text-sm text-destructive">{error}</div>;
@@ -332,6 +380,12 @@ export default function PersonaDetailPage() {
         </TabsContent>
 
         <TabsContent value="training" className="mt-4">
+          <Card className="mb-4 space-y-3 p-4">
+            <div><p className="text-sm font-medium">Train Fish Audio voice</p><p className="text-xs text-muted-foreground">Select multiple videos or audio samples. Video audio is extracted in your browser, then uploaded to Fish Audio as a private voice model.</p></div>
+            <div className="flex flex-wrap items-center gap-2"><Button size="sm" onClick={trainFishVoice} disabled={training || selectedTraining.size === 0 || persona.consentStatus !== "authorized"}>{training ? "Training…" : `Train selected (${selectedTraining.size})`}</Button>{persona.voiceProvider === "fish_audio" && persona.voiceModelId && <Badge variant="secondary">Fish model connected</Badge>}</div>
+            {persona.consentStatus !== "authorized" && <p className="text-xs text-amber-700">Set authorization to Authorized in the Creator Profile before training.</p>}
+            {trainingMessage && <p className="text-xs text-muted-foreground">{trainingMessage}</p>}
+          </Card>
           {hub.trainingMedia.length === 0 ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">
               No training videos or voice samples have been attached.
@@ -341,7 +395,7 @@ export default function PersonaDetailPage() {
               {hub.trainingMedia.map((asset) => (
                 <Card key={asset.id} className="space-y-2 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium">{asset.fileName ?? "Training asset"}</p>
+                    <label className="flex min-w-0 items-center gap-2"><input type="checkbox" checked={selectedTraining.has(asset.id)} onChange={() => setSelectedTraining((current) => { const next = new Set(current); if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id); return next; })} /><p className="truncate text-sm font-medium">{asset.fileName ?? "Training asset"}</p></label>
                     <Badge variant="secondary">{asset.role.replace("_", " ")}</Badge>
                   </div>
                   {asset.role === "training_video" ? (
