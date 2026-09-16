@@ -421,6 +421,51 @@ export const personaMedia = pgTable("persona_media", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const cloneBenchmarks = pgTable("clone_benchmarks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  creatorId: uuid("creator_id").notNull().references(() => personas.id, { onDelete: "cascade" }),
+  createdById: text("created_by_id").notNull().references(() => users.id),
+  script: text("script").notNull(),
+  voiceId: uuid("voice_id").references(() => voices.id, { onDelete: "set null" }),
+  avatarReferenceUrl: text("avatar_reference_url"),
+  qualityMode: text("quality_mode").notNull().default("standard"),
+  status: text("status").notNull().default("queued"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const cloneBenchmarkRuns = pgTable("clone_benchmark_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  benchmarkId: uuid("benchmark_id").notNull().references(() => cloneBenchmarks.id, { onDelete: "cascade" }),
+  voiceProvider: text("voice_provider"),
+  avatarProvider: text("avatar_provider"),
+  voiceModelId: text("voice_model_id"),
+  avatarModelId: text("avatar_model_id"),
+  status: text("status").notNull().default("queued"),
+  outputUrl: text("output_url"),
+  error: text("error"),
+  costUsd: numeric("cost_usd", { precision: 12, scale: 6 }),
+  generationTimeMs: integer("generation_time_ms"),
+  resolution: text("resolution"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const cloneBenchmarkRatings = pgTable("clone_benchmark_ratings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => cloneBenchmarkRuns.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  faceLikeness: integer("face_likeness"),
+  voiceLikeness: integer("voice_likeness"),
+  lipSync: integer("lip_sync"),
+  movementNaturalness: integer("movement_naturalness"),
+  overallRealism: integer("overall_realism"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 export const videoFormulas = pgTable("video_formulas", {
   id: uuid("id").defaultRandom().primaryKey(),
   // null = system formula available to every workspace

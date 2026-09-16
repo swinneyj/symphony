@@ -44,6 +44,7 @@ const navigation = [
   { name: "AI Studio", href: "/ai-studio", icon: Sparkles },
   { name: "Video Studio", href: "/video-studio", icon: Clapperboard },
   { name: "Creators", href: "/creators", icon: UserRound },
+  { name: "Clone Benchmark", href: "/benchmarks", icon: Clapperboard },
   { name: "Steal This Ad", href: "/steal-this-ad", icon: Ghost },
   { name: "Workspaces", href: "/workspaces", icon: Users },
   { name: "Settings", href: "/settings", icon: Settings },
