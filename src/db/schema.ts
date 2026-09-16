@@ -203,6 +203,9 @@ export const mediaAssets = pgTable("media_assets", {
   width: integer("width"),
   height: integer("height"),
   duration: integer("duration"),
+  audioTrackStatus: text("audio_track_status"),
+  audioClassification: text("audio_classification"),
+  analyzedAt: timestamp("analyzed_at", { mode: "date" }),
   alt: text("alt"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
