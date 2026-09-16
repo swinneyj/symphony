@@ -12,6 +12,12 @@ export function r2Config() {
 export async function listR2Objects() {
   const config = r2Config();
   if (!config) return null;
-  const response = await config.client.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: config.prefix }));
-  return { bucket: config.bucket, prefix: config.prefix, objects: (response.Contents ?? []).map((object) => ({ key: object.Key, size: object.Size ?? 0, lastModified: object.LastModified ?? null })) };
+  const objects: Array<{ key: string | undefined; size: number; lastModified: Date | null }> = [];
+  let continuationToken: string | undefined;
+  do {
+    const response = await config.client.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: config.prefix, ContinuationToken: continuationToken }));
+    objects.push(...(response.Contents ?? []).map((object) => ({ key: object.Key, size: object.Size ?? 0, lastModified: object.LastModified ?? null })));
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return { bucket: config.bucket, prefix: config.prefix, objects };
 }
