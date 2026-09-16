@@ -1,0 +1,262 @@
+[
+  {
+    "id": "people-01-natural-creator",
+    "category": "photorealistic_people",
+    "operation": "generation",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "prompt": "Create a photorealistic vertical creator-style photo of a woman in her late twenties speaking to camera in a bright apartment kitchen. Natural skin texture, anatomically correct hands visible holding a ceramic mug, believable phone-camera depth of field, soft window light, candid expression, no text, no logos, no watermark."
+  },
+  {
+    "id": "people-02-night-street",
+    "category": "photorealistic_people",
+    "operation": "generation",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "prompt": "Photorealistic vertical street portrait of a male lifestyle creator walking through a rainy city at night, full body, both hands visible, realistic face and anatomy, wet pavement reflections, practical neon lighting, candid editorial photography, no text, no watermark."
+  },
+  {
+    "id": "people-03-two-friends",
+    "category": "photorealistic_people",
+    "operation": "generation",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "prompt": "Wide photorealistic image of two friends filming a cooking video together at a kitchen island. One person chops vegetables while the other holds a phone on a small gimbal. Correct hands, faces, eye lines, utensils, and realistic food texture; warm natural daylight; no text or logos."
+  },
+  {
+    "id": "people-04-fitness",
+    "category": "photorealistic_people",
+    "operation": "generation",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "prompt": "Vertical photorealistic fitness creator portrait in a clean boutique gym, mid-action tying one shoe on a bench, face clearly visible, realistic fingers and limbs, subtle perspiration, natural mixed daylight, premium but authentic user-generated-content look, no text, no logos."
+  },
+  {
+    "id": "people-05-product-demo",
+    "category": "photorealistic_people",
+    "operation": "generation",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "prompt": "Photorealistic vertical creator demo: a person applies a small amount of unbranded face serum in front of a bathroom mirror. Show one dropper bottle and accurate hand-to-face contact, natural pores and reflections, morning light, clean background, no extra products, no text, no watermark."
+  },
+
+  {
+    "id": "reference-01-clothing",
+    "category": "reference_preservation",
+    "operation": "edit",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "referenceImages": ["benchmark/fixtures/person-1.png"],
+    "prompt": "Edit the reference portrait. Change only the person's clothing to a tailored emerald-green blazer over a plain white shirt. Preserve the person's identity, facial structure, hair, skin tone, expression, body proportions, pose, camera angle, lighting, and background. No text or logos."
+  },
+  {
+    "id": "reference-02-background",
+    "category": "reference_preservation",
+    "operation": "edit",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "referenceImages": ["benchmark/fixtures/person-1.png"],
+    "prompt": "Replace only the background of the reference portrait with a softly lit modern podcast studio with acoustic panels and a blurred microphone arm. Preserve the person exactly: identity, face, hair, expression, clothing, body, pose, framing, and foreground edges."
+  },
+  {
+    "id": "reference-03-environment",
+    "category": "reference_preservation",
+    "operation": "edit",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "referenceImages": ["benchmark/fixtures/person-2.png"],
+    "prompt": "Place the person from the reference image at a sunlit outdoor cafe table in a believable wide photograph. Preserve their identity, facial details, hairstyle, age, and clothing. Keep the face unobstructed. Add only a coffee cup and closed notebook on the table; no text or logos."
+  },
+  {
+    "id": "reference-04-pose",
+    "category": "reference_preservation",
+    "operation": "edit",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "referenceImages": ["benchmark/fixtures/person-2.png"],
+    "prompt": "Create a vertical full-body version of the referenced person standing naturally with arms relaxed at their sides. Preserve identity, facial structure, hair, skin tone, age, and clothing design. Use a simple warm-gray studio background and soft even light; correct anatomy and hands."
+  },
+  {
+    "id": "reference-05-seasonal",
+    "category": "reference_preservation",
+    "operation": "edit",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "referenceImages": ["benchmark/fixtures/person-1.png"],
+    "prompt": "Turn the reference portrait into a winter outdoor portrait. Add a dark wool coat and subtle falling snow, with a softly blurred city street behind. Preserve the person's identity, face, hair, expression, pose, and camera perspective. Do not add hats, glasses, text, or logos."
+  },
+
+  {
+    "id": "social-01-live-poster",
+    "category": "social_graphics",
+    "operation": "generation",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "prompt": "Create a polished vertical TikTok LIVE event poster with a dark violet-to-black gradient, a generic smiling creator silhouette, and strong hierarchy. Render exactly this text and no other words: \"CREATOR LAB LIVE\"; \"TUESDAY • 8 PM ET\"; \"BUILD. POST. GROW.\" Text must be perfectly spelled, crisp, centered, and readable on a phone. No platform logos or watermark."
+  },
+  {
+    "id": "social-02-sale-graphic",
+    "category": "social_graphics",
+    "operation": "generation",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "prompt": "Square social promotion graphic for an unbranded skincare sale, minimal cream and coral palette, one generic serum bottle and soft shadows. Render exactly: \"48-HOUR GLOW SALE\" and \"SAVE 25%\". No other text, no logos, accurate typography, high contrast."
+  },
+  {
+    "id": "social-03-event-card",
+    "category": "social_graphics",
+    "operation": "generation",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "prompt": "Wide promotional event graphic with abstract electric-blue waves and clean editorial typography. Exact text only: \"SOCIAL SIGNALS\"; \"SEPTEMBER 24\"; \"BROOKLYN • 7:30 PM\". Preserve punctuation and spelling exactly; balanced layout; no logos or watermark."
+  },
+  {
+    "id": "social-04-green-screen",
+    "category": "social_graphics",
+    "operation": "generation",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "prompt": "Vertical green-screen explainer background, clean newsroom style, leave the lower-center area empty for a presenter. Include one simple upward line chart and render exactly this headline at top: \"3 CONTENT TRENDS TO WATCH\". Bright but professional, all text crisp, no extra words or logos."
+  },
+  {
+    "id": "social-05-countdown",
+    "category": "social_graphics",
+    "operation": "generation",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "prompt": "Vertical high-energy countdown graphic using black, white, and neon orange. Huge numeral \"3\" in the center. Exact supporting text: \"DAYS TO LAUNCH\" and \"TURN ON REMINDERS\". No other words, clean grid, legible mobile typography, no logos."
+  },
+
+  {
+    "id": "asset-01-emote-hype",
+    "category": "emotes_assets",
+    "operation": "generation",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "transparentBackground": true,
+    "prompt": "Create a single expressive livestream emote: a joyful purple comet mascot with star-shaped eyes and both small arms raised. Bold clean outline, readable at 64 pixels, isolated with a genuinely transparent background, no shadow beyond the character, no text, no watermark."
+  },
+  {
+    "id": "asset-02-sticker-coffee",
+    "category": "emotes_assets",
+    "operation": "generation",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "transparentBackground": true,
+    "prompt": "A polished die-cut sticker of a cheerful takeaway coffee cup doing a tiny dance, warm brown and cream palette, thick white sticker border, simple vector-like shading, centered, isolated transparent background, no text or logos."
+  },
+  {
+    "id": "asset-03-mascot-wave",
+    "category": "emotes_assets",
+    "operation": "generation",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "transparentBackground": true,
+    "prompt": "Single friendly teal robot mascot waving with exactly five fingers visible on the raised hand, rounded 3D style, clean silhouette, centered, isolated transparent background, no props, no text, no watermark."
+  },
+  {
+    "id": "asset-04-reaction-fire",
+    "category": "emotes_assets",
+    "operation": "generation",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "transparentBackground": true,
+    "prompt": "Livestream reaction emote of a cute flame character gasping with excitement, orange-to-pink gradient, thick dark outline, oversized expressive face, readable at small size, transparent background, no words, no watermark."
+  },
+  {
+    "id": "asset-05-badge",
+    "category": "emotes_assets",
+    "operation": "generation",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "transparentBackground": true,
+    "prompt": "A premium isolated community badge: a faceted silver crescent wrapped around a small violet star, symmetrical, crisp edges, subtle metallic highlights, centered on a transparent background, no letters, no text, no watermark."
+  },
+
+  {
+    "id": "complex-01-rooftop-set",
+    "category": "complex_composition",
+    "operation": "generation",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "prompt": "Wide photorealistic rooftop creator set at sunset. Place a seated host on the left facing a standing guest on the right; a round table with exactly two microphones and two water glasses between them; one camera on a tripod in the foreground right; skyline behind; cables safely taped down; coherent perspective, hands, shadows, and eye lines. No text or logos."
+  },
+  {
+    "id": "complex-02-desk-flatlay",
+    "category": "complex_composition",
+    "operation": "generation",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "prompt": "Top-down photorealistic creator desk arranged precisely: closed silver laptop centered, black phone to its left, small notebook and pen to its right, headphones above, coffee below-left, tiny potted plant below-right. Objects must not overlap, all fully visible, soft daylight, no readable brand names or text."
+  },
+  {
+    "id": "complex-03-market-scene",
+    "category": "complex_composition",
+    "operation": "generation",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "prompt": "Photorealistic evening street market composition: food vendor centered behind a counter, customer in yellow jacket on left paying with a phone, customer in blue jacket on right receiving a paper tray, steam rising from one pan, red lanterns overhead, bicycle parked in far background. Correct spatial relationships, hands, lighting, and object counts; no readable text."
+  },
+  {
+    "id": "complex-04-product-scene",
+    "category": "complex_composition",
+    "operation": "generation",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "prompt": "Premium unbranded product scene with exactly three cosmetic containers: tall pump bottle left, short round jar center, glass dropper bottle right. Arrange them on staggered travertine blocks with olive branches behind and a shallow water reflection in front. Golden side light, correct reflections and shadows, no extra containers, no text."
+  },
+  {
+    "id": "complex-05-studio-team",
+    "category": "complex_composition",
+    "operation": "generation",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "prompt": "Wide realistic content studio with four people performing distinct roles: presenter centered at a standing desk, camera operator left behind a tripod camera, lighting assistant right adjusting a softbox, producer seated in rear wearing headphones. Include one boom microphone overhead and one monitor on the desk. Coherent anatomy, equipment, gaze, perspective, and lighting; no text."
+  },
+
+  {
+    "id": "edit-01-object-color",
+    "category": "image_editing",
+    "operation": "edit",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "referenceImages": ["benchmark/fixtures/product.png"],
+    "prompt": "Change only the product's cap from black to matte cobalt blue. Preserve the product shape, label, every label character, bottle color, reflections, shadows, background, crop, perspective, and all other pixels as closely as possible."
+  },
+  {
+    "id": "edit-02-room-chair",
+    "category": "image_editing",
+    "operation": "edit",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "referenceImages": ["benchmark/fixtures/room.png"],
+    "prompt": "Replace only the chair with a low rust-orange velvet lounge chair in the same position, scale, and perspective. Preserve the room architecture, windows, floor, rug, table, wall art, lighting, shadows outside the chair area, and camera framing."
+  },
+  {
+    "id": "edit-03-remove-object",
+    "category": "image_editing",
+    "operation": "edit",
+    "requestedResolution": "2048x1152",
+    "aspectRatio": "16:9",
+    "referenceImages": ["benchmark/fixtures/room.png"],
+    "prompt": "Remove only the floor lamp and reconstruct the wall and floor naturally behind it. Preserve every other object, all furniture positions, architecture, colors, lighting, shadows, texture, perspective, and crop. Do not redesign the room."
+  },
+  {
+    "id": "edit-04-poster-text",
+    "category": "image_editing",
+    "operation": "edit",
+    "requestedResolution": "1152x2048",
+    "aspectRatio": "9:16",
+    "referenceImages": ["benchmark/fixtures/poster.png"],
+    "prompt": "Replace only the poster headline with the exact text \"CREATE WITH CONFIDENCE\". Match the original headline's font style, size, alignment, spacing, and color. Preserve all other text exactly, all imagery, graphics, colors, layout, texture, and dimensions."
+  },
+  {
+    "id": "edit-05-product-background",
+    "category": "image_editing",
+    "operation": "edit",
+    "requestedResolution": "2048x2048",
+    "aspectRatio": "1:1",
+    "referenceImages": ["benchmark/fixtures/product.png"],
+    "prompt": "Replace only the background with a seamless warm light-gray studio backdrop. Preserve the product exactly, including shape, edges, label text, logo-like marks, cap, colors, scale, orientation, and reflections. Add a physically plausible soft contact shadow; do not alter the product."
+  }
+]

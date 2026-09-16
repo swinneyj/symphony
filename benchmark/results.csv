@@ -1,0 +1,1 @@
+runId,attemptId,model,provider,testId,testCategory,prompt,providerPrompt,promptTransformed,operation,requestedResolution,actualOutputDimensions,startTime,endTime,latencyMs,apiSuccess,retryCount,requestId,calculatedApiCostUsd,costStatus,symphonyQualityScore,qualityScoreSource,acceptanceThreshold,accepted,rejectionReason,outputPath,error

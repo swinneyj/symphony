@@ -1,0 +1,88 @@
+name: Run image-generation benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Generation-only needs no private fixtures; full also runs reference/edit tests"
+        required: true
+        default: generation-only
+        type: choice
+        options:
+          - generation-only
+          - full
+      max_attempts:
+        description: "Attempts per model/test (paid; keep at 1 for the initial comparison)"
+        required: true
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+      BWS_PROJECT_ID: 74f0a638-b3d9-4878-989d-b491001819bb
+    steps:
+      - name: Check out benchmark
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Bitwarden Secrets Manager CLI
+        run: npm install --global @bitwarden/secrets-manager-cli
+
+      - name: Verify injected secret names without printing values
+        run: |
+          set -euo pipefail
+          test -n "$BWS_ACCESS_TOKEN"
+          bws run --project-id "$BWS_PROJECT_ID" -- node -e 'for (const n of ["OPENAI_API_KEY", "FAL_KEY"]) { if (!process.env[n]) throw new Error(`${n} was not injected`); console.log(`${n}=set`); }'
+
+      - name: Validate generation-only suite
+        if: inputs.suite == 'generation-only'
+        run: >-
+          bws run --project-id "$BWS_PROJECT_ID" --
+          npx tsx benchmark/run_benchmark.ts --validate --generation-only
+
+      - name: Validate full suite
+        if: inputs.suite == 'full'
+        run: >-
+          bws run --project-id "$BWS_PROJECT_ID" --
+          npx tsx benchmark/run_benchmark.ts --validate
+
+      - name: Run generation-only benchmark
+        if: inputs.suite == 'generation-only'
+        run: >-
+          bws run --project-id "$BWS_PROJECT_ID" --
+          npx tsx benchmark/run_benchmark.ts --generation-only
+          --max-attempts "${{ inputs.max_attempts }}"
+
+      - name: Run full benchmark
+        if: inputs.suite == 'full'
+        run: >-
+          bws run --project-id "$BWS_PROJECT_ID" --
+          npx tsx benchmark/run_benchmark.ts
+          --max-attempts "${{ inputs.max_attempts }}"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: symphony-image-benchmark-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            benchmark/results.jsonl
+            benchmark/results.csv
+            benchmark/report.md
+            benchmark/results/
