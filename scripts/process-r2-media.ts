@@ -6,6 +6,10 @@ import { spawn } from "node:child_process";
 import { GetObjectCommand, ListObjectsV2Command, S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import OpenAI from "openai";
 import { toFile } from "openai/uploads";
+import dotenv from "dotenv";
+
+dotenv.config({ path: ".env.local" });
+dotenv.config();
 
 type Result = { key: string; status: "speech" | "needs_review" | "error"; transcript?: string; error?: string; processedAt: string };
 const required = (name: string) => { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; };
