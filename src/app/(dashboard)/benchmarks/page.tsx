@@ -10,7 +10,7 @@ import { resolveActiveWorkspace } from "@/lib/active-workspace";
 import { CREATOR_PROVIDER_CATALOG } from "@/lib/creator-clone/providers";
 
 type Creator = { id: string; name: string; consentStatus: string; voiceModelId?: string | null };
-type Run = { id: string; voiceProvider: string | null; avatarProvider: string | null; status: string; error: string | null; generationTimeMs: number | null; resolution: string | null; ratings: Array<Record<string, number | string | null>> };
+type Run = { id: string; voiceProvider: string | null; avatarProvider: string | null; status: string; error: string | null; outputUrl: string | null; generationTimeMs: number | null; resolution: string | null; ratings: Array<Record<string, number | string | null>> };
 type Benchmark = { id: string; creatorName: string; script: string; qualityMode: string; status: string; createdAt: string; runs: Run[] };
 
 const scoreFields = [
@@ -77,7 +77,7 @@ export default function BenchmarksPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Benchmark failed");
-      setMessage(`Created ${data.runs?.length ?? 0} provider runs. Unavailable adapters are recorded for comparison.`);
+      setMessage(`Created ${data.runs?.length ?? 0} provider runs.`);
       await load(workspaceId);
     } catch (error) {
       setMessage((error as Error).message);
@@ -139,5 +139,5 @@ function RunCard({ run }: { run: Run }) {
     await fetch(`/api/clone-benchmarks/runs/${run.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(scores) });
     setSaving(false);
   };
-  return <Card className="space-y-3 border-dashed p-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{run.voiceProvider} + {run.avatarProvider}</p><Badge variant={run.status === "done" ? "default" : "secondary"}>{run.status}</Badge></div><p className="text-xs text-muted-foreground">{run.resolution ?? "—"} · {run.generationTimeMs ?? 0} ms{run.error ? ` · ${run.error}` : ""}</p><div className="grid grid-cols-2 gap-2">{scoreFields.map(([field, label]) => <label key={field} className="text-[11px] text-muted-foreground">{label}<select value={scores[field] ?? ""} onChange={(event) => setScores((current) => ({ ...current, [field]: event.target.value }))} className="mt-1 w-full rounded border bg-background px-2 py-1 text-xs"><option value="">—</option>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}/5</option>)}</select></label>)}</div><Button size="sm" variant="outline" onClick={save} disabled={saving}><Save className="mr-1.5 h-3.5 w-3.5" />{saving ? "Saving…" : "Save rating"}</Button></Card>;
+  return <Card className="space-y-3 border-dashed p-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{run.voiceProvider}{run.avatarProvider ? ` + ${run.avatarProvider}` : " · voice only"}</p><Badge variant={run.status === "done" ? "default" : "secondary"}>{run.status}</Badge></div><p className="text-xs text-muted-foreground">{run.resolution ?? "—"} · {run.generationTimeMs ?? 0} ms{run.error ? ` · ${run.error}` : ""}</p>{run.outputUrl && run.status === "done" && <div className="space-y-1"><p className="text-[11px] font-medium text-muted-foreground">Generated audio</p><audio controls preload="metadata" className="w-full" src={`/api/clone-benchmarks/runs/${run.id}/media`} /><a className="text-xs text-muted-foreground underline" href={`/api/clone-benchmarks/runs/${run.id}/media?download=1`}>Download audio</a></div>}<div className="grid grid-cols-2 gap-2">{scoreFields.map(([field, label]) => <label key={field} className="text-[11px] text-muted-foreground">{label}<select value={scores[field] ?? ""} onChange={(event) => setScores((current) => ({ ...current, [field]: event.target.value }))} className="mt-1 w-full rounded border bg-background px-2 py-1 text-xs"><option value="">—</option>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}/5</option>)}</select></label>)}</div><Button size="sm" variant="outline" onClick={save} disabled={saving}><Save className="mr-1.5 h-3.5 w-3.5" />{saving ? "Saving…" : "Save rating"}</Button></Card>;
 }
