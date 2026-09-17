@@ -7,8 +7,17 @@ clips = Path(__file__).resolve().parents[1] / "symphony-speech-clips"
 report = clips / "speaker-verification.json"
 data = json.loads(report.read_text())
 approved = 0
+rejected = 0
 for result in data["results"]:
-    if (result["status"] == "needs_review" and result.get("qualityOk") is True
+    if result["status"] == "needs_review" and result.get("qualityOk") is not True:
+        src = clips / "needs_review" / result["file"]
+        dst = clips / "reject" / result["file"]
+        if src.exists():
+            shutil.move(str(src), str(dst))
+        result["status"] = "reject"
+        result["autoRejectedBy"] = "second-pass-quality-triage"
+        rejected += 1
+    elif (result["status"] == "needs_review" and result.get("qualityOk") is True
             and result["similarity"] >= 0.65
             and result["referenceMedian"] >= 0.635):
         src = clips / "needs_review" / result["file"]
@@ -18,6 +27,6 @@ for result in data["results"]:
         result["status"] = "approved"
         result["autoApprovedBy"] = "second-pass-review"
         approved += 1
-data["secondPass"] = {"similarityThreshold": 0.65, "referenceMedianThreshold": 0.635, "requiresQualityOk": True, "approvedCount": approved}
+data["secondPass"] = {"similarityThreshold": 0.65, "referenceMedianThreshold": 0.635, "requiresQualityOk": True, "approvedCount": approved, "rejectedQualityFailures": rejected}
 report.write_text(json.dumps(data, indent=2) + "\n")
 print(f"Second pass approved: {approved}")
