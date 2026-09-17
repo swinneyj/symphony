@@ -47,3 +47,5 @@ ads-worker/.build-assets/
 __pycache__/
 *.log
 .env*.local
+
+/symphony-speech-clips/
