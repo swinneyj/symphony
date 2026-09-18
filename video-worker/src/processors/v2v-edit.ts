@@ -126,7 +126,7 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
       editPrompt?: string;
       textChange?: string;
       motionPrompt?: string;
-      durationSec?: number;
+      durationSec?: number | "source";
       /** Re-animate engine: kling-pro (default) | kling-standard | sora | veo. */
       model?: CloneModel;
       /** Output size: 9:16 (default) | 16:9 | 1:1. */
@@ -179,6 +179,13 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
     ]);
     const dur = parseFloat(probe.stdout.trim()) || 4;
     const ts = Math.min(Math.max(dur * 0.4, 0.1), dur - 0.1);
+    // "source" duration = match the original clip length. Providers cap
+    // re-animation (Kling 5-10s, Sora 4/8/12, Veo 4-8) — round the probed
+    // length to the nearest whole second and let the provider clamp.
+    const targetDurationSec =
+      meta.durationSec === "source"
+        ? Math.max(1, Math.round(dur))
+        : meta.durationSec ?? 5;
     const framePath = `${workDir}/keyframe.png`;
     await execFileP("ffmpeg", [
       "-y", "-ss", String(ts), "-i", srcPath, "-frames:v", "1",
@@ -201,7 +208,7 @@ export async function handleV2VEdit(job: JobRow, maxRetries: number): Promise<vo
     const videoUrl = await generateCloneVideo(
       editedFrame,
       `${motion}. ${editPrompt}`,
-      meta.durationSec ?? 5,
+      targetDurationSec,
       meta.model ?? "kling-pro",
       aspect,
       is1080 ? "1080p" : "720p"

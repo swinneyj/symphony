@@ -32,7 +32,9 @@ export async function POST(request: Request) {
     const editPrompt = (form.get("editPrompt") as string) ?? "";
     const textChange = (form.get("textChange") as string | null)?.trim() || undefined;
     const motionPrompt = (form.get("motionPrompt") as string | null)?.trim() || undefined;
-    const durationSec = Math.min(Math.max(Number(form.get("durationSec") ?? 5) || 5, 5), 10);
+    const durationRaw = (form.get("durationSec") as string | null) ?? "5";
+    // "source" = match the original video's length (worker probes it); else clamp 5-10.
+    const durationSec = durationRaw === "source" ? "source" : Math.min(Math.max(Number(durationRaw) || 5, 5), 10);
     const model = (form.get("model") as string) || "kling-pro";
     const aspectRatio = (form.get("aspectRatio") as string) || "9:16";
     const resolution = (form.get("resolution") as string) || "720p";
