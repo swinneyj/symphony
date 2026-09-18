@@ -9,7 +9,7 @@
 // Runs a batch through POST /api/batches; run-view overrides (duration,
 // boomerang, overlay text/style, image resolution) beat formula defaults.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -25,9 +25,6 @@ import {
   Type,
   Image as ImageIcon,
   Film,
-  AlignLeft,
-  AlignCenter,
-  AlignRight,
   Volume2,
 } from "lucide-react";
 import { resolveActiveWorkspace } from "@/lib/active-workspace";
@@ -38,106 +35,15 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-
-/** Per-line overlay box — position (canvas fractions, box center) plus the
- *  style burned into the final video (font + background color). The canvas
- *  below renders these 1:1 with what video-worker's drawtext produces. */
-type OverlayFont = "tiktok" | "snapchat" | "anton" | "montserrat" | "poppins" | "bebas";
-type OverlayTreatment = "outline" | "inverse" | "box" | "box-inverse" | "plain";
-type OverlayAlignment = "left" | "center" | "right";
-
-interface OverlayBox {
-  x: number;
-  y: number;
-  fontColor?: string; // hex #RRGGBB — default white
-  bgColor?: string; // hex #RRGGBB — default black
-  bgOpacity?: number; // 0..1 — 0 = transparent (no box)
-  fontSize?: number; // px at output resolution — undefined = global Style size
-  fontFamily?: OverlayFont;
-  treatment?: OverlayTreatment;
-  textAlign?: OverlayAlignment;
-  width?: number; // canvas fraction
-  height?: number; // canvas fraction
-}
-
-const defaultOverlayBox = (y: number): OverlayBox => ({
-  x: 0.5,
-  y,
-  fontColor: "#ffffff",
-  bgColor: "#000000",
-  bgOpacity: 1,
-  fontFamily: "tiktok",
-  treatment: "outline",
-  textAlign: "center",
-  width: 0.8,
-  height: 0.16,
-});
-
-const OVERLAY_PRESETS = [
-  ["POV Relief Hook", "POV: you finally stop overcomplicating this."],
-  ["Things I Wish I Knew", "Things I wish I knew before I wasted so much time."],
-  ["Nobody Tells You", "Nobody tells you this part until you are already in it."],
-  ["Lazy Version", "The lazy version that still gets the result."],
-  ["Save This", "Save this before you need it later."],
-  ["Quiet Upgrade", "A quiet upgrade that made everything feel easier."],
-  ["Seven Day Test", "I tried this for 7 days and the difference was obvious."],
-  ["Tiny Rule", "One tiny rule that changed the whole routine."],
-  ["Stop Doing This", "Stop doing this if you want the process to feel lighter."],
-  ["Hidden Bottleneck", "The hidden bottleneck was not motivation. It was setup."],
-  ["Before You Buy", "Before you buy anything else, fix this first."],
-  ["Main Character Reset", "A main character reset, but actually practical."],
-] as const;
-
-const OVERLAY_COLORS = [
-  "#ffffff",
-  "#000000",
-  "#3797f0",
-  "#70c050",
-  "#fdcb5c",
-  "#fd8d32",
-  "#ed4956",
-  "#d10869",
-  "#a307ba",
-] as const;
-const OVERLAY_EMOJIS = ["🔥", "✨", "😍", "😱", "🚀", "💥", "✅", "🛍️", "🎉", "⚡", "❤️", "😂"];
-
-const OVERLAY_FONTS: Array<{ value: OverlayFont; label: string; group: string }> = [
-  { value: "tiktok", label: "TikTok Sans", group: "Batchbot" },
-  { value: "snapchat", label: "Snapchat Caption (Inter)", group: "Batchbot" },
-  { value: "anton", label: "Anton", group: "Sales-focused" },
-  { value: "montserrat", label: "Montserrat ExtraBold", group: "Sales-focused" },
-  { value: "poppins", label: "Poppins ExtraBold", group: "Sales-focused" },
-  { value: "bebas", label: "Bebas Neue", group: "Sales-focused" },
-];
-
-const FONT_STACKS: Record<OverlayFont, string> = {
-  tiktok: '"TikTok Sans", "TikTok Sans Render", Arial, sans-serif',
-  snapchat: '"Snap Caption Inter", Inter, Arial, sans-serif',
-  anton: 'Anton, Impact, sans-serif',
-  montserrat: 'Montserrat, Arial, sans-serif',
-  poppins: 'Poppins, Arial, sans-serif',
-  bebas: '"Bebas Neue", Impact, sans-serif',
-};
-
-const TREATMENT_ORDER: OverlayTreatment[] = ["outline", "inverse", "box", "box-inverse"];
-
-/** Composition grid the boxes snap to: rule-of-thirds lines + exact center. */
-const SNAP_GRID = [1 / 3, 1 / 2, 2 / 3];
-const SNAP_THRESHOLD = 0.04;
-const snapAxis = (v: number): number => {
-  for (const g of SNAP_GRID) {
-    if (Math.abs(v - g) <= SNAP_THRESHOLD) return g;
-  }
-  return v;
-};
-
-/** "#RRGGBB" + opacity 0..1 → "rgba(r,g,b,a)" for the editor preview. */
-const hexToRgba = (hex: string, opacity: number): string => {
-  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
-  if (!m) return `rgba(0,0,0,${opacity})`;
-  const n = parseInt(m[1], 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${opacity})`;
-};
+import {
+  OverlayComposer,
+  defaultOverlayBox,
+  OVERLAY_FONTS,
+  type OverlayBox,
+  type OverlayFont,
+  type OverlayTreatment,
+  type OverlayAlignment,
+} from "@/components/video/overlay-composer";
 
 interface Formula {
   id: string;
@@ -211,13 +117,10 @@ export default function FormulaRunPage() {
   const [overlayLines, setOverlayLines] = useState<string[]>([""]);
   const [overlayBoxes, setOverlayBoxes] = useState<OverlayBox[]>([defaultOverlayBox(0.12)]);
   const [selectedOverlay, setSelectedOverlay] = useState(0);
-  const [selectedPreset, setSelectedPreset] = useState<string>("Custom");
-  const dragIndex = useRef<number | null>(null);
-  const canvasRef = useRef<HTMLDivElement | null>(null);
-  // Resize (bottom-right handle): adjusts the selected block's canvas bounds.
-  // Font size remains the dedicated Batchbot slider control.
-  const resizeIndex = useRef<number | null>(null);
   const [overlayStyle, setOverlayStyle] = useState(72); // BatchBot Overlay Studio default
+  // Underlay for the overlay canvas: the first selected product's image until a
+  // run finishes, then that run's real footage (live "see it on the video").
+  const [previewFootageUrl, setPreviewFootageUrl] = useState<string | null>(null);
   // Voice / engine (Symphony-specific, kept below the mirrored sections)
   const [voiceId, setVoiceId] = useState("");
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
@@ -289,6 +192,46 @@ export default function FormulaRunPage() {
     };
   }, [done, batchId]);
 
+  // Once a run finishes, surface the first done job's footage as the overlay
+  // canvas underlay — text placed on the actual product video, not a
+  // checkerboard. Keeps polling (up to ~10 min) until footage appears.
+  useEffect(() => {
+    if (!done || !batchId || !workspaceId) return;
+    if (productIds.length === 0) return;
+    const wantedProduct = productIds[0];
+    let stopped = false;
+    let tries = 0;
+    const load = async () => {
+      if (stopped) return;
+      try {
+        const res = await fetch(`/api/batches/${batchId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const jobs: Array<{
+          productId: string | null;
+          status: string;
+          footageUrl: string | null;
+        }> = data.jobs ?? [];
+        const match = jobs.find(
+          (j) => j.productId === wantedProduct && j.status === "done" && j.footageUrl
+        );
+        if (match?.footageUrl) {
+          setPreviewFootageUrl(match.footageUrl);
+          return; // stop polling — we have what we need
+        }
+      } catch {
+        // transient — keep polling
+      }
+      tries += 1;
+      if (tries < 40 && !stopped) setTimeout(load, 15_000);
+    };
+    load();
+    return () => {
+      stopped = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done, batchId, workspaceId, productIds.join(",")]);
+
   // Flow chain for display (from nodeGraph when present, else flat fields).
   const chain = useMemo(() => {
     const g = formula?.nodeGraph as
@@ -358,7 +301,6 @@ export default function FormulaRunPage() {
     const lines = f.overlayTemplate ? f.overlayTemplate.split("\n") : [""];
     setOverlayLines(lines);
     setSelectedOverlay(0);
-    setSelectedPreset(OVERLAY_PRESETS.find((preset) => preset[1] === lines[0])?.[0] ?? "Custom");
     // Editor state (lines + boxes + style) auto-saves to localStorage on every
     // edit, so navigating away never loses work. New shape = {lines, boxes,
     // style}; legacy saves are a bare array of {x,y} boxes — style keys and
@@ -391,6 +333,13 @@ export default function FormulaRunPage() {
           textAlign,
           width: p.width != null ? Math.min(0.92, Math.max(0.2, Number(p.width) || 0.8)) : 0.8,
           height: p.height != null ? Math.min(0.5, Math.max(0.08, Number(p.height) || 0.16)) : 0.16,
+          // Timeline window survives reloads; seconds ≥ 0, undefined = full clip.
+          ...(typeof p.startSec === "number" && Number.isFinite(p.startSec) && p.startSec >= 0
+            ? { startSec: Math.min(Number(p.startSec), 3600) }
+            : {}),
+          ...(typeof p.endSec === "number" && Number.isFinite(p.endSec) && p.endSec > 0
+            ? { endSec: Math.min(Number(p.endSec), 3600) }
+            : {}),
         };
       });
     let boxes: OverlayBox[] | null = null;
@@ -457,6 +406,7 @@ export default function FormulaRunPage() {
     }
     setRunning(true);
     setDone(false);
+    setPreviewFootageUrl(null); // a fresh run invalidates any old footage underlay
     try {
       // Layout + styles already auto-saved on every edit (see autoSaveLayout
       // effect below) — nothing to persist here.
@@ -549,19 +499,13 @@ export default function FormulaRunPage() {
       on ? "border-blue-500 bg-blue-50" : "hover:bg-muted/50"
     }`;
 
-  // Editor canvas preview scale. The burn uses raw px font sizes; the canvas
-  // is a compact approximation of the frame — a constant 1/3 keeps the default
-  // boxes at BatchBot's modest start look instead of blowing up the small
-  // preview (72px default → ~24px on canvas, matching Batchbot Overlay Studio).
-  const canvasScale = 1 / 3;
-  const activeOverlayBox = overlayBoxes[selectedOverlay] ?? defaultOverlayBox(0.12);
-  const updateSelectedOverlayBox = (patch: Partial<OverlayBox>) => {
-    setOverlayBoxes((cur) => {
-      const next = [...cur];
-      next[selectedOverlay] = { ...(next[selectedOverlay] ?? defaultOverlayBox(0.12)), ...patch };
-      return next;
-    });
-  };
+  // Overlay canvas underlay: real footage once a run produced it, else the
+  // first selected product's image (the video's subject), else checkerboard.
+  const underlayProduct = productIds.length > 0
+    ? products.find((p) => p.id === productIds[0])
+    : undefined;
+  const underlayUrl = previewFootageUrl ?? underlayProduct?.originalImageUrl ?? null;
+  const underlayKind = previewFootageUrl ? "video" : "image";
 
   return (
     <main className="mx-auto w-full max-w-2xl space-y-6 px-4 py-8">
@@ -830,396 +774,19 @@ export default function FormulaRunPage() {
             The text shown on top of the video. Leave it blank to add no overlay text.
           </p>
 
-          <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] sm:items-start">
-            <div className="mx-auto w-full max-w-[15rem]">
-              <div
-                ref={canvasRef}
-                data-testid="overlay-canvas"
-                className="relative aspect-[9/16] w-full overflow-hidden rounded-[14px] border border-slate-900/10 bg-[#bcc4cd] shadow-[0_10px_32px_rgba(16,24,40,0.20)] select-none"
-                style={{
-                  backgroundImage:
-                    "repeating-conic-gradient(#9aa4b1 0% 25%, #bcc4cd 0% 50%)",
-                  backgroundSize: "16px 16px",
-                }}
-                onPointerMove={(e) => {
-                  if (dragIndex.current === null) return;
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const rawX = (e.clientX - rect.left) / rect.width;
-                  const rawY = (e.clientY - rect.top) / rect.height;
-                  const x = Math.min(0.95, Math.max(0.05, snapAxis(rawX)));
-                  const y = Math.min(0.92, Math.max(0.05, snapAxis(rawY)));
-                  setOverlayBoxes((cur) => {
-                    const next = [...cur];
-                    next[dragIndex.current!] = { ...next[dragIndex.current!], x, y };
-                    return next;
-                  });
-                }}
-                onPointerUp={() => (dragIndex.current = null)}
-                onPointerLeave={() => (dragIndex.current = null)}
-              >
-                {overlayLines.map((line, i) => {
-                  const b = overlayBoxes[i] ?? defaultOverlayBox(0.12 + i * 0.14);
-                  const treatment = b.treatment ?? "outline";
-                  const selected = selectedOverlay === i;
-                  const isInverse = treatment === "inverse" || treatment === "box-inverse";
-                  const isBox = treatment === "box" || treatment === "box-inverse";
-                  const fill = isInverse ? "#000000" : (b.fontColor ?? "#ffffff");
-                  const stroke = treatment === "outline" ? "#000000" : treatment === "inverse" ? "#ffffff" : "transparent";
-                  const background = treatment === "box"
-                    ? hexToRgba(b.bgColor ?? "#000000", b.bgOpacity ?? 1)
-                    : treatment === "box-inverse"
-                      ? hexToRgba("#ffffff", b.bgOpacity ?? 1)
-                      : "transparent";
-                  const fontSize = Math.max(8, Math.round((b.fontSize ?? overlayStyle) * canvasScale));
-                  const width = b.width ?? 0.8;
-                  const height = b.height ?? 0.16;
-                  return (
-                    <div
-                      key={i}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Text ${i + 1}: ${line || "empty"}`}
-                      className={`absolute z-10 flex touch-none cursor-grab items-center px-2 py-1 active:cursor-grabbing ${
-                        selected ? "border border-[#0d99ff] ring-2 ring-[#0d99ff]/30" : "border border-transparent"
-                      }`}
-                      style={{
-                        left: `${(b.x - width / 2) * 100}%`,
-                        top: `${(b.y - height / 2) * 100}%`,
-                        width: `${width * 100}%`,
-                        height: `${height * 100}%`,
-                        justifyContent: b.textAlign === "left" ? "flex-start" : b.textAlign === "right" ? "flex-end" : "center",
-                        textAlign: b.textAlign ?? "center",
-                        fontFamily: FONT_STACKS[b.fontFamily ?? "tiktok"],
-                        fontSize,
-                        lineHeight: b.fontFamily === "snapchat" ? 1.18 : 1.2,
-                        fontWeight: b.fontFamily === "snapchat" ? 500 : 700,
-                        WebkitFontSmoothing: "antialiased",
-                        color: fill,
-                        WebkitTextStroke: treatment === "plain" || isBox ? "0" : `1.5px ${stroke}`,
-                      }}
-                      onPointerDown={(e) => {
-                        if ((e.target as HTMLElement).closest("button")) return;
-                        e.preventDefault();
-                        setSelectedOverlay(i);
-                        setSelectedPreset(
-                          OVERLAY_PRESETS.find((preset) => preset[1] === line)?.[0] ?? "Custom"
-                        );
-                        dragIndex.current = i;
-                        e.currentTarget.setPointerCapture?.(e.pointerId);
-                      }}
-                    >
-                      <span
-                        className="block max-h-full max-w-full overflow-hidden whitespace-pre-line break-words rounded px-1.5 py-0.5"
-                        style={{ background }}
-                      >
-                        {line || "Overlay text..."}
-                      </span>
-                      {overlayLines.length > 1 && selected && (
-                        <button
-                          type="button"
-                          aria-label={`Remove Text ${i + 1}`}
-                          className="absolute -right-2 -top-2 rounded-full bg-slate-800 p-0.5 text-white shadow"
-                          onClick={() => {
-                            setOverlayLines((cur) => cur.filter((_, j) => j !== i));
-                            setOverlayBoxes((cur) => cur.filter((_, j) => j !== i));
-                            setSelectedOverlay(Math.max(0, i - 1));
-                            setSelectedPreset("Custom");
-                          }}
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
-                      {selected && (
-                        <span
-                          role="slider"
-                          aria-label={`Resize Text ${i + 1}`}
-                          aria-valuemin={20}
-                          aria-valuemax={92}
-                          aria-valuenow={Math.round(width * 100)}
-                          className="absolute -bottom-1.5 -right-1.5 h-4 w-4 cursor-se-resize rounded-full border-2 border-white bg-[#0d99ff] shadow"
-                          style={{ touchAction: "none" }}
-                          onPointerDown={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            resizeIndex.current = i;
-                            e.currentTarget.setPointerCapture?.(e.pointerId);
-                          }}
-                          onPointerMove={(e) => {
-                            if (resizeIndex.current !== i) return;
-                            const rect = canvasRef.current?.getBoundingClientRect();
-                            if (!rect) return;
-                            const box = overlayBoxes[i] ?? defaultOverlayBox(0.12);
-                            const pointerX = (e.clientX - rect.left) / rect.width;
-                            const pointerY = (e.clientY - rect.top) / rect.height;
-                            const nextWidth = Math.min(0.92, Math.max(0.2, Math.abs(pointerX - box.x) * 2));
-                            const nextHeight = Math.min(0.5, Math.max(0.08, Math.abs(pointerY - box.y) * 2));
-                            setOverlayBoxes((cur) => {
-                              const next = [...cur];
-                              next[i] = { ...next[i], width: nextWidth, height: nextHeight };
-                              return next;
-                            });
-                          }}
-                          onPointerUp={() => (resizeIndex.current = null)}
-                          onPointerCancel={() => (resizeIndex.current = null)}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-2 flex justify-center">
-                <button
-                  type="button"
-                  className="inline-flex h-7 items-center gap-1 rounded-full border bg-white px-2.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-                  onClick={() => {
-                    const index = overlayLines.length;
-                    setOverlayLines((cur) => [...cur, ""]);
-                    setOverlayBoxes((cur) => [...cur, defaultOverlayBox(Math.min(0.84, 0.12 + cur.length * 0.14))]);
-                    setSelectedOverlay(index);
-                    setSelectedPreset("Custom");
-                  }}
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add text
-                </button>
-              </div>
-            </div>
-
-            <div className="min-w-0 space-y-4">
-              <label className="block">
-                <span className="text-xs font-semibold text-slate-700">Text input</span>
-                <div className="mt-1.5 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    aria-pressed={selectedPreset === "Custom"}
-                    className={`h-8 rounded-full border px-3 text-xs font-semibold transition ${
-                      selectedPreset === "Custom" ? "border-blue-500 bg-blue-50 text-blue-600" : "bg-white text-slate-500 hover:text-blue-600"
-                    }`}
-                    onClick={() => setSelectedPreset("Custom")}
-                  >
-                    Custom
-                  </button>
-                  {OVERLAY_PRESETS.map(([label, text]) => (
-                    <button
-                      key={label}
-                      type="button"
-                      aria-pressed={selectedPreset === label}
-                      title={`TikTok Text Overlays: ${label}`}
-                      className={`h-8 rounded-full border px-3 text-xs font-semibold transition ${
-                        selectedPreset === label ? "border-blue-500 bg-blue-50 text-blue-600" : "bg-white text-slate-500 hover:text-blue-600"
-                      }`}
-                      onClick={() => {
-                        setSelectedPreset(label);
-                        setOverlayLines((cur) => {
-                          const next = [...cur];
-                          next[selectedOverlay] = text;
-                          return next;
-                        });
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <textarea
-                  value={overlayLines[selectedOverlay] ?? ""}
-                  onChange={(e) => {
-                    setSelectedPreset("Custom");
-                    setOverlayLines((cur) => {
-                      const next = [...cur];
-                      next[selectedOverlay] = e.target.value;
-                      return next;
-                    });
-                  }}
-                  placeholder="Overlay text..."
-                  className="mt-1.5 min-h-24 w-full resize-y rounded-[10px] border bg-white px-3 py-3 text-sm leading-relaxed text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                />
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className="mr-1 text-[11px] font-medium text-slate-500">Emojis</span>
-                  {OVERLAY_EMOJIS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      aria-label={`Add ${emoji}`}
-                      className="grid h-8 w-8 place-items-center rounded-md border bg-white text-base hover:bg-blue-50"
-                      onClick={() => {
-                        setSelectedPreset("Custom");
-                        setOverlayLines((cur) => {
-                          const next = [...cur];
-                          next[selectedOverlay] = `${next[selectedOverlay] ?? ""}${emoji}`;
-                          return next;
-                        });
-                      }}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              </label>
-
-              <div className="space-y-3 rounded-xl border bg-slate-50/60 p-3">
-                <span className="text-xs font-semibold text-slate-700">Style</span>
-                <div className="grid grid-cols-2 overflow-hidden rounded-lg border bg-white">
-                  <button
-                    type="button"
-                    aria-pressed={(activeOverlayBox.fontFamily ?? "tiktok") !== "snapchat"}
-                    className={`h-9 text-xs font-medium ${
-                      (activeOverlayBox.fontFamily ?? "tiktok") !== "snapchat" ? "bg-blue-50 text-blue-600" : "text-slate-500"
-                    }`}
-                    onClick={() => updateSelectedOverlayBox({
-                      fontFamily: "tiktok",
-                      treatment: activeOverlayBox.treatment === "plain" ? "outline" : activeOverlayBox.treatment,
-                    })}
-                  >
-                    TikTok captions
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={activeOverlayBox.fontFamily === "snapchat"}
-                    className={`border-l h-9 text-xs font-medium ${
-                      activeOverlayBox.fontFamily === "snapchat" ? "bg-blue-50 text-blue-600" : "text-slate-500"
-                    }`}
-                    onClick={() => updateSelectedOverlayBox({ fontFamily: "snapchat", treatment: "plain" })}
-                  >
-                    Snapchat caption
-                  </button>
-                </div>
-
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-slate-500">Font</span>
-                  <select
-                    aria-label="Caption font"
-                    value={activeOverlayBox.fontFamily ?? "tiktok"}
-                    onChange={(e) => {
-                      const fontFamily = e.target.value as OverlayFont;
-                      updateSelectedOverlayBox({
-                        fontFamily,
-                        treatment: fontFamily === "snapchat"
-                          ? "plain"
-                          : activeOverlayBox.treatment === "plain" ? "outline" : activeOverlayBox.treatment,
-                      });
-                    }}
-                    className="h-9 w-full rounded-lg border bg-white px-3 text-xs"
-                  >
-                    {["Batchbot", "Sales-focused"].map((group) => (
-                      <optgroup key={group} label={group}>
-                        {OVERLAY_FONTS.filter((font) => font.group === group).map((font) => (
-                          <option key={font.value} value={font.value}>{font.label}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </label>
-
-                <div className="grid grid-cols-3 overflow-hidden rounded-lg border bg-white">
-                  {([
-                    ["left", AlignLeft, "Align left"],
-                    ["center", AlignCenter, "Align center"],
-                    ["right", AlignRight, "Align right"],
-                  ] as const).map(([alignment, Icon, label]) => (
-                    <button
-                      key={alignment}
-                      type="button"
-                      aria-label={label}
-                      aria-pressed={(activeOverlayBox.textAlign ?? "center") === alignment}
-                      className={`flex h-9 items-center justify-center border-l first:border-l-0 ${
-                        (activeOverlayBox.textAlign ?? "center") === alignment ? "bg-blue-50 text-blue-600" : "text-slate-500"
-                      }`}
-                      onClick={() => updateSelectedOverlayBox({ textAlign: alignment })}
-                    >
-                      <Icon className="h-4 w-4" />
-                    </button>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_3rem] items-center gap-2 rounded-lg border bg-white p-3">
-                  <Type className="h-4 w-4 text-slate-500" />
-                  <input
-                    aria-label="Font size"
-                    type="range"
-                    min={18}
-                    max={120}
-                    value={activeOverlayBox.fontSize ?? overlayStyle}
-                    onChange={(e) => {
-                      const value = Number(e.target.value);
-                      setOverlayStyle(value);
-                      updateSelectedOverlayBox({ fontSize: value });
-                    }}
-                    className="w-full accent-blue-600"
-                  />
-                  <span className="text-right font-mono text-xs text-slate-500">
-                    {activeOverlayBox.fontSize ?? overlayStyle}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 rounded-lg border bg-white p-2">
-                  {(activeOverlayBox.fontFamily ?? "tiktok") !== "snapchat" && (
-                    <button
-                      type="button"
-                      title={`Text style: ${activeOverlayBox.treatment ?? "outline"}`}
-                      aria-label={`Cycle text style (current: ${activeOverlayBox.treatment ?? "outline"})`}
-                      className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-700 text-xs font-bold text-white ring-1 ring-black/10 active:scale-95"
-                      onClick={() => {
-                        const current = activeOverlayBox.treatment === "plain" ? "outline" : (activeOverlayBox.treatment ?? "outline");
-                        const index = TREATMENT_ORDER.indexOf(current);
-                        updateSelectedOverlayBox({ treatment: TREATMENT_ORDER[(index + 1) % TREATMENT_ORDER.length] });
-                      }}
-                    >
-                      Aa
-                    </button>
-                  )}
-                  <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-1 py-1">
-                    {OVERLAY_COLORS.map((color) => (
-                      <button
-                        key={color}
-                        type="button"
-                        aria-label={`Text color ${color}`}
-                        aria-pressed={(activeOverlayBox.fontColor ?? "#ffffff").toLowerCase() === color}
-                        className={`h-7 w-7 shrink-0 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(16,24,40,0.15)] active:scale-95 ${
-                          (activeOverlayBox.fontColor ?? "#ffffff").toLowerCase() === color ? "scale-110 ring-2 ring-blue-500" : ""
-                        }`}
-                        style={{ backgroundColor: color }}
-                        onClick={() => updateSelectedOverlayBox({ fontColor: color })}
-                      />
-                    ))}
-                    <label className="relative h-7 w-7 shrink-0 cursor-pointer overflow-hidden rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(16,24,40,0.15)]" title="Custom text color">
-                      <input
-                        aria-label="Custom text color"
-                        type="color"
-                        value={activeOverlayBox.fontColor ?? "#ffffff"}
-                        onChange={(e) => updateSelectedOverlayBox({ fontColor: e.target.value })}
-                        className="absolute -inset-2 h-12 w-12 cursor-pointer"
-                      />
-                    </label>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 rounded-lg border bg-white p-2">
-                  <span className="text-[11px] font-medium text-slate-500">Background</span>
-                  <label className="flex min-w-0 flex-1 items-center gap-2 text-xs text-slate-600">
-                    <input
-                      aria-label="Custom background color"
-                      type="color"
-                      value={activeOverlayBox.bgColor ?? "#000000"}
-                      onChange={(e) => updateSelectedOverlayBox({ bgColor: e.target.value, treatment: "box" })}
-                      className="h-8 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
-                    />
-                    <span>{activeOverlayBox.bgColor ?? "#000000"}</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-[11px] text-slate-500">
-                    Opacity
-                    <input
-                      aria-label="Background opacity"
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={Math.round((activeOverlayBox.bgOpacity ?? 1) * 100)}
-                      onChange={(e) => updateSelectedOverlayBox({ bgOpacity: Number(e.target.value) / 100, treatment: "box" })}
-                      className="w-20 accent-blue-600"
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
+          <OverlayComposer
+            lines={overlayLines}
+            boxes={overlayBoxes}
+            selected={selectedOverlay}
+            fontSize={overlayStyle}
+            durationSec={reversePlayback ? lengthSec * 2 : lengthSec}
+            underlayUrl={underlayUrl}
+            underlayKind={underlayKind}
+            onLinesChange={setOverlayLines}
+            onBoxesChange={setOverlayBoxes}
+            onSelectedChange={setSelectedOverlay}
+            onFontSizeChange={setOverlayStyle}
+          />
         </div>
       </section>
 
